@@ -155,6 +155,10 @@ Para la API de producción, una tasa de errores visibles al usuario >1 % exige i
 
 ## Hoja de ruta
 
+> **Diferida para el alcance vigente.** Las cuatro fases de abajo terminan en PROD sobre AWS.
+> El plan que se ejecuta hoy —RFCs en orden, con sus deltas— es
+> [`docs/PLAN-DE-EJECUCION.md`](docs/PLAN-DE-EJECUCION.md).
+
 ### Fase 1 — Fundaciones
 - Crear la estructura Python por capas, contratos/puertos, configuración tipada y pruebas unitarias de Domain/Application.
 - Definir esquema PostgreSQL/pgvector, migraciones, source ledger y evaluaciones base de recuperación.

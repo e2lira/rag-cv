@@ -16,6 +16,7 @@ La documentación se produce y se consume bajo la metodología multiagente **ADU
 | :--- | :--- | :--- |
 | [PRD.md](./PRD.md) | Qué construimos y por qué; alcance, usuarios, métricas de éxito | Arquitecto |
 | [adu/ADU-PROCESO.md](./adu/ADU-PROCESO.md) | Cómo trabajamos: roles, handoffs, gates, DoR/DoD | Arquitecto |
+| [PLAN-DE-EJECUCION.md](./PLAN-DE-EJECUCION.md) | **En qué orden se implementan los RFCs** y qué delta leer con cada uno | Arquitecto |
 | [adu/PLANTILLA-RFC.md](./adu/PLANTILLA-RFC.md) | Estructura obligatoria de todo RFC | Arquitecto |
 | [adu/PLANTILLA-ADR.md](./adu/PLANTILLA-ADR.md) | Estructura de una decisión arquitectónica | Arquitecto |
 | [adu/prompts/](./adu/prompts/README.md) | Prompts de ejecución de los tres roles, listos para pegar | Arquitecto |
@@ -76,6 +77,7 @@ vigentes y secciones diferidas.
 2. `adu/ADU-PROCESO.md` — cómo se produce y se valida cada entregable.
 3. **`rfc/RFC-0016` — qué está dentro del alcance vigente y qué está diferido.** Sin esto, los
    RFCs de AWS se leen como si se fueran a ejecutar hoy.
+4. **`PLAN-DE-EJECUCION.md` — en qué orden se construye.** Si vas a implementar, empieza aquí.
 4. `rfc/RFC-0001` — la foto completa del sistema.
 5. El resto de RFCs en orden de dependencia, con la columna **PoC** de §2 a mano.
 

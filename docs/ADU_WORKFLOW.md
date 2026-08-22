@@ -22,6 +22,12 @@ Los prompts son normativos y pertenecen a sus archivos canónicos: no se resumen
 | Verificar un PR | [Prompt del Auditor](adu/prompts/PROMPT-AUDITOR.md) | Informe de Auditoría y veredicto. |
 | Promover a QA/PROD | [Gates del proceso ADU](adu/ADU-PROCESO.md) | Evidencia de CI, QA y aprobación requerida. |
 
+## Orden de implementación
+
+El orden en que se ejecutan los RFCs, con los deltas que hay que leer junto a cada uno, está en
+[`PLAN-DE-EJECUCION.md`](PLAN-DE-EJECUCION.md). Empieza por **RFC-0011**: sin un entorno que
+ejecute pruebas no se puede entregar el commit en rojo que RFC-0014 exige.
+
 ## Primera porción de RAG-CV
 
 La primera porción planificada es la ingesta de `cv.md` y su indexación idempotente. Bajo el alcance vigente la fuente es el **fichero local** `corpus/cv.md`, no S3: la ingesta por eventos de S3 queda diferida junto con el resto de AWS y su disparador lo asume un sondeo programado ([ADR-0006](adr/ADR-0006-entorno-de-entrega-de-la-poc.md), [ADR-0009](adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md), [RFC-0016 §3.3](rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md), [RFC-0019](rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md)). Se ejecuta únicamente cuando exista el RFC aprobado y se usan los prompts canónicos anteriores de forma literal.
