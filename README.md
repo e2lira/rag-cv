@@ -8,7 +8,10 @@
 > **en ejecución hoy** es más estrecho: la PoC se entrega en **QA (VPS Ubuntu)** y AWS queda
 > **diferido** — App Runner, RDS, ECR, S3, EventBridge, Secrets Manager y CloudWatch no se
 > despliegan. Los embeddings corren con `nomic-embed-text` autoalojado y la generación por la API
-> de Anthropic; **la aplicación no usa credenciales de AWS**.
+> de Anthropic; **la aplicación no usa credenciales de AWS**. El CV vive como fichero en el VPS y
+> sus cambios se detectan por **sondeo programado**, no por eventos de S3
+> ([ADR-0009](docs/adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md),
+> [RFC-0019](docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md)).
 >
 > Diferido **no es obsoleto**: es diseño aprobado cuya ejecución se pospone, y ningún documento de
 > AWS ha sido editado. Qué está vigente y qué diferido, documento por documento, está en

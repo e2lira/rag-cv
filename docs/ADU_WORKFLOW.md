@@ -24,7 +24,7 @@ Los prompts son normativos y pertenecen a sus archivos canónicos: no se resumen
 
 ## Primera porción de RAG-CV
 
-La primera porción planificada es la ingesta de `cv.md` y su indexación idempotente. Bajo el alcance vigente la fuente es el **fichero local** `corpus/cv.md`, no S3: la ingesta por eventos de S3 queda diferida junto con el resto de AWS ([ADR-0006](adr/ADR-0006-entorno-de-entrega-de-la-poc.md), [RFC-0016 §3.3](rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md)). Se ejecuta únicamente cuando exista el RFC aprobado y se usan los prompts canónicos anteriores de forma literal.
+La primera porción planificada es la ingesta de `cv.md` y su indexación idempotente. Bajo el alcance vigente la fuente es el **fichero local** `corpus/cv.md`, no S3: la ingesta por eventos de S3 queda diferida junto con el resto de AWS y su disparador lo asume un sondeo programado ([ADR-0006](adr/ADR-0006-entorno-de-entrega-de-la-poc.md), [ADR-0009](adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md), [RFC-0016 §3.3](rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md), [RFC-0019](rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md)). Se ejecuta únicamente cuando exista el RFC aprobado y se usan los prompts canónicos anteriores de forma literal.
 
 ## Referencias
 

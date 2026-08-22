@@ -52,7 +52,7 @@ Tres estados, y solo tres:
 | RFC | Estado en la PoC | Delta / motivo |
 | :--- | :--- | :--- |
 | RFC-0001 Arquitectura general | Vigente con delta | La topología de despliegue y las filas de generación y embeddings se leen junto a este RFC, RFC-0017 y RFC-0018 |
-| RFC-0002 Ingesta y chunking | Vigente con delta | El troceado y la normalización no cambian; la **fuente** del corpus sí (§3.3) |
+| RFC-0002 Ingesta y chunking | Vigente con delta | El troceado y la normalización no cambian; la **fuente** del corpus y su disparador sí (§3.3, RFC-0019) |
 | RFC-0003 Retrieval híbrido (HNSW + FTS + RRF) | **Vigente** | La degradación a rama léxica de §6 pasa a cubrir la caída del embedder local en vez de la de Bedrock |
 | RFC-0004 Capa de agente Strands | Vigente con delta | La construcción del modelo ya la delegaba en RFC-0013; ahora se lee junto a RFC-0018 |
 | RFC-0005 API REST y autenticación | **Vigente** | Sin cambios |
@@ -97,49 +97,58 @@ CONSTRAINT source_documents_object_version_key UNIQUE (object_key, s3_version_id
 hacia `ingestion_jobs`. **Es la dependencia de AWS más profunda del proyecto**, porque no está en
 la configuración: está en el esquema.
 
-**Decisión para la PoC.** La fuente del corpus es el **fichero local** que RFC-0001 ya
-parametriza (`CORPUS_PATH=corpus/cv.md`) y que el despliegue de RFC-0007 §5.3 ya indexa. Los
-eventos de S3, el worker y la reconciliación quedan **diferidos** junto con el resto de AWS.
+**Decisión para la PoC.** La fuente del corpus es un **fichero que vive en el VPS**
+(`CORPUS_PATH`, RFC-0001), fuera de la imagen y fuera del repositorio, de modo que actualizar el
+CV no exija un despliegue. Los eventos de S3, el worker y el job de reconciliación quedan
+**diferidos** junto con el resto de AWS, y su función —detectar que el CV cambió— la asume un
+**sondeo programado** cuyo contrato es RFC-0019.
 
 **Las columnas del ledger no se eliminan: se generaliza su semántica.** Pasan de significar
 "objeto de S3 y su `VersionId`" a significar "identidad de la fuente y su token de versión
-inmutable":
+opaco", que es exactamente lo que esas columnas son en S3:
 
 | Columna | Semántica en el camino AWS | Semántica en la PoC |
 | :--- | :--- | :--- |
-| `object_key` | Clave del objeto en S3 | Ruta del corpus (`corpus/cv.md`) |
-| `s3_version_id` | `VersionId` de S3 | Token de versión inmutable de la fuente local |
-| `s3_etag` | ETag del objeto | Marcador opaco de la misma fuente |
+| `object_key` | Clave del objeto en S3 | Ruta absoluta del corpus en el VPS |
+| `s3_version_id` | `VersionId`: token opaco que S3 asigna en cada `PUT` | **ULID generado en el instante de la detección** |
+| `s3_etag` | ETag: marcador opaco de cambio | Huella barata del fichero: `<mtime_ns>-<size>` |
+| `content_sha256` | Hash del contenido | Idéntico: **la prueba del cambio real** |
+| `source_metadata` | — | `inode`, `mtime_ns`, `size` y versión del detector |
 
-`content_sha256` sigue siendo **la prueba del cambio real**, como ya declara `README.md`; el token
-de versión solo aporta identidad, no equivalencia de contenido.
+El encaje no es una analogía forzada: el comentario del propio DDL dice del ETag que es un
+*"opaque S3 change marker retained for traceability; it must not be used as a content hash"*.
+Una huella `mtime+size` es precisamente eso — un marcador de cambio barato que **no** es un hash
+de contenido — y es lo que permite que el sondeo descarte el caso habitual con un `stat`, sin
+leer el fichero.
 
 Por qué generalizar y no borrar: el ledger es lo que da idempotencia y trazabilidad —"qué versión
 del CV produjo este índice"—, y esa propiedad **no depende de S3**. Borrar las columnas obligaría
 a una migración destructiva ahora y a reconstruirlas al volver a AWS. Mantenerlas conserva el
 camino de promoción de ADR-0006 intacto.
 
-**El token de versión es el SHA de commit de git que produjo `corpus/cv.md`.** Dentro del
-contenedor, donde no hay checkout, se usa el commit con el que se construyó la imagen, que
-RFC-0015 §4 ya estampa como metadato de trazabilidad.
-
-Y **no** es el `content_sha256`, aunque sea lo primero que uno piensa. El DDL retiró
-deliberadamente la unicidad de `(object_key, content_sha256)`:
+**Por qué el token de versión no puede ser el `content_sha256`**, que es lo primero que uno
+piensa. El DDL retiró deliberadamente la unicidad de `(object_key, content_sha256)`:
 
 ```sql
--- Earlier bootstrap drafts made (object_key, content_sha256) unique. Retire that...
+-- Earlier bootstrap drafts made (object_key, content_sha256) unique. Retire that
+-- constraint without deleting ledger history: S3 can create a new VersionId whose
+-- bytes are unchanged, and that version must remain auditable.
 ```
 
-Si el token de versión fuera el hash del contenido, `UNIQUE (object_key, s3_version_id)` volvería
-a imponer esa misma restricción por la puerta de atrás, y reindexar un CV sin cambios pasaría de
-ser **trabajo idempotente** a ser una **violación de unicidad**. Es decir: el despliegue de
-RFC-0007 §5.3, que indexa en cada release, fallaría en el segundo despliegue sin cambios de
-corpus.
+Si el token fuera el hash del contenido, `UNIQUE (object_key, s3_version_id)` reimpondría esa
+restricción por la puerta de atrás. Y no es un caso teórico: **revertir el CV a una versión
+anterior** produce un `content_sha256` que ya existe en el ledger, y la inserción fallaría por
+violación de unicidad en lugar de registrarse como la versión nueva que es.
 
-El commit no tiene ese problema: cambia en cada revisión aunque el contenido sea idéntico, así
-que la fila nueva del ledger entra, `content_sha256` coincide con la anterior y la ingesta se
-resuelve como idempotente sin regenerar embeddings — que es exactamente el comportamiento que
-`README.md` describe.
+**Y tampoco es el SHA de commit de git**, que es lo que este RFC declaraba en su primera
+redacción. Esa decisión asumía que el corpus viajaba con el repositorio o con la imagen. **No es
+así**: el fichero vive en el VPS y se edita ahí, sin pasar por git. Un commit no identifica una
+revisión que git nunca vio.
+
+El ULID cumple lo que se necesita y no depende de nada externo: opaco, único por detección,
+ordenable por tiempo y **generado del lado del servidor**, igual que un `VersionId`. Una revisión
+con bytes idénticos a otra anterior entra como fila nueva y auditable, y el trabajo asociado se
+resuelve por `content_sha256` — que es el comportamiento que `README.md` ya describía.
 
 **Los nombres de columna no se renombran en la PoC.** Un renombrado toca dos claves únicas y dos
 claves foráneas compuestas sobre un esquema ya desplegado, a cambio de nada funcional. Se hace, si
@@ -154,10 +163,13 @@ flowchart LR
     API --> DB[("postgres+pgvector<br/>sin puerto publicado")]
     API -->|red interna| OL["ollama<br/>nomic-embed-text<br/>sin puerto publicado"]
     API -->|HTTPS| AN["API de Anthropic<br/>claude-haiku-4-5"]
+    CR["cron */5<br/>app.ingestion.watcher"] -->|detecta cambio| CV[("corpus/cv.md<br/>en el VPS")]
+    CR --> DB
 ```
 
-Frente a RFC-0007 §5.1 cambian dos cosas y solo dos: **aparece `ollama` como cuarto servicio del
-compose**, y **la flecha hacia Bedrock pasa a apuntar a la API de Anthropic**. El resto —Caddy
+Frente a RFC-0007 §5.1 cambian tres cosas: **aparece `ollama` como cuarto servicio del compose**,
+**la flecha hacia Bedrock pasa a apuntar a la API de Anthropic**, y **el corpus deja de venir de
+S3 para vivir en el VPS**, vigilado por el sondeo programado de RFC-0019. El resto —Caddy
 como único puerto abierto junto a SSH, `ufw` a 22/80/443, `fail2ban`, SSH solo por clave, base de
 datos sin puerto publicado— se ejecuta tal como está escrito allí.
 
@@ -181,13 +193,25 @@ documento anterior.**
 | Ollama + `nomic-embed-text` v1.5 (F16) | ~550 MB | ~274 MB de pesos + tiempo de ejecución |
 | Ollama + variante multilingüe `v2-moe` (F16) | ~1.4 GB | Modelo mayor: es el caso que dimensiona |
 
-**Requisito: 2 vCPU y ≥ 4 GB de RAM; recomendado 8 GB.** El caso que manda es el multilingüe
-(≈ 2.6 GB en reposo), y hay que dejar margen para la caché de páginas de PostgreSQL y para las
-corridas de evaluación, que consultan en ráfaga.
+**VPS contratado: 2 núcleos y 8 GB de RAM.** Con el caso que manda —la variante multilingüe,
+≈ 2.6 GB en reposo— sobran unos 5 GB para la caché de páginas de PostgreSQL y para las corridas
+de evaluación, que consultan en ráfaga. **La memoria no es el problema.**
 
-Estas cifras son **estimaciones y se verifican en el VPS real** (CA-4). Un `docker compose` que
-arranca y muere por OOM al primer lote de indexación es el modo de fallo esperable si el VPS se
-queda en 1 GB, y por eso el número entra como criterio de aceptación y no como comentario.
+**El recurso escaso son los 2 núcleos**, y conviene decirlo porque es un cambio real respecto al
+diseño anterior. Antes, embeber era esperar a una red: coste de CPU cercano a cero. Ahora los
+mismos 2 núcleos los comparten PostgreSQL, la API con 2 *workers*, la inferencia de Ollama y el
+sondeo de RFC-0019. Consecuencias que hay que medir, no suponer:
+
+| Efecto | Dónde se decide |
+| :--- | :--- |
+| `EMBEDDER_MAX_CONCURRENCY=4` puede sobresuscribir 2 núcleos durante la indexación | RFC-0017 §8: el valor se revisa con la medición de su CA-5 |
+| El embedding de consulta pasa de espera de red a **cómputo local** y compite con la generación de respuestas | RNF-3 (p95 ≤ 250 ms) se mide en el VPS, no se hereda del presupuesto anterior |
+| Una reindexación completa coincidiendo con tráfico degrada la latencia | El sondeo se ejecuta con cadencia baja y la ingesta toma *lease* (RFC-0019 §5) |
+
+Las cifras de memoria de la tabla siguen siendo **estimaciones y se verifican en el VPS real**
+(CA-4), junto con la latencia bajo carga concurrente. Con 8 GB el modo de fallo por OOM deja de
+ser el riesgo principal; el riesgo pasa a ser la **contención de CPU**, que no mata el servicio:
+lo vuelve lento, que es más difícil de ver.
 
 ## 6. Re-lectura de los requisitos no funcionales
 
@@ -210,7 +234,7 @@ cumplido un umbral que ya no se mide sería el peor resultado de este RFC.
 
 ## 7. Configuración consolidada de la PoC
 
-Las variables las definen RFC-0012, RFC-0013 y RFC-0007; aquí solo se fija **el valor vigente**
+Las variables las definen RFC-0012, RFC-0013, RFC-0007 y RFC-0019; aquí solo se fija **el valor vigente**
 para no obligar a reconstruir la configuración leyendo cinco documentos.
 
 | Variable | Valor en la PoC | Origen |
@@ -222,6 +246,8 @@ para no obligar a reconstruir la configuración leyendo cinco documentos.
 | `PROVEEDOR` | `anthropic` | RFC-0018 |
 | `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | RFC-0018 |
 | `ANTHROPIC_API_KEY` | secreto, `.env` con permisos `600` | RFC-0018 |
+| `CORPUS_PATH` | ruta absoluta del CV en el VPS | RFC-0016 §3.3, RFC-0019 |
+| `WATCHER_*` | cadencia, estabilidad, *lease*, intentos y latido | RFC-0019 §8 |
 | `AWS_REGION`, `BEDROCK_MODEL_ID`, `TITAN_MODEL_ID` | **ausentes** | Sin uso en la PoC |
 
 Que las variables de AWS estén **ausentes y no vacías** es deliberado: `Settings` valida por rama
@@ -247,9 +273,14 @@ docker compose -f /opt/rag-cv/docker-compose.qa.yml run --rm api \
 curl -fsS https://qa.<dominio>/readyz
 ```
 
-**El `pull` del modelo es un paso de aprovisionamiento, no de despliegue.** Si se omite, el primer
+**Ambos son pasos de aprovisionamiento, no de despliegue.** Si se omite el `pull`, el primer
 arranque falla en la comprobación 4c de RFC-0012 §7 (`/readyz` en rojo) — un fallo correcto, pero
 que solo se entiende si el paso está escrito.
+
+Si se omite el `cron`, en cambio, **no falla nada**: el servicio arranca en verde y sirve
+consultas, pero deja de enterarse de los cambios del CV. Es el modo de fallo silencioso de
+ADR-0009, y la razón por la que RFC-0019 §7 exige un latido con alerta por ausencia en vez de
+confiar en que el paso se recuerde.
 
 **Promoción futura a PROD.** El artefacto no cambia: es la misma imagen. Cerrar ADR-0006 significa
 reactivar RFC-0007 §6, §7, §9 y RFC-0015 §8 tal como están, y decidir entonces si los modelos
@@ -264,6 +295,7 @@ decisión es del Arquitecto y no se anticipa aquí.
 | Modelo no descargado en el VPS | Primer arranque | `/readyz` en rojo con el nombre del modelo esperado. No arranca a medias |
 | OOM del host | Cierre del contenedor por el kernel | Es el modo de fallo del VPS infradimensionado (§5). Se contiene con el requisito de memoria y su verificación |
 | API de Anthropic caída o con error de cuota | Cliente del proveedor | RFC-0013 §7: reintentos y fallo explícito. El *fallback* sigue apagado por defecto (ADR-0005) |
+| El sondeo del corpus deja de ejecutarse | Latido caducado (RFC-0019 §7) | Alerta. El índice queda desactualizado **sin dar error**: es el modo de fallo característico de ADR-0009 |
 | El VPS cae | Sonda externa | **No hay servicio.** Punto único de fallo aceptado en ADR-0006 |
 
 La diferencia importante frente al diseño anterior: la caída del embedder ya **no** coincide con
@@ -278,13 +310,14 @@ sin tocar el segundo.
 | CA-1 | El `docker compose` de QA levanta cuatro servicios (`caddy`, `api`, `db`, `ollama`) y solo `caddy` publica puertos | `docker compose config` + `ss -ltnp` en el VPS |
 | CA-2 | La aplicación arranca y sirve `/readyz` en verde **sin ninguna credencial de AWS presente** en el entorno | Despliegue con `env` sin variables `AWS_*` |
 | CA-3 | No queda ninguna referencia a `bedrock`, `titan` ni `AWS_REGION` en la configuración efectiva de la PoC | `docker compose exec api env` + lectura del `.env` |
-| CA-4 | El host sostiene el conjunto en reposo y durante una indexación completa sin OOM, con la variante de embedder elegida | `docker stats` y `free -m` durante `python -m app.ingestion.indexer` |
+| CA-4 | El host sostiene el conjunto en reposo y durante una indexación completa sin OOM y **sin superar RNF-3 en consulta concurrente**, con la variante de embedder elegida | `docker stats`, `free -m` y latencia p95 durante `python -m app.ingestion.indexer` con tráfico simultáneo |
 | CA-5 | La suite de evaluación de RFC-0009 se ejecuta completa contra QA y publica sus métricas | `invoke evals --suite full` contra el despliegue de QA |
 | CA-6 | El pipeline de RFC-0008 llega hasta QA y no intenta ningún paso de AWS | Ejecución del workflow en verde |
 | CA-7 | RNF-4 y RNF-6 aparecen declarados **no verificados** en el informe de la PoC, no como cumplidos | Lectura del informe |
 | CA-8 | Los RFCs y ADRs marcados `Diferido` conservan su contenido sin modificaciones | `git log --follow` sobre RFC-0007 y RFC-0015 |
-| CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas contra el mismo commit y contra un commit nuevo sin cambios en `cv.md` |
-| CA-10 | El token de versión persistido es el SHA de commit, **no** el `content_sha256` | Consulta a `source_documents` tras dos ingestas |
+| CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas sin tocar el corpus |
+| CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | `RFC-0019` CA-10 sobre el VPS |
+| CA-10 | El token de versión persistido es un ULID por detección, **no** el `content_sha256` ni un SHA de commit | Consulta a `source_documents` tras dos ingestas |
 
 ## 11. Riesgos
 
@@ -304,10 +337,10 @@ sin tocar el segundo.
 | A-1 | Ningún RFC ni ADR marcado `Diferido` ha sido editado | `git diff` contra el commit previo al cambio de alcance | Bloqueante |
 | A-2 | La aplicación arranca y responde sin ninguna variable `AWS_*` en el entorno | CA-2, CA-3 | Bloqueante |
 | A-3 | Ni la base de datos ni `ollama` publican puertos al host | CA-1 | Bloqueante |
-| A-4 | El requisito de memoria del VPS está declarado con número y verificado en el host real | §5 + CA-4 | Mayor |
+| A-4 | El dimensionado del VPS está declarado con número y verificado en el host real, incluida la latencia bajo contención de CPU | §5 + CA-4 | Mayor |
 | A-5 | RNF-4 y RNF-6 figuran como **no verificados** en el informe de la PoC | CA-7 | Bloqueante |
 | A-6 | Los umbrales de RFC-0009 no se han modificado | `git diff` sobre RFC-0009 | Bloqueante |
 | A-7 | El índice de `docs/README.md` refleja el estado de cada RFC frente a la PoC | Lectura | Menor |
-| A-8 | El token de versión del ledger no es el `content_sha256` | CA-10 | Bloqueante |
+| A-8 | El token de versión del ledger no es el `content_sha256`; revertir el CV a una versión anterior inserta fila en vez de fallar | CA-10 + RFC-0019 CA-8 | Bloqueante |
 | A-9 | Reindexar sin cambios de corpus es idempotente y no falla por unicidad | CA-9 | Bloqueante |
 | A-10 | El paso de aprovisionamiento del modelo está en el runbook | Lectura de RFC-0010 §9 | Menor |
