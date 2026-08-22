@@ -43,7 +43,13 @@ BEGIN
         RAISE EXCEPTION 'Expected embedding type vector(1024), got %', embedding_type;
     END IF;
 
-    IF to_regconfig('public.es_unaccent') IS NULL
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_ts_config AS config
+        JOIN pg_namespace AS namespace ON namespace.oid = config.cfgnamespace
+        WHERE namespace.nspname = 'public'
+          AND config.cfgname = 'es_unaccent'
+    )
        OR NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'unaccent') THEN
         RAISE EXCEPTION 'Expected public.es_unaccent configuration and unaccent extension';
     END IF;

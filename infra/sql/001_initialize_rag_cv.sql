@@ -33,7 +33,15 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 -- case-insensitive Spanish stemming deterministic across QA and PROD.
 DO $$
 BEGIN
-    IF to_regconfig('public.es_unaccent') IS NULL THEN
+    -- PostgreSQL 16 does not expose to_regconfig(); query the catalog instead
+    -- so this remains idempotent without casting a missing name to regconfig.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_ts_config AS config
+        JOIN pg_namespace AS namespace ON namespace.oid = config.cfgnamespace
+        WHERE namespace.nspname = 'public'
+          AND config.cfgname = 'es_unaccent'
+    ) THEN
         CREATE TEXT SEARCH CONFIGURATION public.es_unaccent (COPY = spanish);
     END IF;
 END;
