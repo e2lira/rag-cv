@@ -69,6 +69,51 @@ documentadas y no deben revertirse sin reabrir la ADR correspondiente:
   conversación, o en última instancia reabrir ADR-0001 para evaluar Fargate o escala a cero
   fuera de horario.
 
+## POC sin costo
+
+Para una prueba de concepto se puede operar con costo **cero o casi cero**, aceptando
+desviaciones respecto a la arquitectura PROD. Lo único que no se puede eliminar sin cambiar el
+cómputo es la instancia siempre encendida de App Runner (~USD 10/mes).
+
+| Opción | Cómputo | Base de datos | Costo real | Fidelidad al diseño |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Cuenta nueva + créditos** | App Runner (como PROD) | RDS | USD 0 (cubierto por créditos) | Total |
+| **2. EC2 `t2.micro` Free Tier** | Contenedor vía `docker compose` | Postgres+pgvector en el mismo host | USD 0 infra + Bedrock | Alta (patrón QA) |
+| **3. Lambda + Function URL** | Serverless | RDS Free Tier | ≈ USD 0 | Baja (arranque en frío, SSE) |
+
+### Opción 1 — Créditos de cuenta nueva (verificado 2026-08-22)
+
+AWS da hasta **USD 200 en créditos** en cuentas nuevas (USD 100 inmediatos + hasta USD 100
+más), en un plan *Free* de 6 meses sin cobros sorpresa. Cubre de sobra la arquitectura real
+(≈ USD 46–60/mes) durante el período de demostración. Limitación: el plan *Free* restringe a
+"servicios selectos", por lo que Bedrock probablemente requiera pasar a plan *Paid* (donde los
+créditos también aplican).
+
+### Opción 2 — Free Tier clásico + EC2
+
+El *Free Tier* de 12 meses incluye **750 h/mes de EC2 `t2.micro`** y **750 h/mes de RDS
+`db.t4g.micro`**. Correr el mismo contenedor con `docker compose` sobre la instancia EC2
+replica el patrón de QA (RFC-0007 §5) a costo de infraestructura USD 0. Bedrock sigue siendo
+pay-per-token: para decenas de consultas son centavos.
+
+### Opción 3 — Lambda + Function URL
+
+Lambda es *always free* (1M invocaciones/mes) y se combina con RDS Free Tier. Es la opción de
+menor costo, pero reintroduce el arranque en frío y complica el streaming SSE, motivos por los
+que ADR-0001 descartó Lambda para PROD. No demuestra el diseño de despliegue final.
+
+### Precauciones comunes a las tres
+
+- **Bedrock no tiene free tier de modelos garantizado**: es pago por token, sin importar el
+  resto de la infra.
+- El *Free Tier* y los créditos aplican a **cuentas nuevas**; una cuenta existente no los
+  recupera.
+- Configurar **AWS Budgets con alerta a USD 1** y ejecutar `terraform destroy` al terminar la
+  demo para no dejar recursos facturando.
+
+> **Regla:** una POC puede demostrar el producto y la conversación, pero **no** valida RNF-4
+> (99.5 %), RNF-1 (latencia) ni la operación real; esos criterios exigen la arquitectura PROD.
+
 ## Notas de precisión
 
 - Los precios de Bedrock varían por región y por *service tier* (Standard/Flex/Priority);
