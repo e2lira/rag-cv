@@ -19,6 +19,19 @@ La regla que sostiene todo el método:
 
 ## 2. Roles
 
+Asignación vigente de modelos a roles:
+
+| Rol | Modelo | Por qué ese modelo en ese rol |
+| :--- | :--- | :--- |
+| **A — Arquitecto** | Claude Opus 5 | Diseño y contratos: es el rol donde un error se propaga a todo lo que viene después |
+| **D — Desarrollador** | Claude Sonnet 5 | Implementación acotada a un RFC ya cerrado, bajo TDD estricto (RFC-0014) |
+| **U — Auditor** | ChatGPT 5.6 Terra | Proveedor distinto al del Arquitecto y al del Desarrollador: el veredicto no hereda el sesgo de quien diseñó ni de quien implementó |
+
+**Invariante del método:** lo que sostiene el gate G4 no es qué modelo ocupa cada casilla, sino
+que **el rol que audita no comparta modelo ni proveedor con el rol que implementa**. Cualquier
+reasignación futura debe preservar esa condición; si se rompe, la auditoría deja de ser una
+verificación independiente y G4 pasa a ser un trámite.
+
 ### A — Arquitecto (Claude Opus 5)
 
 **Responsable de:** PRD, RFCs, ADRs, contratos de interfaz, criterios de aceptación,
@@ -34,7 +47,7 @@ no fusiona PRs.
 el trabajo se detiene y vuelve al Arquitecto. *Implementar una decisión no documentada es
 un fallo de proceso, no una iniciativa.*
 
-### D — Desarrollador (ChatGPT 5.6)
+### D — Desarrollador (Claude Sonnet 5)
 
 **Responsable de:** implementar exactamente el alcance de un RFC aprobado **mediante TDD
 estricto** (RFC-0014), con sus migraciones y documentación operativa mínima.
@@ -53,7 +66,7 @@ justificaciones: los corrige o los escala al Arquitecto.
 **Límite duro:** una desviación respecto al RFC es válida solo si está declarada en el
 Informe de Implementación. Una desviación no declarada es un hallazgo **Bloqueante** automático.
 
-### U — Auditor (Claude Sonnet 5)
+### U — Auditor (ChatGPT 5.6 Terra)
 
 **Responsable de:** verificar el PR contra el contrato de auditoría del RFC y emitir un
 veredicto **PASS / PASS-CON-OBSERVACIONES / FAIL**.
