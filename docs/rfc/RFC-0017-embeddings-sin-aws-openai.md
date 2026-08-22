@@ -39,24 +39,33 @@ el cambio de dimensión y su migración, el lote, y las comprobaciones de arranq
 **No entra:** la interfaz ni la suite de contrato (RFC-0012, vigentes), el chunking (RFC-0002), la
 fusión RRF (RFC-0003), el proveedor de generación (RFC-0018).
 
-## 3. La calidad se decide midiendo
+## 3. El modelo está designado; la evaluación lo verifica
 
-`text-embedding-3-small` es multilingüe, lo que responde de frente la objeción que ADR-0004 levantó
-contra Nomic `v1.5` para un corpus en español. **Pero eso es una expectativa, no una medición.**
+**`text-embedding-3-small` es el modelo de la PoC.** No es el resultado de una comparativa entre
+candidatos: es una decisión tomada (ADR-0007), y este RFC no la reabre.
 
-**Procedimiento normativo**, antes de fijar la configuración de QA:
+Lo que sí queda es **verificar que funciona**, y conviene separar bien las dos cosas porque se
+confunden con facilidad:
 
-1. Indexar el corpus y correr el conjunto dorado de RFC-0009.
-2. **El umbral es Context recall ≥ 0.85** (umbral de merge de RFC-0009 §4). Es la métrica correcta
-   para esta decisión porque es **determinista y no usa juez LLM**: mide si los `expected_chunks`
-   fueron recuperados, que es exactamente lo que el embedder determina. Un juez LLM aquí mediría la
-   redacción, no la recuperación.
-3. **Si no se alcanza**, la decisión falla y escala al Arquitecto. El siguiente candidato
-   documentado es `text-embedding-3-large` (3072 dimensiones, varias veces el coste). **No se baja
-   el umbral.**
+- *Elegir modelo* sería una comparativa entre alternativas. **No se hace**: está decidido.
+- *Verificar el retrieval* es comprobar que el sistema recupera los fragmentos correctos. **Se hace
+  igual**, porque el umbral de **Context recall ≥ 0.85** ya es gate de merge en RFC-0009 §4, con
+  independencia de qué modelo esté detrás.
 
-El resultado se registra en `evals/baselines/`, que es la respuesta documentada a "¿por qué este
-modelo y no otro?".
+Esa segunda parte no es ceremonia de selección: si el *context recall* está por debajo del umbral,
+el agente no recupera los fragmentos que necesita y **responde mal o se abstiene cuando no debería**.
+Eso no es un matiz de producción que una PoC pueda saltarse — es la diferencia entre una demo que
+funciona y una que no.
+
+Es además la métrica correcta para este punto porque es **determinista y no usa juez LLM**: mide si
+los `expected_chunks` fueron recuperados, que es exactamente lo que el embedder determina. Un juez
+LLM aquí mediría la redacción, no la recuperación.
+
+**Si no se alcanza el umbral**, no es una decisión que falla: es un **hallazgo** que escala al
+Arquitecto. La salida documentada es `text-embedding-3-large` (3072 dimensiones, varias veces el
+coste), y **el umbral no se baja** para que el número cuadre.
+
+El resultado se registra en `evals/baselines/` como línea base del sistema.
 
 ## 4. Consecuencias sobre el esquema — y una trampa de auditoría
 
@@ -191,7 +200,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
 | CA-1 | La fábrica acepta `EMBEDDER=openai` y devuelve `OpenAIEmbedder`; un valor desconocido aborta con la lista de válidos | `test_embedder_factory.py` parametrizado sobre las cinco ramas |
-| CA-2 | `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` |
+| CA-2 | El retrieval con `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` |
 | CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | `verify-database-bootstrap.yml` + `test_startup_checks.py::test_dim_mismatch` |
 | CA-4 | `embed_documents` de N textos hace **una** llamada con los N en el cuerpo | `test_embedder_openai.py::test_batches_in_one_call` |
 | CA-5 | Latencia p95 del embedding de consulta medida y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA |
@@ -212,7 +221,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | El proveedor cambia el modelo detrás del nombre y la recuperación empeora en silencio | Identificador explícito + `embed_model_id` por fragmento + comprobación 4 de arranque |
 | Alguien colapsa los dos métodos "porque este modelo es simétrico" | §7 + CA-1 de RFC-0012 + hallazgo Bloqueante A-1 |
 | Segundo secreto de larga vida en el VPS | `SecretStr`, `600` en el `.env`, `gitleaks` en CI y exclusión en el `rsync` (RFC-0020 §6) |
-| Se baja el umbral de RFC-0009 para que el modelo "pase" | §3 lo prohíbe y nombra el siguiente candidato |
+| Se baja el umbral de RFC-0009 porque "es solo una PoC" | §3 lo prohíbe: el umbral mide si el sistema recupera, no cuán formal es el entorno. Nombra el siguiente candidato |
 | Los fragmentos del CV salen hacia un tercero más | Declarado en ADR-0007. Reabre la decisión si aparece un requisito de residencia de datos |
 
 ## Contrato de auditoría (gate ADU)
@@ -225,7 +234,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | A-4 | El identificador del modelo es explícito y `embed_model_id` incluye el camino | CA-7 | Bloqueante |
 | A-5 | Una respuesta con dimensión inesperada se rechaza en vez de almacenarse | CA-6 | Bloqueante |
 | A-6 | La indexación hace `rollback` completo ante fallo del proveedor | CA-10 | Bloqueante |
-| A-7 | La elección del modelo está respaldada por la comparativa de evaluación, no por preferencia | CA-2 | Bloqueante |
+| A-7 | El retrieval alcanza el umbral de RFC-0009, y si no lo alcanza consta el hallazgo escalado en vez de un umbral rebajado | CA-2 | Bloqueante |
 | A-8 | La clave es `SecretStr` y no aparece en logs | CA-12 | Bloqueante |
 | A-9 | `embed_documents` usa el lote del proveedor, no N llamadas sueltas | CA-4 | Mayor |
 | A-10 | Las cinco implementaciones pasan la misma suite de contrato | CA-11 | Mayor |

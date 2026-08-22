@@ -43,10 +43,14 @@ hoy declara `vector(1024)` (Titan V2). Migrar de 1024 a 1536 cuesta exactamente 
 1024 a 768, y truncar solo entregaría menos información por vector. Con un corpus de ~60
 fragmentos, lo que se ahorraría en índice es irrelevante.
 
-La calidad en español —la objeción que ADR-0004 levantó contra Nomic `v1.5`, entrenado sobre todo
-en inglés— **sigue decidiéndose midiendo, no por preferencia**: el procedimiento de RFC-0017 §3
-exige alcanzar *Context recall* ≥ 0.85 sobre el conjunto dorado de RFC-0009, que es determinista y
-no usa juez LLM. Si no se alcanza, la decisión escala al Arquitecto y **no se baja el umbral**.
+**El modelo queda designado aquí; no se abre una comparativa entre candidatos.** Es una PoC y
+`3-small` es la elección.
+
+Lo que no se salta es la **verificación**: el umbral de *Context recall* ≥ 0.85 ya es gate de merge
+en RFC-0009 §4 con independencia del modelo, y mide si el sistema recupera los fragmentos correctos.
+Por debajo de ese número el agente responde mal o se abstiene cuando no debería, que es la
+diferencia entre una demo que funciona y una que no. Si no se alcanza, es un hallazgo que escala al
+Arquitecto —salida documentada: `text-embedding-3-large`— y **el umbral no se baja**.
 
 La generación **no** cambia aquí: sigue siendo `claude-haiku-4-5` por la API de Anthropic
 (ADR-0008). Cambiar embedder y generador a la vez haría una caída de calidad inatribuible.
