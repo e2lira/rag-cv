@@ -8,7 +8,10 @@
 > **en ejecución hoy** es más estrecho: la PoC se entrega en **QA (VPS Ubuntu)** y AWS queda
 > **diferido** — App Runner, RDS, ECR, S3, EventBridge, Secrets Manager y CloudWatch no se
 > despliegan. Los embeddings corren con `nomic-embed-text` autoalojado y la generación por la API
-> de Anthropic; **la aplicación no usa credenciales de AWS**. El CV vive como fichero en el VPS y
+> de Anthropic, y el despliegue es **nativo por SSH, sin contenedores**
+> ([ADR-0010](docs/adr/ADR-0010-despliegue-nativo-sin-contenedores.md),
+> [RFC-0020](docs/rfc/RFC-0020-topologia-nativa-de-qa-y-despliegue-por-ssh.md));
+> **la aplicación no usa credenciales de AWS**. El CV vive como fichero en el VPS y
 > sus cambios se detectan por **sondeo programado**, no por eventos de S3
 > ([ADR-0009](docs/adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md),
 > [RFC-0019](docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md)).

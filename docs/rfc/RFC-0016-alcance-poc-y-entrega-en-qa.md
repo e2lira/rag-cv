@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0007, RFC-0008, RFC-0015 |
-| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue; **RFC-0002 §3, solo en «versionado en Git»** (§3.3); **RFC-0007 §5.3 y RFC-0015 §7, solo en las rutas de despliegue** (§8.1). *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
+| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue; **RFC-0002 §3, solo en «versionado en Git»** (§3.3); **RFC-0007 §5.3 y RFC-0015 §7, solo en las rutas de despliegue** (§8.1). La topología y el despliegue de QA los redefine **RFC-0020**. *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
 | **ADRs** | ADR-0006 |
 | **Fecha** | 2026-08-22 |
 
@@ -57,7 +57,7 @@ Tres estados, y solo tres:
 | RFC-0004 Capa de agente Strands | Vigente con delta | La construcción del modelo ya la delegaba en RFC-0013; ahora se lee junto a RFC-0018 |
 | RFC-0005 API REST y autenticación | **Vigente** | Sin cambios |
 | RFC-0006 Modelo de datos y migraciones | Vigente con delta | `VECTOR(1024)` → `VECTOR(768)` y recreación del HNSW (RFC-0017 §4) |
-| RFC-0007 Entornos e infraestructura | Parcial | §3, §4 y §5 **vigentes** (salvo §5.2). §5.2 (credenciales AWS en QA) **derogado** por RFC-0018. §6 (PROD), §7 (IAM), §9 (IaC) y §10 (costos AWS) **diferidos** |
+| RFC-0007 Entornos e infraestructura | Parcial | §3 y §4 **vigentes**. §5.1 y §5.3 (topología y despliegue de QA con contenedores) los **sustituye RFC-0020**; §5.2 (credenciales AWS) lo **deroga** RFC-0018. §6 (PROD), §7 (IAM), §9 (IaC) y §10 (costos AWS) **diferidos** |
 | RFC-0008 CI/CD y release | Vigente con delta | El pipeline construye, prueba y despliega **hasta QA**. El paso de promoción a PROD por digest queda diferido; el job de deriva de Terraform no aplica |
 | RFC-0009 Evaluación y guardrails | **Vigente** | Es el gate que decide la variante de embedder de ADR-0007. Sus umbrales no se relajan |
 | RFC-0010 Observabilidad, costos y runbook | Vigente con delta | Logs JSON + rotación en el VPS **vigentes**. CloudWatch, las diez alarmas de §6 y el presupuesto de PROD, **diferidos**. El runbook mantiene §9.6c (reindexación), que este cambio ejercita |
@@ -65,7 +65,7 @@ Tres estados, y solo tres:
 | RFC-0012 Capa de embeddings enchufable | Vigente con delta | La **interfaz, el contrato y la suite de pruebas siguen intactos**. Cambia la implementación por defecto: RFC-0017 |
 | RFC-0013 Capa de proveedores LLM | Vigente con delta | La **fábrica y la parametrización siguen intactas**. Cambia el proveedor designado: RFC-0018 |
 | RFC-0014 Disciplina TDD | **Vigente** | Sin cambios. Aplica a todo lo que se implemente bajo este alcance |
-| RFC-0015 Empaquetado Docker y despliegue | Parcial | §1–§7 y §10 **vigentes**. §8 (`docker-compose.prod.yml`) **diferido**. La fila QA de §9 se sustituye por §5 de este RFC |
+| RFC-0015 Empaquetado Docker y despliegue | **Diferido** | El VPS no tiene contenedores (ADR-0010). El `Dockerfile`, el `.dockerignore` y los ficheros de composición siguen siendo el diseño de empaquetado válido para el PROD diferido; en la PoC no se ejercitan. Lo sustituye **RFC-0020** |
 
 **Los RFCs de AWS no se han tocado.** RFC-0007 §6, §7, §9 y §10 y RFC-0015 §8 conservan su
 redacción original, palabra por palabra.
@@ -79,6 +79,7 @@ redacción original, palabra por palabra.
 | ADR-0003 Strands Agents sobre boto3 directo | **Vigente** |
 | ADR-0004 Titan V2 por defecto | **Sustituido en la PoC** por ADR-0007; sigue vigente para el camino AWS diferido |
 | ADR-0005 Proveedor de generación por parametrización | **Vigente** — su designación inicial la modifica ADR-0008 |
+| ADR-0010 Despliegue nativo sin contenedores | **Vigente** — es lo que difiere ADR-0001 y RFC-0015 en la práctica |
 
 ### 3.3 Fuente del corpus — la consecuencia menos evidente
 
@@ -163,26 +164,24 @@ se hace, al cerrar ADR-0006.
 
 ## 4. Topología de ejecución de la PoC
 
-```mermaid
-flowchart LR
-    I["Internet"] -->|443| CD["Caddy<br/>TLS Let's Encrypt<br/>qa.dominio"]
-    CD -->|8080, red interna| API["rag-cv:tag"]
-    API --> DB[("postgres+pgvector<br/>sin puerto publicado")]
-    API -->|red interna| OL["ollama<br/>nomic-embed-text<br/>sin puerto publicado"]
-    API -->|HTTPS| AN["API de Anthropic<br/>claude-haiku-4-5"]
-    CR["cron */5<br/>app.ingestion.watcher"] -->|detecta cambio| CV[("corpus/cv.md<br/>en el VPS")]
-    CR --> DB
-```
+**El VPS no tiene contenedores y el despliegue es por SSH plano (ADR-0010).** La topología de
+procesos, el aprovisionamiento, la supervisión con `systemd` de usuario y el procedimiento de
+despliegue con identidad de release son el contrato de **RFC-0020**, y no se repiten aquí.
 
-Frente a RFC-0007 §5.1 cambian tres cosas: **aparece `ollama` como cuarto servicio del compose**,
-**la flecha hacia Bedrock pasa a apuntar a la API de Anthropic**, y **el corpus deja de venir de
-S3 para vivir en el VPS**, vigilado por el sondeo programado de RFC-0019. El resto —Caddy
-como único puerto abierto junto a SSH, `ufw` a 22/80/443, `fail2ban`, SSH solo por clave, base de
-datos sin puerto publicado— se ejecuta tal como está escrito allí.
+Lo que interesa a este RFC es qué cambia respecto al diseño anterior:
 
-`ollama` **no publica puertos**: igual que la base de datos, solo es alcanzable por nombre de
-servicio dentro de la red del compose. Un servicio de inferencia expuesto a internet sin
-autenticación es una cuenta ajena corriendo en tu VPS.
+| Aspecto | RFC-0007 §5 (con contenedores) | Alcance vigente (RFC-0020) |
+| :--- | :--- | :--- |
+| Ejecución | `docker compose`: `caddy`, `api`, `db` | Procesos nativos; `caddy` y `postgresql` como servicios del sistema, la API y `ollama` como unidades de usuario |
+| Base de datos | `pgvector/pgvector:pg16` en contenedor | PostgreSQL 16 + pgvector del sistema, `listen_addresses = 'localhost'` |
+| Embeddings | Llamada a Bedrock | `ollama` nativo en `127.0.0.1:11434` (RFC-0017) |
+| Generación | Bedrock con usuario IAM | API de Anthropic (RFC-0018) |
+| Corpus | Objeto en S3 con eventos | Fichero en el VPS, vigilado por sondeo (§3.3, RFC-0019) |
+| Artefacto | Imagen de contenedor por *digest* | **Commit de git**, expuesto en `/readyz` (RFC-0020 §6) |
+
+De las tres dependencias externas del diseño original —Bedrock para generación, Bedrock para
+embeddings y S3 para el corpus— **no queda ninguna**. La única llamada que sale del host es la
+API de Anthropic.
 
 ## 5. Dimensionamiento del VPS
 
@@ -234,7 +233,7 @@ cumplido un umbral que ya no se mide sería el peor resultado de este RFC.
 | RNF-7 (la BD nunca se expone a internet) | **Se cumple** | RFC-0007 §5.1 ya lo aplicaba a QA. Se extiende a `ollama` (§4) |
 | RNF-8 (secretos fuera del repositorio) | **Se cumple** | `ANTHROPIC_API_KEY` en `$RAG_CV_HOME/.env` con permisos `600` (§8.1) |
 | RNF-9 (límite de tasa por API Key) | **Se cumple** | Sin cambios (RFC-0005) |
-| RNF-10 (imagen construida una vez, promovida por digest) | **Se cumple parcialmente** | La imagen se construye una vez en el CI y se despliega a QA por digest. El tramo QA → PROD queda diferido |
+| RNF-10 (imagen construida una vez, promovida por digest) | **No verificado, sustituido** | Sin contenedores no hay imagen ni digest (ADR-0010). Se conserva la propiedad que protegía —que lo que corre en QA sea lo que el CI validó— mediante el SHA de commit expuesto en `/readyz` (RFC-0020 §6). Es un sustituto más débil: garantiza qué código corre, no con qué dependencias del sistema |
 | RNF-11 (independencia del sistema operativo) | **Se cumple** | Sin cambios: el CI en Linux sigue siendo la autoridad |
 | RNF-12 (vectores comparables entre entornos) | **Se cumple**, y mejor | DEV y QA corren el mismo modelo fijado por *digest*, sin dos caminos de servicio (RFC-0017 §6) |
 | RNF-13 (cambiar de modelo sin tocar código) | **Se demuestra** | Este cambio de alcance es su verificación: se cambian embedder y proveedor por configuración |
@@ -249,7 +248,7 @@ para no obligar a reconstruir la configuración leyendo cinco documentos.
 | `APP_ENV` | `qa` | RFC-0007 |
 | `EMBEDDER` | `ollama` | RFC-0017 |
 | `EMBEDDING_DIM` | `768` | RFC-0017 |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | RFC-0017 — nombre de servicio del compose |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | RFC-0017, RFC-0020 §8 — proceso nativo en bucle local |
 | `PROVEEDOR` | `anthropic` | RFC-0018 |
 | `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | RFC-0018 |
 | `ANTHROPIC_API_KEY` | secreto, `.env` con permisos `600` | RFC-0018 |
@@ -263,68 +262,88 @@ despliegue arranque a medias en lugar de fallar de inmediato.
 
 ## 8. Despliegue y promoción futura
 
-### 8.1 Rutas y privilegios en el VPS
+### 8.1 Rutas, cuentas y privilegios en el VPS
 
-RFC-0007 §5.3 y RFC-0015 §7 sitúan el despliegue en `/opt/rag-cv`, y RFC-0007 §5.2 asigna sus
-ficheros a un usuario de servicio sin shell. **Ambas cosas suponen privilegios de administrador
-sobre el VPS, y la cuenta de la PoC no los tiene.**
+RFC-0007 §5.3 y RFC-0015 §7 sitúan el despliegue en `/opt/rag-cv`, y RFC-0007 §5.2 lo asigna a un
+usuario de servicio sin shell. **Hay acceso de administrador en el VPS, pero la operación diaria
+no lo usa**: se entra con la cuenta `qrimapp-reto`, y el despliegue vive bajo su directorio
+personal.
 
-Toda ruta de despliegue se deriva de una única raíz, para que un cambio de hospedaje sea un
-cambio de una línea y no una búsqueda por cinco documentos:
+Esa distinción es la decisión de esta sección, y no es cosmética: **separa el privilegio por
+momento, no por persona.**
+
+| Rol | Cuándo | Con qué cuenta | Qué hace |
+| :--- | :--- | :--- | :--- |
+| **Aprovisionamiento** | Una vez por VPS | `root` o `sudo` | Instala PostgreSQL, pgvector, Caddy, Python y Ollama; abre el cortafuegos; crea el árbol y su propiedad; habilita `linger` (RFC-0020 §4) |
+| **Operación** | Cada release, cada ciclo del sondeo | `qrimapp-reto` | Despliega, migra, indexa, reinicia unidades de usuario, lee bitácoras. **Nunca necesita `sudo`** |
+
+Que la operación no requiera `sudo` no es comodidad: es lo que permite que el `crontab` del
+sondeo y el despliegue por SSH ocurran sin credenciales de administrador en ninguna
+automatización. Un pipeline que necesita `sudo` acaba teniendo un `NOPASSWD` instalado y olvidado.
+
+**Y sin contenedores esa separación vale de verdad.** El diseño anterior obligaba a meter la
+cuenta en el grupo `docker`, y pertenecer a ese grupo **equivale a `root`**: quien habla con el
+demonio monta la raíz en un contenedor y sale con privilegios totales. Operar como `qrimapp-reto`
+habría acotado el error accidental, no el privilegio alcanzable. Al desaparecer el demonio
+(ADR-0010), la cuenta de operación tiene de verdad el privilegio que aparenta.
+
+Toda ruta se deriva de una única raíz, para que un cambio de hospedaje sea un cambio de una línea
+y no una búsqueda por cinco documentos:
 
 ```sh
 RAG_CV_HOME=/home/qrimapp-reto/rag-cv
 ```
 
-| Qué | Ruta | Sustituye a |
-| :--- | :--- | :--- |
-| Compose de QA | `$RAG_CV_HOME/docker-compose.qa.yml` | `/opt/rag-cv/...` (RFC-0007 §5.3) |
-| Secretos | `$RAG_CV_HOME/.env`, permisos `600` | `/opt/rag-cv/.env` (RFC-0007 §5.2, RFC-0015 §7) |
-| Corpus (`CORPUS_PATH`) | `$RAG_CV_HOME/corpus/cv.md` | — |
-| Bitácora del sondeo | `$RAG_CV_HOME/logs/watcher.log` | `/var/log/rag-cv/` (RFC-0019 §7) |
-| Programación del sondeo | **crontab del usuario** | `/etc/cron.d/` (RFC-0019 §7) |
+| Qué | Ruta | Propiedad y permisos | Sustituye a |
+| :--- | :--- | :--- | :--- |
+| Releases | `$RAG_CV_HOME/releases/<sha>/` | `qrimapp-reto`, `755` | La imagen por *digest* (RFC-0015) |
+| Release activa | `$RAG_CV_HOME/current` (enlace simbólico) | `qrimapp-reto` | — |
+| Secretos | `$RAG_CV_HOME/.env` | `qrimapp-reto`, **`600`** | `/opt/rag-cv/.env` (RFC-0007 §5.2, RFC-0015 §7) |
+| Corpus (`CORPUS_PATH`) | `$RAG_CV_HOME/corpus/cv.md` | `qrimapp-reto`, `644` | — |
+| Bitácora del sondeo | `$RAG_CV_HOME/logs/watcher.log` | `qrimapp-reto`, `640` | `/var/log/rag-cv/` (RFC-0019 §7) |
+| Programación del sondeo | `crontab` de `qrimapp-reto` | — | `/etc/cron.d/` (RFC-0019 §7) |
+| Unidades de servicio | `~/.config/systemd/user/` | `qrimapp-reto` | Servicios del compose (RFC-0015 §7) |
 
-**Consecuencias de no tener privilegios, declaradas y no disimuladas:**
+**Puertos 80 y 443.** Los abre `caddy` como servicio del sistema, instalado en el
+aprovisionamiento (RFC-0020 §4). No hacen falta capacidades ni ajustar
+`net.ipv4.ip_unprivileged_port_start` para la cuenta de operación, porque no es ella quien los
+abre.
 
-| Lo que se pierde | Impacto real |
+**Lo que se renuncia, y conviene decirlo entero:**
+
+| Renuncia | Consecuencia real |
 | :--- | :--- |
-| Usuario de servicio sin shell propietario de los ficheros | Los procesos corren como la cuenta de la persona. El aislamiento entre "quien administra" y "quien ejecuta" **desaparece**: quien entra por SSH con esa cuenta tiene todo |
-| `/etc/logrotate.d` | La rotación se hace en espacio de usuario, con estado propio (RFC-0019 §7) |
-| `/etc/cron.d` con usuario explícito | El `crontab` del usuario cumple la misma función, y además sobrevive sin `sudo` |
-| Puertos privilegiados (80/443) para Caddy | **Requiere verificación** (CA-12): sin `CAP_NET_BIND_SERVICE` o `net.ipv4.ip_unprivileged_port_start`, un Caddy sin privilegios no puede escuchar en 443 |
+| Usuario de servicio sin shell | Los procesos corren como una cuenta con inicio de sesión. Quien entre por SSH como `qrimapp-reto` **lee el `.env` y controla el despliegue**. Los `600` protegen frente a otras cuentas del host, no frente a la propia |
+| `/etc/logrotate.d` | La rotación se hace en espacio de usuario, con estado propio (RFC-0019 §7). Es una pieza más que puede quedar sin instalar, y por eso tiene criterio de aceptación |
+| Aislamiento entre servicios | Sin contenedor no hay frontera implícita. Se sustituye con `MemoryMax` y `CPUWeight` en las unidades (RFC-0020 §5) |
 
-Los permisos `600` sobre el `.env` **siguen siendo exigibles** y son lo que sostiene RNF-8: el
-secreto no está en el repositorio y no es legible por otras cuentas del host.
+Los permisos `600` sobre el `.env` **siguen siendo exigibles** y son lo que sostiene RNF-8.
 
-El despliegue en QA es el de RFC-0007 §5.3 con las rutas de §8.1, y dos añadidos:
+### 8.2 Aprovisionamiento y despliegue
+
+El procedimiento completo —paquetes, cortafuegos, `enable-linger`, unidades de usuario,
+sincronización por `rsync`, migración y conmutación atómica de la release— es **RFC-0020 §4 y §6**.
+Aquí solo quedan los dos pasos propios del alcance de la PoC, ambos de **aprovisionamiento**:
 
 ```bash
-# aprovisionamiento, una sola vez por VPS
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml up -d ollama
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml exec ollama \
-    ollama pull <modelo-fijado-por-digest>        # RFC-0017 §5
+# modelo de embeddings: sin esto, /readyz queda en rojo (RFC-0017 §5)
+ollama pull <modelo-fijado-por-digest>
 
-# despliegue, en cada release (RFC-0007 §5.3, sin cambios)
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml pull api
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml run --rm api alembic upgrade head
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml up -d api
-docker compose -f $RAG_CV_HOME/docker-compose.qa.yml run --rm api \
-    python -m app.ingestion.indexer --corpus corpus/cv.md
-curl -fsS https://qa.<dominio>/readyz
+# sondeo del corpus: sin esto NO falla nada, y ahi esta el problema
+crontab cron/rag-cv-watcher                        # RFC-0019 §7
 ```
 
-**Ambos son pasos de aprovisionamiento, no de despliegue.** Si se omite el `pull`, el primer
-arranque falla en la comprobación 4c de RFC-0012 §7 (`/readyz` en rojo) — un fallo correcto, pero
-que solo se entiende si el paso está escrito.
+**La asimetría entre esos dos pasos es lo que hay que tener presente.** Si se omite el `pull`, el
+arranque falla en la comprobación 4c de RFC-0012 §7 y `/readyz` se pone en rojo: un fallo correcto
+y visible. Si se omite el `crontab`, **el servicio arranca en verde y sirve consultas**, pero deja
+de enterarse de los cambios del CV. Es el modo de fallo silencioso de ADR-0009, y la razón por la
+que RFC-0019 §7 exige un latido con alerta por ausencia en vez de confiar en que el paso se
+recuerde.
 
-Si se omite el `cron`, en cambio, **no falla nada**: el servicio arranca en verde y sirve
-consultas, pero deja de enterarse de los cambios del CV. Es el modo de fallo silencioso de
-ADR-0009, y la razón por la que RFC-0019 §7 exige un latido con alerta por ausencia en vez de
-confiar en que el paso se recuerde.
-
-**Promoción futura a PROD.** El artefacto no cambia: es la misma imagen. Cerrar ADR-0006 significa
-reactivar RFC-0007 §6, §7, §9 y RFC-0015 §8 tal como están, y decidir entonces si los modelos
-vuelven a Bedrock (ADR-0004, ADR-0005 recuperan vigencia) o se mantienen los de la PoC. Esa
+**Promoción futura a PROD.** Cerrar ADR-0006 exigirá construir y validar la imagen de RFC-0015,
+que en la PoC nunca se habrá ejercitado (ADR-0010 lo declara como deuda). El diseño de PROD de
+RFC-0007 §6 sigue intacto y disponible; lo que habrá que decidir entonces es si los modelos
+vuelven a Bedrock —ADR-0004 y ADR-0005 recuperan vigencia— o se mantienen los de la PoC. Esa
 decisión es del Arquitecto y no se anticipa aquí.
 
 ## 9. Fallos y degradación
@@ -333,32 +352,33 @@ decisión es del Arquitecto y no se anticipa aquí.
 | :--- | :--- | :--- |
 | `ollama` no responde | `/readyz`, comprobación 4c de RFC-0012 §7 | Consulta: degrada a **solo rama léxica** con `degraded=true` (RFC-0003 §6). Indexación: `rollback` completo |
 | Modelo no descargado en el VPS | Primer arranque | `/readyz` en rojo con el nombre del modelo esperado. No arranca a medias |
-| OOM del host | Cierre del contenedor por el kernel | Es el modo de fallo del VPS infradimensionado (§5). Se contiene con el requisito de memoria y su verificación |
+| OOM del host | El kernel mata el proceso mayor | Con 8 GB deja de ser el riesgo principal (§5). Se acota además con `MemoryMax` por unidad (RFC-0020 §5), que degrada el servicio culpable en vez del host |
 | API de Anthropic caída o con error de cuota | Cliente del proveedor | RFC-0013 §7: reintentos y fallo explícito. El *fallback* sigue apagado por defecto (ADR-0005) |
 | El sondeo del corpus deja de ejecutarse | Latido caducado (RFC-0019 §7) | Alerta. El índice queda desactualizado **sin dar error**: es el modo de fallo característico de ADR-0009 |
 | El VPS cae | Sonda externa | **No hay servicio.** Punto único de fallo aceptado en ADR-0006 |
 
 La diferencia importante frente al diseño anterior: la caída del embedder ya **no** coincide con
 la caída del generador. Antes ambos eran Bedrock y una incidencia regional se llevaba los dos;
-ahora son un contenedor local y una API externa, y la degradación a rama léxica cubre el primero
+ahora son un proceso local y una API externa, y la degradación a rama léxica cubre el primero
 sin tocar el segundo.
 
 ## 10. Criterios de aceptación
 
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
-| CA-1 | El `docker compose` de QA levanta cuatro servicios (`caddy`, `api`, `db`, `ollama`) y solo `caddy` publica puertos | `docker compose config` + `ss -ltnp` en el VPS |
+| CA-1 | Solo `caddy` escucha en interfaces públicas; API, PostgreSQL y Ollama solo en el bucle local | `ss -ltnp` en el VPS (RFC-0020 CA-4) |
 | CA-2 | La aplicación arranca y sirve `/readyz` en verde **sin ninguna credencial de AWS presente** en el entorno | Despliegue con `env` sin variables `AWS_*` |
-| CA-3 | No queda ninguna referencia a `bedrock`, `titan` ni `AWS_REGION` en la configuración efectiva de la PoC | `docker compose exec api env` + lectura del `.env` |
-| CA-4 | El host sostiene el conjunto en reposo y durante una indexación completa sin OOM y **sin superar RNF-3 en consulta concurrente**, con la variante de embedder elegida | `docker stats`, `free -m` y latencia p95 durante `python -m app.ingestion.indexer` con tráfico simultáneo |
+| CA-3 | No queda ninguna referencia a `bedrock`, `titan` ni `AWS_REGION` en la configuración efectiva de la PoC | `systemctl --user show-environment` + lectura del `.env` |
+| CA-4 | El host sostiene el conjunto en reposo y durante una indexación completa sin OOM y **sin superar RNF-3 en consulta concurrente**, con la variante de embedder elegida | `systemd-cgtop`, `free -m` y latencia p95 durante la indexación con tráfico simultáneo |
 | CA-5 | La suite de evaluación de RFC-0009 se ejecuta completa contra QA y publica sus métricas | `invoke evals --suite full` contra el despliegue de QA |
-| CA-6 | El pipeline de RFC-0008 llega hasta QA y no intenta ningún paso de AWS | Ejecución del workflow en verde |
+| CA-6 | El pipeline de RFC-0008 llega hasta QA por SSH y no intenta ningún paso de AWS ni de registro de imágenes | Ejecución del workflow en verde |
 | CA-7 | RNF-4 y RNF-6 aparecen declarados **no verificados** en el informe de la PoC, no como cumplidos | Lectura del informe |
 | CA-8 | Los RFCs y ADRs marcados `Diferido` conservan su contenido sin modificaciones | `git log --follow` sobre RFC-0007 y RFC-0015 |
 | CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas sin tocar el corpus |
 | CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | `RFC-0019` CA-10 sobre el VPS |
-| CA-12 | Caddy sirve en 443 con la cuenta disponible, o está documentado el mecanismo que lo permite | `ss -ltnp` en el VPS + `curl -fsS https://qa.<dominio>/readyz` |
-| CA-13 | Ninguna ruta de despliegue queda fuera de `$RAG_CV_HOME` y el `.env` conserva permisos `600` | `ls -l` sobre el árbol de despliegue |
+| CA-12 | Caddy sirve en 443 y la cuenta de operación no pertenece a ningún grupo equivalente a `root` | `id -nG qrimapp-reto` + `curl -fsS https://qa.<dominio>/readyz` |
+| CA-13 | Ninguna ruta de despliegue queda fuera de `$RAG_CV_HOME`, todo pertenece a `qrimapp-reto` y el `.env` conserva permisos `600` | `ls -l` sobre el árbol de despliegue |
+| CA-14 | Ninguna operación de despliegue, indexación o sondeo requiere `sudo` | Ejecutar el ciclo completo con la cuenta de operación |
 | CA-10 | El token de versión persistido es un ULID por detección, **no** el `content_sha256` ni un SHA de commit | Consulta a `source_documents` tras dos ingestas |
 
 ## 11. Riesgos
@@ -371,8 +391,10 @@ sin tocar el segundo.
 | `Diferido` se lee como `Obsoleto` y alguien borra el diseño de AWS | Regla de lectura explícita en §1 y CA-8 |
 | La reducción de alcance se usa para relajar los umbrales de RFC-0009 | RFC-0009 se declara **Vigente** sin delta: los umbrales no se tocan |
 | El paso de `ollama pull` se omite en un VPS nuevo | Documentado en §8 y detectado por `/readyz` antes de servir tráfico |
-| Sin usuario de servicio, una sesión SSH comprometida da acceso a los secretos y al despliegue completo | Declarado en §8.1. Se acota con acceso por clave, `600` en el `.env` y ausencia de segundos usuarios en la cuenta |
-| Caddy no puede abrir el 443 sin privilegios y el despliegue se descubre roto al final | CA-12 lo verifica antes de dar QA por operativo |
+| Una sesión SSH comprometida con la cuenta de operación da acceso a los secretos y al despliegue | Declarado en §8.1. Se acota con acceso por clave sin contraseña (RFC-0007 §5.1) y `600` en el `.env` |
+| Reintroducir contenedores metería la cuenta en el grupo `docker`, que equivale a `root` | §8.1 lo declara; si se revierte ADR-0010 hay que revisar esta decisión, no heredarla |
+| Sin imagen, «desplegamos el commit X» deja de ser comprobable | RFC-0020 CA-5: el SHA se expone en `/readyz` |
+| Deriva de dependencias del sistema al no viajar con un artefacto | Deuda declarada en ADR-0010; RFC-0020 CA-9 la ejercita sobre un host limpio |
 
 ## Contrato de auditoría (gate ADU)
 
@@ -383,7 +405,9 @@ sin tocar el segundo.
 | A-3 | Ni la base de datos ni `ollama` publican puertos al host | CA-1 | Bloqueante |
 | A-4 | El dimensionado del VPS está declarado con número y verificado en el host real, incluida la latencia bajo contención de CPU | §5 + CA-4 | Mayor |
 | A-4b | El `.env` tiene permisos `600` y ninguna ruta de despliegue escapa de `$RAG_CV_HOME` | CA-13 | Bloqueante |
-| A-4c | La pérdida del usuario de servicio sin shell está declarada como riesgo aceptado, no omitida | §8.1 | Mayor |
+| A-4c | La renuncia al usuario de servicio sin shell está declarada como riesgo aceptado, no omitida | §8.1 | Mayor |
+| A-4d | La operación diaria no usa `root` ni `sudo` en ninguna automatización | CA-14 | Mayor |
+| A-4e | La cuenta de operación no pertenece a ningún grupo equivalente a `root` | CA-12 | Mayor |
 | A-5 | RNF-4 y RNF-6 figuran como **no verificados** en el informe de la PoC | CA-7 | Bloqueante |
 | A-6 | Los umbrales de RFC-0009 no se han modificado | `git diff` sobre RFC-0009 | Bloqueante |
 | A-7 | El índice de `docs/README.md` refleja el estado de cada RFC frente a la PoC | Lectura | Menor |

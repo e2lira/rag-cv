@@ -36,7 +36,8 @@ frente, porque es técnica y es correcta:
 ## Decisión
 
 Se usa **`nomic-embed-text` autoalojado en el VPS** (pesos abiertos, Apache 2.0), servido por
-Ollama en la misma red del `docker compose`, detrás de la interfaz `Embedder` ya existente. La
+Ollama como proceso local en el bucle local del host (ADR-0010, RFC-0020 §5), detrás de la
+interfaz `Embedder` ya existente. La
 dimensión pasa de **1024 a 768**, lo que obliga a recrear la columna y reindexar (RFC-0012 §7.1).
 
 **La variante concreta se decide por evaluación, no por preferencia.** Es un requisito de esta
@@ -63,10 +64,10 @@ generador a la vez haría que una caída de calidad fuera imposible de atribuir.
 
 | Alternativa | A favor | En contra | Por qué se descarta |
 | :--- | :--- | :--- | :--- |
-| **Nomic autoalojado (Ollama en el VPS)** | Cero credenciales de terceros y cero dependencia de nube: coherente con ADR-0006. Coste cero. Sin límite de tasa por IP. Pesos abiertos: el mismo modelo en DEV y en QA. Ya implementado y cubierto por la suite de contrato (CA-18) | Consume memoria del VPS, que pasa a ser requisito de arquitectura. Ollama **no** aplica los prefijos `search_document:` / `search_query:`: los pone `OllamaEmbedder` a mano (CA-17), y equivocarlos degrada la calidad **sin producir ningún error** | **Elegida** |
+| **Nomic autoalojado en el VPS** | Cero credenciales de terceros y cero dependencia de nube: coherente con ADR-0006. Coste cero. Sin límite de tasa por IP. Pesos abiertos: el mismo modelo en DEV y en QA. Ya implementado y cubierto por la suite de contrato (CA-18) | Consume memoria del VPS, que pasa a ser requisito de arquitectura. Ollama **no** aplica los prefijos `search_document:` / `search_query:`: los pone `OllamaEmbedder` a mano (CA-17), y equivocarlos degrada la calidad **sin producir ningún error** | **Elegida** |
 | Nomic Embedding API | Sin memoria en el VPS. Acepta lote. Acceso directo a la variante multilingüe | Reintroduce una credencial de larga vida (`NOMIC_API_KEY`) y un tercero en la ruta de consulta. **Límite de tasa por IP**, y el VPS y los runners de CI comparten IP saliente | Contradice el motivo de ADR-0006: quitar dependencias de servicios gestionados. Queda como contingencia si la evaluación tumba las dos variantes locales |
 | Mantener Titan V2 desde el VPS | Cero cambios: ni dimensión, ni reindexación, ni DDL. Multilingüe por diseño | Obliga a sostener una cuenta de AWS, un usuario IAM con claves en el `.env` y su rotación a 90 días **solo** para embeddings. Deja la ruta de consulta atada a `us-east-2` | Sostener toda la superficie de AWS para un componente que cuesta fracciones de centavo es justo lo que ADR-0006 vino a eliminar |
-| `sentence-transformers` embebido en la imagen | Sin red y sin servicio auxiliar en la ruta de consulta | `torch` + pesos ⇒ imagen ~1.1 GB frente a ~180 MB, y arranque en frío de 8–12 s | Rompe el empaquetado de RFC-0015 y el arranque de ~2 s, a cambio de evitar un salto de red dentro del mismo host |
+| `sentence-transformers` dentro del propio proceso de la API | Sin salto de red y sin servicio auxiliar en la ruta de consulta | `torch` + pesos ⇒ ~1.1 GB de dependencias frente a ~180 MB, y arranque en frío de 8–12 s | Multiplica por seis la huella y el arranque a cambio de evitar un salto de red **dentro del mismo host**, que cuesta microsegundos |
 | OpenAI `text-embedding-3-small` | Buena calidad multilingüe, barato | Otro proveedor propietario, otra clave, y vuelve a atar el retrieval a un servicio gestionado | No aporta nada que Nomic no dé, y reintroduce lo que se quiere quitar |
 
 ## Consecuencias
@@ -91,9 +92,10 @@ generador a la vez haría que una caída de calidad fuera imposible de atribuir.
   RFC-0006 §DDL. No es una migración de columna: los vectores existentes dejan de ser comparables.
 - **El VPS necesita memoria para el modelo.** Deja de ser un detalle de compra y pasa a ser
   requisito con número (RFC-0016 §5).
-- **Un servicio más en el `docker compose`**, con su arranque, su *health check* y su fallo
-  propio. El primer *pull* del modelo es un paso de aprovisionamiento que hay que hacer explícito
-  o el primer despliegue falla de forma confusa.
+- **Un proceso más que supervisar**, con su arranque, su comprobación de salud y su fallo propio.
+  Sin contenedor no hay reinicio implícito: lo aporta la unidad de `systemd` (RFC-0020 §5).
+- **El primer descarga del modelo es un paso de aprovisionamiento** que hay que hacer explícito, o
+  el primer despliegue falla de forma confusa.
 - **Riesgo de calidad en español no resuelto de antemano**, sino sometido a evaluación. Es la
   deuda honesta de esta decisión: se acepta arrancar sin saber la respuesta, con un umbral fijado
   y una salida documentada si no se alcanza.

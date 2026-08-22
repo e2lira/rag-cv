@@ -135,38 +135,46 @@ de la versión actualmente indexada?"**.
 **Cadencia por defecto: cada 5 minutos.** Un CV se edita de vez en cuando; 5 minutos acotan el
 desfase a un coste permanente despreciable.
 
-Se instala en el **crontab del usuario**, no en `/etc/cron.d`: la cuenta de la PoC no tiene
-privilegios de administrador (RFC-0016 §8.1). Un `crontab` de usuario cumple la misma función, no
-necesita `sudo` y sobrevive a los reinicios igual.
+Se instala en el **crontab de `qrimapp-reto`**, no en `/etc/cron.d`. Hay acceso de administrador
+en el VPS, pero **la operación diaria no lo usa** (RFC-0016 §8.1), y el sondeo es la operación
+diaria por excelencia: se ejecuta cada cinco minutos, sin nadie mirando.
+
+Un `crontab` de usuario cumple la misma función, sobrevive a los reinicios igual y —lo que
+importa— **no obliga a que exista un `sudo` sin contraseña** para una automatización que corre
+sola. Esa es la forma habitual en que un `NOPASSWD` acaba instalado y olvidado en un host.
 
 ```cron
 # crontab -e  (usuario qrimapp-reto)
 RAG_CV_HOME=/home/qrimapp-reto/rag-cv
 
-*/5 * * * * cd $RAG_CV_HOME && \
-  docker compose -f docker-compose.qa.yml run --rm --no-deps api \
-  python -m app.ingestion.watcher >> $RAG_CV_HOME/logs/watcher.log 2>&1
+*/5 * * * * cd $RAG_CV_HOME/current && \
+  $RAG_CV_HOME/current/.venv/bin/python -m app.ingestion.watcher \
+  >> $RAG_CV_HOME/logs/watcher.log 2>&1
 
-# rotación en espacio de usuario: sin /etc/logrotate.d no hay rotación del sistema
+# rotación en espacio de usuario: no se toca /etc/logrotate.d, que exigiría root
 0 4 * * * /usr/sbin/logrotate --state $RAG_CV_HOME/logs/.logrotate.state \
   $RAG_CV_HOME/logs/logrotate.conf
 ```
 
-`--no-deps` evita reiniciar `db` y `ollama`, que ya están arriba. `RAG_CV_HOME` es una asignación
+Se invoca el intérprete del entorno virtual de la **release activa**, no un `python` del sistema:
+`current` es un enlace simbólico que el despliegue conmuta de forma atómica (RFC-0020 §6), así que
+el sondeo pasa a ejecutar la release nueva sin tocar el `crontab`.
+
+`RAG_CV_HOME` es una asignación
 del propio `crontab`, no un comentario: `cron` la coloca en el entorno del proceso hijo y es `sh`
 quien la expande al ejecutar la orden. Escrita como comentario, la ruta quedaría vacía y el `cd`
 llevaría al directorio personal — un fallo que solo se ve leyendo la bitácora.
 
-**La bitácora necesita rotación explícita.** El contenedor sí tiene límite —RFC-0015 §7 fija
-`max-size: 50m` y `max-file: 3` en el controlador de registro—, pero eso no cubre la salida que el
-`cron` redirige a fichero: `docker compose run` escribe a `stdout`, y ese `stdout` acaba en
+**La bitácora necesita rotación explícita.** Sin contenedores no hay controlador de registro que
+ponga un techo (ADR-0010), y nada acota la salida que el
+`cron` redirige a fichero: el proceso escribe a `stdout`, y ese `stdout` acaba en
 `watcher.log`. Sin rotación, un fallo que se repita cada 5 minutos llena el disco de la cuenta, y
 un disco lleno hace fallar el propio sondeo — el fallo silencioso de §7, otra vez, por la puerta
 de atrás.
 
 **El latido no es opcional, es la mitad de esta decisión.** Un `cron` que deja de dispararse
 —porque alguien lo comentó, porque el servicio de `cron` murió, porque el disco se llenó y el
-`docker compose run` falla— **no produce ningún error**. El síntoma es un índice desactualizado
+la ejecución falla— **no produce ningún error**. El síntoma es un índice desactualizado
 que responde con seguridad, y puede pasar semanas sin que nadie lo note.
 
 Por eso toda ejecución, **incluida la que no encuentra cambios**, registra un latido con su
@@ -197,7 +205,7 @@ de RFC-0010, igual que el resto.
 | Superados `WATCHER_MAX_ATTEMPTS` | `attempt_count` | `dead_lettered` + alerta. **No se reintenta en bucle** |
 | Dos ejecuciones solapadas | *Lease* | La segunda no encuentra trabajo reclamable y sale |
 | Fichero corrupto o vacío que sí es estable | Validación de RFC-0002 | La ingesta falla y hace `rollback`: nunca se promueve un índice vacío |
-| Disco lleno | `docker compose run` falla | El latido no se actualiza ⇒ alerta (§7) |
+| Disco lleno | La ejecución falla al escribir | El latido no se actualiza ⇒ alerta (§7) |
 | Bitácora sin rotar llenando la cuenta | Rotación diaria en espacio de usuario (§7) | Sin ella, un fallo repetido cada 5 min llena el disco y tumba el propio sondeo |
 
 ## 10. Criterios de aceptación
@@ -248,5 +256,5 @@ de RFC-0010, igual que el resto.
 | A-9 | `WATCHER_MAX_ATTEMPTS` termina en `dead_lettered` con alerta | CA-12 | Mayor |
 | A-10 | El `idempotency_key` es determinista a partir de `object_key` y del token de versión | Lectura + CA-6 | Mayor |
 | A-11 | No se introdujo ninguna tabla ni columna nueva para el sondeo | `git diff` sobre `infra/sql/` | Menor |
-| A-12 | El sondeo no requiere privilegios de administrador para instalarse ni ejecutarse | CA-14 | Mayor |
+| A-12 | El sondeo se instala y se ejecuta sin `sudo`, y no existe ninguna regla `NOPASSWD` para sostenerlo | CA-14 | Mayor |
 | A-13 | La bitácora del sondeo tiene rotación configurada | CA-15 | Mayor |

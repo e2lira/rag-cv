@@ -72,10 +72,12 @@ Se declara sin adornos: RNF-8 se sigue cumpliendo —el secreto no vive en el re
 pierde el "cero claves" que el rol de instancia daba en el PROD diferido. Es un secreto menos que
 antes y uno más que en el diseño de PROD.
 
-Y hay un segundo matiz que no conviene callar: sin usuario de servicio sin shell (RFC-0016 §8.1),
-quien entre por SSH con la cuenta de despliegue **lee ese secreto**. Los permisos `600` protegen
-frente a otras cuentas del host, no frente a la propia. Es el precio de no tener privilegios de
-administrador, y se acota con acceso por clave y sin contraseña (RFC-0007 §5.1).
+Y hay un segundo matiz que no conviene callar: la operación corre con una cuenta de inicio de
+sesión, no con un usuario de servicio sin shell (RFC-0016 §8.1), así que **quien entre por SSH
+como `qrimapp-reto` lee ese secreto**. Los permisos `600` protegen frente a otras cuentas del
+host, no frente a la propia. Se acota con acceso por clave y sin contraseña (RFC-0007 §5.1), y se
+declara aquí para que la elección de operar sin `root` no se confunda con una frontera de
+seguridad: no lo es (RFC-0016 §8.1).
 
 ## 5. Efecto sobre la evaluación
 
@@ -143,7 +145,7 @@ degrada a rama léxica sin afectar a la generación.
 | Se cambia también el modelo de generación y la evaluación deja de ser atribuible | §3: el modelo se conserva; cambiarlo exige la comparativa de RFC-0013 §8 |
 | Juez y agente del mismo proveedor inflan las métricas | Calibración obligatoria con 15 veredictos humanos (CA-4) y `EVAL_JUDGE_PROVEEDOR` independiente |
 | Fuga de coste sin presupuesto de infraestructura que la absorba | RNF-5 y el umbral de RFC-0009, ambos medidos por corrida (CA-5) |
-| La clave de la API se filtra en un log o en la imagen | `SecretStr` (RFC-0013), `.dockerignore` (RFC-0015 §5), `gitleaks` en CI (RFC-0008) |
+| La clave de la API se filtra en un log o viaja en el despliegue | `SecretStr` (RFC-0013), `gitleaks` en CI (RFC-0008) y exclusión explícita de `.env` en la sincronización por `rsync` (RFC-0020 §6). Sin imagen, el `.dockerignore` de RFC-0015 §5 ya no es la barrera |
 | Residencia de datos: los fragmentos del CV salen hacia un tercero | Declarado en ADR-0008. Reabre la decisión si aparece un requisito de cumplimiento |
 | Alguien enciende el *fallback* "por si acaso" y las métricas dejan de ser comparables | CA-8 + ADR-0005, que ya lo decidió |
 

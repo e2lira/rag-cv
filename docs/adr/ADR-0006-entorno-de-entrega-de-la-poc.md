@@ -33,9 +33,9 @@ no para averiguarlo.
 
 ## Decisión
 
-**El entorno de entrega de la PoC es QA: un único VPS Ubuntu Server 24.04 con `docker compose`
-(Caddy + api + db), tal como ya lo especifica RFC-0007 §5.** La PoC se demuestra, se evalúa y se
-audita ahí.
+**El entorno de entrega de la PoC es QA: un único VPS Ubuntu Server 24.04.** La PoC se demuestra,
+se evalúa y se audita ahí. Cómo corren los procesos en ese host lo decide ADR-0010; este ADR fija
+el *dónde*, no el *cómo*.
 
 **PROD sobre AWS queda diferido, no cancelado.** ADR-0001 (App Runner), ADR-0002 (pgvector
 propio) y los RFCs de infraestructura AWS **siguen siendo `Aprobado` y no se editan**: son el
@@ -50,7 +50,7 @@ ADR-0007 y ADR-0008.
 
 | Alternativa | A favor | En contra | Por qué se descarta |
 | :--- | :--- | :--- | :--- |
-| **QA (VPS) como entorno de entrega, AWS diferido** | Coste fijo bajo y conocido. Cero infraestructura que construir antes de validar el producto. El artefacto sigue siendo la misma imagen que iría a PROD (RNF-10), así que no se quema el camino de promoción. Fuerza a que la app no dependa de nada específico de AWS — que es justo lo que RFC-0007 §5.3 ya declaraba como beneficio buscado | No valida RNF-4 (99.5 %) ni la operación real de PROD. Un solo host: sin alta disponibilidad, sin autoescalado. El VPS pasa a ser una dependencia de arquitectura con requisitos de memoria propios | **Elegida** |
+| **QA (VPS) como entorno de entrega, AWS diferido** | Coste fijo bajo y conocido. Cero infraestructura que construir antes de validar el producto. Fuerza a que la app no dependa de nada específico de AWS — que es justo lo que RFC-0007 §5.3 ya declaraba como beneficio buscado | No valida RNF-4 (99.5 %) ni la operación real de PROD. Un solo host: sin alta disponibilidad, sin autoescalado. El VPS pasa a ser una dependencia de arquitectura con requisitos de memoria propios | **Elegida** |
 | Desplegar PROD en AWS con Free Tier / créditos | Demuestra la arquitectura final; los créditos cubren el período de demostración | Bedrock es pago por token sin free tier garantizado. Free Tier y créditos aplican solo a cuentas nuevas. Exige Terraform, IAM, red privada y alarmas **antes** de validar el producto, y `terraform destroy` al terminar | Paga la complejidad de PROD para obtener la misma evidencia que da QA. Y deja la demo con fecha de caducidad atada a una cuenta |
 | Mantener los tres entornos con PROD activo | Ningún documento cambia | USD 46–60/mes indefinidos y una superficie de operación que nadie va a operar durante la PoC | Sostiene un entorno que no produce evidencia, y su coste real es el tiempo de construirlo y auditarlo |
 | Lambda + Function URL | *Always free*, el costo mínimo absoluto | Arranque en frío y streaming SSE complicado — los motivos por los que ADR-0001 ya lo descartó | No demuestra el diseño de despliegue, y reintroduce un problema ya resuelto |
@@ -62,9 +62,9 @@ ADR-0007 y ADR-0008.
 
 - **Coste de infraestructura conocido y fijo**: un VPS. Desaparecen App Runner, RDS, ECR, NAT y
   CloudWatch de la factura y de la superficie de operación.
-- **El camino de promoción no se quema.** El artefacto sigue siendo la imagen de contenedor
-  construida una vez en el CI (RNF-10). Promover a PROD el día que corresponda es desplegar la
-  misma imagen sobre la infraestructura que RFC-0007 §6 ya tiene diseñada.
+- **El diseño de PROD no se quema.** RFC-0007 §6 sigue intacto y disponible para el día que
+  corresponda. Lo que sí cambia es el artefacto: ADR-0010 lo convierte en un commit en vez de una
+  imagen, y declara como deuda que la imagen de RFC-0015 nunca se habrá ejercitado en QA.
 - **La portabilidad deja de ser una promesa.** RFC-0007 §5.3 decía que un VPS "fuerza a que la
   aplicación no dependa de nada específico de AWS más allá de Bedrock". Al quitar también
   Bedrock, esa frase pasa a ser literal y verificable.

@@ -31,8 +31,8 @@ métodos de la interfaz cuando Titan los hacía parecer redundantes.
 
 ## 2. Alcance
 
-**Entra:** selección de la variante del modelo por evaluación, el servicio `ollama` en el
-compose, la fijación del modelo por *digest*, el cambio de dimensión y su migración, las
+**Entra:** selección de la variante del modelo por evaluación, el servicio `ollama` nativo, la
+fijación del modelo por *digest*, el cambio de dimensión y su migración, las
 comprobaciones de arranque y los prefijos asimétricos.
 
 **No entra:** la interfaz ni la suite de contrato (RFC-0012, vigentes), el chunking (RFC-0002), la
@@ -107,8 +107,13 @@ La verificación del *bootstrap* de base de datos que ya corre en CI
 
 ## 5. El servicio `ollama` y la fijación del modelo
 
-`ollama` es el cuarto servicio del compose de QA (RFC-0016 §4) y **no publica puertos**:
-`OLLAMA_BASE_URL=http://ollama:11434`, alcanzable solo por la red interna.
+`ollama` corre **como proceso nativo** en el VPS, supervisado por una unidad de `systemd` de
+usuario (RFC-0020 §5), y escucha únicamente en el bucle local:
+`OLLAMA_BASE_URL=http://127.0.0.1:11434`.
+
+**Nunca en `0.0.0.0`.** Un servicio de inferencia expuesto a internet sin autenticación es
+capacidad de cómputo ajena corriendo en tu VPS, y la diferencia entre una cosa y otra es una
+variable de entorno. Tiene comprobación propia y severidad Bloqueante en RFC-0020 (§7, CA-4).
 
 **El modelo se fija por *digest*, no por etiqueta.** Una etiqueta como `nomic-embed-text:latest`
 puede apuntar a otros pesos mañana, y ese día los vectores nuevos dejan de ser comparables con los
@@ -124,7 +129,7 @@ embedder activo— pasa a ser la defensa principal, no una formalidad.
 | Entorno | `EMBEDDER` | Servicio | Vectores comparables |
 | :--- | :--- | :--- | :--- |
 | DEV (Windows) | `ollama` | Ollama nativo en la máquina del desarrollador | **Sí**, si el *digest* coincide |
-| QA (VPS Ubuntu) | `ollama` | Contenedor `ollama` del compose | **Sí** |
+| QA (VPS Ubuntu) | `ollama` | Proceso nativo bajo `systemd` de usuario (RFC-0020 §5) | **Sí** |
 
 RNF-12 se cumple **mejor que con Titan**: un solo modelo, un solo camino de servicio, mismo
 *digest* en ambos entornos. La divergencia F16 vs canónico que ADR-0004 temía aparecía al mezclar
@@ -153,13 +158,13 @@ precaución y pasa a ser la que impide indexar el vector de un texto recortado.
 
 | Aspecto | Titan (anterior) | Nomic autoalojado |
 | :--- | :--- | :--- |
-| Dependencia externa en consulta | Bedrock | **Ninguna**: red interna del compose |
+| Dependencia externa en consulta | Bedrock | **Ninguna**: proceso local en el bucle local |
 | Credenciales | Usuario IAM en QA | **Ninguna** |
 | Memoria adicional en el host | 0 | ~550 MB (`v1.5`) / ~1.4 GB (`v2-moe`) |
 | Latencia de embedding de consulta | ~100–150 ms (red externa) | Local; a medir en el VPS (CA-5) |
 | Lote | No lo acepta: N llamadas | `/api/embed` acepta lote |
 | Coste | Fracciones de centavo | Cero |
-| Tamaño de la imagen de la API | ~180 MB | ~180 MB (el modelo vive en otro contenedor) |
+| Huella de la API | ~180 MB | ~180 MB (el modelo vive en el proceso de `ollama`, no en la API) |
 
 `EMBEDDER_MAX_CONCURRENCY` deja de proteger contra el `ThrottlingException` de una cuota de cuenta
 y pasa a proteger la **CPU del VPS**: la indexación compite con PostgreSQL y con la API en el
@@ -175,7 +180,7 @@ mismo host. El valor por defecto de 4 se revisa con la medición de CA-5.
 | `EMBEDDING_DIM` ≠ ancho de la columna | Comprobación 3 | **No arranca** |
 | Respuesta con dimensión inesperada | Contrato del embedder | Se descarta: un vector de otra dimensión corrompe el índice |
 | Fragmento por encima de `EMBED_MAX_TOKENS` | Validación en la ingesta | La indexación **falla** (§7) |
-| Presión de memoria del host durante la indexación | `docker stats` | Se acota con `EMBEDDER_MAX_CONCURRENCY` (§8) |
+| Presión de memoria del host durante la indexación | `systemd-cgtop` | Se acota con `EMBEDDER_MAX_CONCURRENCY` (§8) y con `MemoryMax` de la unidad (RFC-0020 §5) |
 
 ## 10. Criterios de aceptación
 
@@ -188,7 +193,7 @@ mismo host. El valor por defecto de 4 se revisa con la medición de CA-5.
 | CA-5 | Latencia p95 del embedding de consulta medida en el VPS y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA |
 | CA-6 | `OllamaEmbedder` aplica `search_document: ` y `search_query: ` en el lado correcto | `test_embedder_ollama.py::test_prefixes` (CA-17 de RFC-0012) |
 | CA-7 | La indexación completa no provoca OOM en el VPS | CA-4 de RFC-0016 |
-| CA-8 | Con `ollama` detenido, la consulta responde con resultados léxicos y `degraded=true` | `test_retrieval.py::test_embedding_failure_degrades` |
+| CA-8 | Con `ollama` detenido (`systemctl --user stop rag-cv-ollama`), la consulta responde con resultados léxicos y `degraded=true` | `test_retrieval.py::test_embedding_failure_degrades` |
 | CA-9 | Indexar y consultar funcionan **sin red externa** en DEV | Ejecución con la interfaz de red deshabilitada |
 | CA-10 | `TitanEmbedder` sigue existiendo y pasando la suite de contrato | `test_embedder_contract.py` parametrizado |
 
@@ -214,7 +219,7 @@ mismo host. El valor por defecto de 4 se revisa con la medición de CA-5.
 | A-4 | El modelo está fijado por *digest*, no por etiqueta móvil | CA-4 | Bloqueante |
 | A-5 | La elección de variante está respaldada por la comparativa de evaluación, no por preferencia | CA-1, CA-2 | Bloqueante |
 | A-6 | La normalización L2 se hace en nuestro lado | CA-2 de RFC-0012 | Bloqueante |
-| A-7 | El servicio `ollama` no publica puertos al host | A-3 de RFC-0016 | Bloqueante |
+| A-7 | `ollama` escucha solo en `127.0.0.1`, nunca en `0.0.0.0` | RFC-0020 CA-4 | Bloqueante |
 | A-8 | La indexación hace `rollback` completo ante fallo del embedder | CA-13 de RFC-0012 | Bloqueante |
 | A-9 | `TitanEmbedder` sigue presente y cubierto por la suite de contrato | CA-10 | Mayor |
 | A-10 | La comprobación de `EMBED_MAX_TOKENS` sigue activa en la ingesta | CA-9 de RFC-0012 | Mayor |
