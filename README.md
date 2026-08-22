@@ -7,7 +7,7 @@
 > Este README describe el **alcance técnico completo**, cuyo destino final es AWS. El alcance
 > **en ejecución hoy** es más estrecho: la PoC se entrega en **QA (VPS Ubuntu)** y AWS queda
 > **diferido** — App Runner, RDS, ECR, S3, EventBridge, Secrets Manager y CloudWatch no se
-> despliegan. Los embeddings corren con `nomic-embed-text` autoalojado y la generación por la API
+> despliegan. Los embeddings corren con `text-embedding-3-small` de OpenAI y la generación por la API
 > de Anthropic, y el despliegue es **nativo por SSH, sin contenedores**
 > ([ADR-0010](docs/adr/ADR-0010-despliegue-nativo-sin-contenedores.md),
 > [RFC-0020](docs/rfc/RFC-0020-topologia-nativa-de-qa-y-despliegue-por-ssh.md));
@@ -20,7 +20,7 @@
 > AWS ha sido editado. Qué está vigente y qué diferido, documento por documento, está en
 > **[RFC-0016](docs/rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md)**; el porqué, en
 > [ADR-0006](docs/adr/ADR-0006-entorno-de-entrega-de-la-poc.md),
-> [ADR-0007](docs/adr/ADR-0007-embeddings-nomic-autoalojados.md) y
+> [ADR-0007](docs/adr/ADR-0007-embeddings-por-api-openai.md) y
 > [ADR-0008](docs/adr/ADR-0008-generacion-por-api-de-anthropic.md).
 >
 > Donde este README y RFC-0016 difieran sobre qué se ejecuta hoy, **prevalece RFC-0016**.

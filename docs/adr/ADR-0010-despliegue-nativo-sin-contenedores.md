@@ -34,8 +34,8 @@ portátil que solo corre en un sitio no está demostrando portabilidad.
 ## Decisión
 
 **QA se despliega de forma nativa sobre Ubuntu Server 24.04**: PostgreSQL con pgvector como
-paquete del sistema, Ollama como servicio nativo, la aplicación en un entorno virtual de Python
-bajo `systemd` de usuario, y Caddy como servicio del sistema terminando TLS. El despliegue se hace
+paquete del sistema, la aplicación en un entorno virtual de Python bajo `systemd` de usuario, y
+Caddy como servicio del sistema terminando TLS. El despliegue se hace
 por **SSH**, sincronizando un árbol de fuentes en un commit concreto. El contrato está en RFC-0020.
 
 **El artefacto deja de ser la imagen y pasa a ser el commit.** Es un cambio de identidad del
@@ -50,8 +50,8 @@ composición siguen siendo el diseño de empaquetado válido para el día que se
 
 | Alternativa | A favor | En contra | Por qué se descarta |
 | :--- | :--- | :--- | :--- |
-| **Despliegue nativo por SSH** | Coincide con lo que el VPS ya tiene. Sin demonio de contenedores compitiendo por los 2 núcleos. Sin la pertenencia al grupo `docker`, que **equivale a `root`** (RFC-0016 §8.1). Menos capas entre un fallo y su causa: un `journalctl` y ya | Se pierde la paridad de artefacto y el aislamiento entre servicios. Las dependencias del sistema —versión de PostgreSQL, de pgvector, de Python— pasan a ser estado del host, no del artefacto. Reconstruir el entorno exige un procedimiento, no un `docker compose up` | **Elegida** |
-| Instalar Docker y conservar RFC-0007 §5 y RFC-0015 tal cual | Cero documentos que reescribir. Aislamiento real entre servicios. Reconstrucción reproducible. Conserva RNF-10 y el camino a PROD sin fricción | Añade un demonio y ~2 GB de imágenes en un host de 2 núcleos y 8 GB donde el modelo de embeddings ya compite por CPU. La pertenencia al grupo `docker` anula la ventaja de operar sin `root`. Y conserva un requisito —promover por digest— cuyo destino está diferido | Paga la complejidad de la portabilidad entre entornos cuando **solo queda un entorno**. Es la alternativa a reconsiderar primero si se cierra ADR-0006 |
+| **Despliegue nativo por SSH** | Coincide con lo que el VPS ya tiene. Sin demonio de contenedores consumiendo recursos de un host modesto. Sin la pertenencia al grupo `docker`, que **equivale a `root`** (RFC-0016 §8.1). Menos capas entre un fallo y su causa: un `journalctl` y ya | Se pierde la paridad de artefacto y el aislamiento entre servicios. Las dependencias del sistema —versión de PostgreSQL, de pgvector, de Python— pasan a ser estado del host, no del artefacto. Reconstruir el entorno exige un procedimiento, no un `docker compose up` | **Elegida** |
+| Instalar Docker y conservar RFC-0007 §5 y RFC-0015 tal cual | Cero documentos que reescribir. Aislamiento real entre servicios. Reconstrucción reproducible. Conserva RNF-10 y el camino a PROD sin fricción | Añade un demonio y ~2 GB de imágenes a un host modesto. La pertenencia al grupo `docker` anula la ventaja de operar sin `root`. Y conserva un requisito —promover por digest— cuyo destino está diferido | Paga la complejidad de la portabilidad entre entornos cuando **solo queda un entorno**. Es la alternativa a reconsiderar primero si se cierra ADR-0006 |
 | Podman rootless en lugar de Docker | Aislamiento sin grupo equivalente a `root`; compatible con los ficheros de composición existentes | Otra pieza que instalar y aprender, con sus diferencias de red y de volúmenes respecto a Docker, para un beneficio que en un host de un solo inquilino es pequeño | Complejidad nueva sin un problema nuevo que resolver |
 | Empaquetar la aplicación como `.deb` o con `pex` | Despliegue atómico y reversible sin contenedores | Construir el paquete es trabajo de infraestructura que hoy no existe, y el corpus ya obliga a un paso de sincronización aparte | Desproporcionado para una PoC con un único destino de despliegue |
 
@@ -59,8 +59,7 @@ composición siguen siendo el diseño de empaquetado válido para el día que se
 
 **Positivas**
 
-- **Un componente menos compitiendo por 2 núcleos.** Sin demonio de contenedores ni capa de red
-  virtual, en un host donde la inferencia de embeddings ya es cómputo local (RFC-0016 §5).
+- **Un componente menos en un host modesto.** Sin demonio de contenedores ni capa de red virtual.
 - **La cuenta de operación deja de necesitar el grupo `docker`**, que es equivalente a `root`. La
   decisión de operar como `qrimapp-reto` (RFC-0016 §8.1) pasa a acotar privilegio de verdad, no
   solo el error accidental.
@@ -74,7 +73,7 @@ composición siguen siendo el diseño de empaquetado válido para el día que se
   sustituye por identidad de release mediante SHA de commit, expuesta en tiempo de ejecución
   (RFC-0020). Es un sustituto más débil: garantiza *qué código* corre, no *con qué dependencias*.
 - **Las dependencias del sistema pasan a ser estado del host.** La versión de PostgreSQL, de
-  pgvector, de Python y del propio Ollama dejan de viajar con el artefacto. Una reinstalación no es
+  pgvector y de Python dejan de viajar con el artefacto. Una reinstalación no es
   reproducible sin un procedimiento escrito, y ese procedimiento puede quedar desactualizado —el
   modo de fallo clásico del despliegue nativo.
 - **Se pierde el aislamiento entre servicios.** Un proceso desbocado afecta a los demás sin la

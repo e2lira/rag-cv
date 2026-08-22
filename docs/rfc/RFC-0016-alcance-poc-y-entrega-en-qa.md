@@ -56,7 +56,7 @@ Tres estados, y solo tres:
 | RFC-0003 Retrieval híbrido (HNSW + FTS + RRF) | **Vigente** | La degradación a rama léxica de §6 pasa a cubrir la caída del embedder local en vez de la de Bedrock |
 | RFC-0004 Capa de agente Strands | Vigente con delta | La construcción del modelo ya la delegaba en RFC-0013; ahora se lee junto a RFC-0018 |
 | RFC-0005 API REST y autenticación | **Vigente** | Sin cambios |
-| RFC-0006 Modelo de datos y migraciones | Vigente con delta | `VECTOR(1024)` → `VECTOR(768)` y recreación del HNSW (RFC-0017 §4) |
+| RFC-0006 Modelo de datos y migraciones | Vigente con delta | `VECTOR(1024)` → `VECTOR(1536)` y recreación del HNSW (RFC-0017 §4). **Ojo:** RFC-0012 A-6 prohibía `1536` por corresponder a Titan G1; bajo RFC-0017 §4 es el valor correcto |
 | RFC-0007 Entornos e infraestructura | Parcial | §3 y §4 **vigentes**. §5.1 y §5.3 (topología y despliegue de QA con contenedores) los **sustituye RFC-0020**; §5.2 (credenciales AWS) lo **deroga** RFC-0018. §6 (PROD), §7 (IAM), §9 (IaC) y §10 (costos AWS) **diferidos** |
 | RFC-0008 CI/CD y release | Vigente con delta | El pipeline construye, prueba y despliega **hasta QA**. El paso de promoción a PROD por digest queda diferido; el job de deriva de Terraform no aplica |
 | RFC-0009 Evaluación y guardrails | **Vigente** | Es el gate que decide la variante de embedder de ADR-0007. Sus umbrales no se relajan |
@@ -172,52 +172,45 @@ Lo que interesa a este RFC es qué cambia respecto al diseño anterior:
 
 | Aspecto | RFC-0007 §5 (con contenedores) | Alcance vigente (RFC-0020) |
 | :--- | :--- | :--- |
-| Ejecución | `docker compose`: `caddy`, `api`, `db` | Procesos nativos; `caddy` y `postgresql` como servicios del sistema, la API y `ollama` como unidades de usuario |
+| Ejecución | `docker compose`: `caddy`, `api`, `db` | Procesos nativos; `caddy` y `postgresql` como servicios del sistema, la API como unidad de usuario |
 | Base de datos | `pgvector/pgvector:pg16` en contenedor | PostgreSQL 16 + pgvector del sistema, `listen_addresses = 'localhost'` |
-| Embeddings | Llamada a Bedrock | `ollama` nativo en `127.0.0.1:11434` (RFC-0017) |
+| Embeddings | Bedrock con usuario IAM | API de OpenAI, `text-embedding-3-small` (RFC-0017) |
 | Generación | Bedrock con usuario IAM | API de Anthropic (RFC-0018) |
 | Corpus | Objeto en S3 con eventos | Fichero en el VPS, vigilado por sondeo (§3.3, RFC-0019) |
 | Artefacto | Imagen de contenedor por *digest* | **Commit de git**, expuesto en `/readyz` (RFC-0020 §6) |
 
 De las tres dependencias externas del diseño original —Bedrock para generación, Bedrock para
-embeddings y S3 para el corpus— **no queda ninguna**. La única llamada que sale del host es la
-API de Anthropic.
+embeddings y S3 para el corpus— **no queda ninguna de AWS**. Quedan dos llamadas salientes, a dos
+proveedores **distintos**: Anthropic para generar y OpenAI para embeber. Que sean distintos importa:
+una caída no se lleva las dos cosas, que es justo lo que fallaba cuando Bedrock era ambas.
 
 ## 5. Dimensionamiento del VPS
 
-Mientras los embeddings eran una llamada a Bedrock, el tamaño del VPS era un detalle de compra:
-no había modelo en memoria (así lo justificaba RFC-0015 §9). Al autoalojar el embedder deja de
-serlo. **Este es el requisito de infraestructura de la PoC y no estaba declarado en ningún
-documento anterior.**
+**VPS contratado: 2 núcleos y 8 GB de RAM.**
 
-| Componente | Memoria estimada | Nota |
-| :--- | :--- | :--- |
-| Sistema operativo (Ubuntu 24.04, sin escritorio) | ~400 MB | — |
-| Caddy | ~30 MB | — |
-| API (`uvicorn`, 2 *workers*) | ~350 MB | ~180 MB por proceso (RFC-0012 §8) |
-| PostgreSQL 16 + pgvector | ~400 MB | Corpus diminuto; domina `shared_buffers` |
-| Ollama + `nomic-embed-text` v1.5 (F16) | ~550 MB | ~274 MB de pesos + tiempo de ejecución |
-| Ollama + variante multilingüe `v2-moe` (F16) | ~1.4 GB | Modelo mayor: es el caso que dimensiona |
+Este apartado existía porque autoalojar el embedder convertía el tamaño del host en un requisito de
+arquitectura. **ADR-0007 lo retiró**: el VPS no tiene capacidad de cómputo para sostener inferencia
+local, y los embeddings pasan a resolverse por API. Sin modelo en memoria, el dimensionado vuelve a
+ser holgado:
 
-**VPS contratado: 2 núcleos y 8 GB de RAM.** Con el caso que manda —la variante multilingüe,
-≈ 2.6 GB en reposo— sobran unos 5 GB para la caché de páginas de PostgreSQL y para las corridas
-de evaluación, que consultan en ráfaga. **La memoria no es el problema.**
-
-**El recurso escaso son los 2 núcleos**, y conviene decirlo porque es un cambio real respecto al
-diseño anterior. Antes, embeber era esperar a una red: coste de CPU cercano a cero. Ahora los
-mismos 2 núcleos los comparten PostgreSQL, la API con 2 *workers*, la inferencia de Ollama y el
-sondeo de RFC-0019. Consecuencias que hay que medir, no suponer:
-
-| Efecto | Dónde se decide |
+| Componente | Memoria estimada |
 | :--- | :--- |
-| `EMBEDDER_MAX_CONCURRENCY=4` puede sobresuscribir 2 núcleos durante la indexación | RFC-0017 §8: el valor se revisa con la medición de su CA-5 |
-| El embedding de consulta pasa de espera de red a **cómputo local** y compite con la generación de respuestas | RNF-3 (p95 ≤ 250 ms) se mide en el VPS, no se hereda del presupuesto anterior |
-| Una reindexación completa coincidiendo con tráfico degrada la latencia | El sondeo se ejecuta con cadencia baja y la ingesta toma *lease* (RFC-0019 §5) |
+| Sistema operativo (Ubuntu 24.04, sin escritorio) | ~400 MB |
+| Caddy | ~30 MB |
+| API (`uvicorn`, 2 *workers*) | ~350 MB |
+| PostgreSQL 16 + pgvector | ~400 MB |
 
-Las cifras de memoria de la tabla siguen siendo **estimaciones y se verifican en el VPS real**
-(CA-4), junto con la latencia bajo carga concurrente. Con 8 GB el modo de fallo por OOM deja de
-ser el riesgo principal; el riesgo pasa a ser la **contención de CPU**, que no mata el servicio:
-lo vuelve lento, que es más difícil de ver.
+Poco más de 1 GB en reposo sobre 8 GB disponibles. **La memoria deja de ser un tema**, y con ella
+el criterio de aceptación que la vigilaba pasa a ser una comprobación de rutina, no un riesgo.
+
+**Los 2 núcleos también dejan de ser el cuello.** Con inferencia local, embeber una consulta habría
+sido cómputo compitiendo con la generación de respuestas; por API vuelve a ser una **espera de
+red**, que es lo que el presupuesto de latencia de RFC-0001 §8 asumía desde el principio. Lo que
+queda por medir es la latencia de esa espera bajo tráfico concurrente (CA-4), no la contención de
+CPU.
+
+Conviene dejar registrado el porqué, para que nadie reintroduzca inferencia local sin volver a
+pensarlo: **este host no da para servir un modelo**, y esa restricción es la que decidió ADR-0007.
 
 ## 6. Re-lectura de los requisitos no funcionales
 
@@ -230,7 +223,7 @@ cumplido un umbral que ya no se mide sería el peor resultado de este RFC.
 | RNF-4 (disponibilidad ≥ 99.5 %) | **No verificado** | Un host único no tiene alta disponibilidad. Se declara no verificado, no cumplido |
 | RNF-5 (costo por conversación ≤ USD 0.05) | **Se mide** | De `usage.cost_usd`; ahora es el único freno de coste (ADR-0008) |
 | RNF-6 (costo de PROD ≤ USD 60/mes) | **No aplica** | No hay PROD. El costo de la PoC es el del VPS, fijo |
-| RNF-7 (la BD nunca se expone a internet) | **Se cumple** | RFC-0007 §5.1 ya lo aplicaba a QA. Se extiende a `ollama` (§4) |
+| RNF-7 (la BD nunca se expone a internet) | **Se cumple** | `listen_addresses = 'localhost'` y `ufw` sin el 5432 (RFC-0020 §7) |
 | RNF-8 (secretos fuera del repositorio) | **Se cumple** | `ANTHROPIC_API_KEY` en `$RAG_CV_HOME/.env` con permisos `600` (§8.1) |
 | RNF-9 (límite de tasa por API Key) | **Se cumple** | Sin cambios (RFC-0005) |
 | RNF-10 (imagen construida una vez, promovida por digest) | **No verificado, sustituido** | Sin contenedores no hay imagen ni digest (ADR-0010). Se conserva la propiedad que protegía —que lo que corre en QA sea lo que el CI validó— mediante el SHA de commit expuesto en `/readyz` (RFC-0020 §6). Es un sustituto más débil: garantiza qué código corre, no con qué dependencias del sistema |
@@ -246,9 +239,10 @@ para no obligar a reconstruir la configuración leyendo cinco documentos.
 | Variable | Valor en la PoC | Origen |
 | :--- | :--- | :--- |
 | `APP_ENV` | `qa` | RFC-0007 |
-| `EMBEDDER` | `ollama` | RFC-0017 |
-| `EMBEDDING_DIM` | `768` | RFC-0017 |
-| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | RFC-0017, RFC-0020 §8 — proceso nativo en bucle local |
+| `EMBEDDER` | `openai` | RFC-0017 |
+| `EMBEDDING_DIM` | `1536` | RFC-0017 |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | RFC-0017 §5 |
+| `OPENAI_API_KEY` | secreto, `.env` con permisos `600` | RFC-0017 §6 |
 | `PROVEEDOR` | `anthropic` | RFC-0018 |
 | `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | RFC-0018 |
 | `ANTHROPIC_API_KEY` | secreto, `.env` con permisos `600` | RFC-0018 |
@@ -274,7 +268,7 @@ momento, no por persona.**
 
 | Rol | Cuándo | Con qué cuenta | Qué hace |
 | :--- | :--- | :--- | :--- |
-| **Aprovisionamiento** | Una vez por VPS | `root` o `sudo` | Instala PostgreSQL, pgvector, Caddy, Python y Ollama; abre el cortafuegos; crea el árbol y su propiedad; habilita `linger` (RFC-0020 §4) |
+| **Aprovisionamiento** | Una vez por VPS | `root` o `sudo` | Instala PostgreSQL, pgvector, Caddy y Python; abre el cortafuegos; crea el árbol y su propiedad; habilita `linger` (RFC-0020 §4) |
 | **Operación** | Cada release, cada ciclo del sondeo | `qrimapp-reto` | Despliega, migra, indexa, reinicia unidades de usuario, lee bitácoras. **Nunca necesita `sudo`** |
 
 Que la operación no requiera `sudo` no es comodidad: es lo que permite que el `crontab` del
@@ -326,19 +320,16 @@ sincronización por `rsync`, migración y conmutación atómica de la release—
 Aquí solo quedan los dos pasos propios del alcance de la PoC, ambos de **aprovisionamiento**:
 
 ```bash
-# modelo de embeddings: sin esto, /readyz queda en rojo (RFC-0017 §5)
-ollama pull <modelo-fijado-por-digest>
-
 # sondeo del corpus: sin esto NO falla nada, y ahi esta el problema
 crontab cron/rag-cv-watcher                        # RFC-0019 §7
 ```
 
-**La asimetría entre esos dos pasos es lo que hay que tener presente.** Si se omite el `pull`, el
-arranque falla en la comprobación 4c de RFC-0012 §7 y `/readyz` se pone en rojo: un fallo correcto
-y visible. Si se omite el `crontab`, **el servicio arranca en verde y sirve consultas**, pero deja
-de enterarse de los cambios del CV. Es el modo de fallo silencioso de ADR-0009, y la razón por la
-que RFC-0019 §7 exige un latido con alerta por ausencia en vez de confiar en que el paso se
-recuerde.
+**Este paso es el peligroso, y conviene entender por qué.** Casi todo lo que se puede olvidar en
+este despliegue falla ruidosamente: una clave ausente impide el arranque, un embedder que no
+responde pone `/readyz` en rojo, una migración rota no conmuta la release. **El `crontab` no.** Si
+se omite, el servicio arranca en verde y sirve consultas correctamente; solo deja de enterarse de
+los cambios del CV. Es el modo de fallo silencioso de ADR-0009, y la razón por la que RFC-0019 §7
+exige un latido con alerta por ausencia en vez de confiar en que el paso se recuerde.
 
 **Promoción futura a PROD.** Cerrar ADR-0006 exigirá construir y validar la imagen de RFC-0015,
 que en la PoC nunca se habrá ejercitado (ADR-0010 lo declara como deuda). El diseño de PROD de
@@ -350,32 +341,33 @@ decisión es del Arquitecto y no se anticipa aquí.
 
 | Fallo | Detección | Comportamiento |
 | :--- | :--- | :--- |
-| `ollama` no responde | `/readyz`, comprobación 4c de RFC-0012 §7 | Consulta: degrada a **solo rama léxica** con `degraded=true` (RFC-0003 §6). Indexación: `rollback` completo |
+| El proveedor de embeddings no responde | `/readyz`, comprobación 4c de RFC-0012 §7 | Consulta: degrada a **solo rama léxica** con `degraded=true` (RFC-0003 §6). Indexación: `rollback` completo |
 | Modelo no descargado en el VPS | Primer arranque | `/readyz` en rojo con el nombre del modelo esperado. No arranca a medias |
 | OOM del host | El kernel mata el proceso mayor | Con 8 GB deja de ser el riesgo principal (§5). Se acota además con `MemoryMax` por unidad (RFC-0020 §5), que degrada el servicio culpable en vez del host |
 | API de Anthropic caída o con error de cuota | Cliente del proveedor | RFC-0013 §7: reintentos y fallo explícito. El *fallback* sigue apagado por defecto (ADR-0005) |
 | El sondeo del corpus deja de ejecutarse | Latido caducado (RFC-0019 §7) | Alerta. El índice queda desactualizado **sin dar error**: es el modo de fallo característico de ADR-0009 |
+| Cae la API de embeddings | `/readyz` y cliente | Consulta: degrada a rama léxica. **No afecta a la generación** |
 | El VPS cae | Sonda externa | **No hay servicio.** Punto único de fallo aceptado en ADR-0006 |
 
 La diferencia importante frente al diseño anterior: la caída del embedder ya **no** coincide con
 la caída del generador. Antes ambos eran Bedrock y una incidencia regional se llevaba los dos;
-ahora son un proceso local y una API externa, y la degradación a rama léxica cubre el primero
-sin tocar el segundo.
+ahora son dos proveedores independientes, y la degradación a rama léxica cubre el primero sin tocar
+el segundo.
 
 ## 10. Criterios de aceptación
 
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
-| CA-1 | Solo `caddy` escucha en interfaces públicas; API, PostgreSQL y Ollama solo en el bucle local | `ss -ltnp` en el VPS (RFC-0020 CA-4) |
+| CA-1 | Solo `caddy` escucha en interfaces públicas; API y PostgreSQL solo en el bucle local | `ss -ltnp` en el VPS (RFC-0020 CA-4) |
 | CA-2 | La aplicación arranca y sirve `/readyz` en verde **sin ninguna credencial de AWS presente** en el entorno | Despliegue con `env` sin variables `AWS_*` |
 | CA-3 | No queda ninguna referencia a `bedrock`, `titan` ni `AWS_REGION` en la configuración efectiva de la PoC | `systemctl --user show-environment` + lectura del `.env` |
-| CA-4 | El host sostiene el conjunto en reposo y durante una indexación completa sin OOM y **sin superar RNF-3 en consulta concurrente**, con la variante de embedder elegida | `systemd-cgtop`, `free -m` y latencia p95 durante la indexación con tráfico simultáneo |
+| CA-4 | La latencia p95 de recuperación cabe en RNF-3 con tráfico concurrente y durante una indexación completa | Latencia medida durante la indexación con tráfico simultáneo |
 | CA-5 | La suite de evaluación de RFC-0009 se ejecuta completa contra QA y publica sus métricas | `invoke evals --suite full` contra el despliegue de QA |
 | CA-6 | El pipeline de RFC-0008 llega hasta QA por SSH y no intenta ningún paso de AWS ni de registro de imágenes | Ejecución del workflow en verde |
 | CA-7 | RNF-4 y RNF-6 aparecen declarados **no verificados** en el informe de la PoC, no como cumplidos | Lectura del informe |
 | CA-8 | Los RFCs y ADRs marcados `Diferido` conservan su contenido sin modificaciones | `git log --follow` sobre RFC-0007 y RFC-0015 |
 | CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas sin tocar el corpus |
-| CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | `RFC-0019` CA-10 sobre el VPS |
+| CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | RFC-0019 CA-10 sobre el VPS |
 | CA-12 | Caddy sirve en 443 y la cuenta de operación no pertenece a ningún grupo equivalente a `root` | `id -nG qrimapp-reto` + `curl -fsS https://qa.<dominio>/readyz` |
 | CA-13 | Ninguna ruta de despliegue queda fuera de `$RAG_CV_HOME`, todo pertenece a `qrimapp-reto` y el `.env` conserva permisos `600` | `ls -l` sobre el árbol de despliegue |
 | CA-14 | Ninguna operación de despliegue, indexación o sondeo requiere `sudo` | Ejecutar el ciclo completo con la cuenta de operación |
@@ -387,10 +379,10 @@ sin tocar el segundo.
 | :--- | :--- |
 | Alguien lee un RFC diferido y lo implementa creyéndolo vigente | §3 es la fuente única de estado; `docs/README.md` lo refleja en su índice |
 | Se declara RNF-4 cumplido porque "en QA no se cayó" | CA-7 lo convierte en comprobación auditable |
-| El VPS se queda corto de memoria a mitad de la demo | §5 con número, CA-4, y la variante multilingüe como caso de dimensionado |
+| Alguien reintroduce inferencia local sin recordar que este host no da para servir un modelo | §5 lo deja registrado con su motivo; revertirlo exige reabrir ADR-0007 |
 | `Diferido` se lee como `Obsoleto` y alguien borra el diseño de AWS | Regla de lectura explícita en §1 y CA-8 |
 | La reducción de alcance se usa para relajar los umbrales de RFC-0009 | RFC-0009 se declara **Vigente** sin delta: los umbrales no se tocan |
-| El paso de `ollama pull` se omite en un VPS nuevo | Documentado en §8 y detectado por `/readyz` antes de servir tráfico |
+| Dos secretos de larga vida en el VPS en vez de uno | `600` en el `.env`, `SecretStr`, `gitleaks` en CI y exclusión en el `rsync` (RFC-0020 §6) |
 | Una sesión SSH comprometida con la cuenta de operación da acceso a los secretos y al despliegue | Declarado en §8.1. Se acota con acceso por clave sin contraseña (RFC-0007 §5.1) y `600` en el `.env` |
 | Reintroducir contenedores metería la cuenta en el grupo `docker`, que equivale a `root` | §8.1 lo declara; si se revierte ADR-0010 hay que revisar esta decisión, no heredarla |
 | Sin imagen, «desplegamos el commit X» deja de ser comprobable | RFC-0020 CA-5: el SHA se expone en `/readyz` |
@@ -402,8 +394,8 @@ sin tocar el segundo.
 | :--- | :--- | :--- | :--- |
 | A-1 | Ningún RFC ni ADR marcado `Diferido` ha sido editado | `git diff` contra el commit previo al cambio de alcance | Bloqueante |
 | A-2 | La aplicación arranca y responde sin ninguna variable `AWS_*` en el entorno | CA-2, CA-3 | Bloqueante |
-| A-3 | Ni la base de datos ni `ollama` publican puertos al host | CA-1 | Bloqueante |
-| A-4 | El dimensionado del VPS está declarado con número y verificado en el host real, incluida la latencia bajo contención de CPU | §5 + CA-4 | Mayor |
+| A-3 | Ni la base de datos ni la API escuchan fuera del bucle local | CA-1 | Bloqueante |
+| A-4 | La latencia de recuperación está medida en el host real bajo tráfico concurrente | §5 + CA-4 | Mayor |
 | A-4b | El `.env` tiene permisos `600` y ninguna ruta de despliegue escapa de `$RAG_CV_HOME` | CA-13 | Bloqueante |
 | A-4c | La renuncia al usuario de servicio sin shell está declarada como riesgo aceptado, no omitida | §8.1 | Mayor |
 | A-4d | La operación diaria no usa `root` ni `sudo` en ninguna automatización | CA-14 | Mayor |

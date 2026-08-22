@@ -50,7 +50,7 @@ vigentes y secciones diferidas.
 | [RFC-0014](./rfc/RFC-0014-disciplina-tdd.md) | Disciplina TDD verificable | Aprobado | 0008, 0009 | Vigente |
 | [RFC-0015](./rfc/RFC-0015-empaquetado-docker-y-despliegue.md) | Empaquetado Docker y artefactos de despliegue | Aprobado | 0007, 0008, 0012 | **Diferido** → 0020 |
 | [RFC-0016](./rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md) | Alcance de la PoC y entrega en QA (VPS Ubuntu) | Aprobado | 0007, 0008, 0015 | **Normativo** |
-| [RFC-0017](./rfc/RFC-0017-embeddings-nomic-sin-aws.md) | Embeddings sin AWS: `nomic-embed-text` autoalojado | Aprobado | 0012, 0006, 0016 | **Normativo** |
+| [RFC-0017](./rfc/RFC-0017-embeddings-sin-aws-openai.md) | Embeddings sin AWS: `text-embedding-3-small` de OpenAI | Aprobado | 0012, 0006, 0016 | **Normativo** |
 | [RFC-0018](./rfc/RFC-0018-generacion-sin-aws-api-de-anthropic.md) | Generación sin AWS: API de Anthropic | Aprobado | 0013, 0009, 0016 | **Normativo** |
 | [RFC-0019](./rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md) | Detección de cambios del corpus en el VPS | Aprobado | 0016, 0002, 0006, 0010 | **Normativo** |
 | [RFC-0020](./rfc/RFC-0020-topologia-nativa-de-qa-y-despliegue-por-ssh.md) | Topología nativa de QA y despliegue por SSH | Aprobado | 0016, 0007, 0008 | **Normativo** |
@@ -65,7 +65,7 @@ vigentes y secciones diferidas.
 | [ADR-0004](./adr/ADR-0004-modelo-de-embeddings.md) | Titan Text Embeddings V2 por defecto, Nomic como contingencia | Aceptada | Sustituida por ADR-0007 |
 | [ADR-0005](./adr/ADR-0005-proveedor-de-generacion.md) | Proveedor de generación por parametrización | Aceptada | Vigente; designación modificada por ADR-0008 |
 | [ADR-0006](./adr/ADR-0006-entorno-de-entrega-de-la-poc.md) | La PoC se entrega en QA (VPS Ubuntu); AWS diferido | Aceptada | **Vigente** |
-| [ADR-0007](./adr/ADR-0007-embeddings-nomic-autoalojados.md) | `nomic-embed-text` autoalojado como embedder de la PoC | Aceptada | **Vigente** |
+| [ADR-0007](./adr/ADR-0007-embeddings-por-api-openai.md) | `text-embedding-3-small` de OpenAI como embedder de la PoC | Aceptada | **Vigente** |
 | [ADR-0008](./adr/ADR-0008-generacion-por-api-de-anthropic.md) | La generación usa la API de Anthropic, no Bedrock | Aceptada | **Vigente** |
 | [ADR-0009](./adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md) | La detección de cambios del CV es por sondeo, no por eventos | Aceptada | **Vigente** |
 | [ADR-0010](./adr/ADR-0010-despliegue-nativo-sin-contenedores.md) | La PoC se despliega de forma nativa, sin contenedores | Aceptada | **Vigente** |

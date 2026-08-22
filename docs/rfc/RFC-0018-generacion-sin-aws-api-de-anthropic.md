@@ -66,7 +66,9 @@ Efectos concretos:
 - Desaparece el paso manual de **habilitar el acceso al modelo en la consola de Bedrock** por
   cuenta y región — el que producía un `AccessDeniedException` que parecía un problema de política
   IAM y no lo era.
-- El secreto de larga vida de la PoC pasa a ser **uno solo**: `ANTHROPIC_API_KEY`.
+- Los secretos de larga vida de la PoC quedan en **dos**: `ANTHROPIC_API_KEY` y, desde ADR-0007,
+  `OPENAI_API_KEY` para los embeddings. Siguen siendo menos que el diseño original, que además
+  exigía credenciales de AWS.
 
 Se declara sin adornos: RNF-8 se sigue cumpliendo —el secreto no vive en el repositorio— pero se
 pierde el "cero claves" que el rol de instancia daba en el PROD diferido. Es un secreto menos que
@@ -121,9 +123,9 @@ absorber una desviación.
 | `PROVEEDOR` desconocido | Fábrica | No arranca, listando los valores válidos (RFC-0013 §7) |
 | Falta `ANTHROPIC_API_KEY` | `Settings` | No arranca (validación por rama, RFC-0013 §5) |
 
-La caída del generador **no** coincide ya con la del embedder: son sistemas independientes
-(RFC-0016 §9). Una caída de la API de Anthropic deja el retrieval intacto; una caída de `ollama`
-degrada a rama léxica sin afectar a la generación.
+La caída del generador **no** coincide ya con la del embedder: son **proveedores distintos**
+(RFC-0016 §9). Una caída de Anthropic deja el retrieval intacto; una de OpenAI degrada a rama
+léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cosas.
 
 ## 8. Criterios de aceptación
 

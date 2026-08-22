@@ -40,8 +40,8 @@ flowchart LR
     I["Internet"] -->|443| CD["caddy<br/>servicio del sistema<br/>TLS Let's Encrypt"]
     CD -->|127.0.0.1:8080| API["uvicorn · rag-cv<br/>systemd de usuario"]
     API -->|127.0.0.1:5432| DB[("postgresql 16 + pgvector<br/>listen_addresses = localhost")]
-    API -->|127.0.0.1:11434| OL["ollama<br/>systemd de usuario"]
-    API -->|HTTPS| AN["API de Anthropic"]
+    API -->|HTTPS| AN["API de Anthropic<br/>generación"]
+    API -->|HTTPS| OA["API de OpenAI<br/>embeddings"]
     CR["cron de qrimapp-reto<br/>watcher"] --> CV[("corpus/cv.md")]
     CR --> DB
 ```
@@ -51,7 +51,6 @@ flowchart LR
 | `caddy` | Servicio del sistema (`systemd`) | `root`, aprovisionamiento | `0.0.0.0:80`, `0.0.0.0:443` |
 | `postgresql` | Servicio del sistema (`systemd`) | `root`, aprovisionamiento | `127.0.0.1:5432` |
 | `rag-cv` (uvicorn) | **Unidad de usuario** de `systemd` | `qrimapp-reto` | `127.0.0.1:8080` |
-| `ollama` | **Unidad de usuario** de `systemd` | `qrimapp-reto` | `127.0.0.1:11434` |
 | `watcher` | `crontab` de `qrimapp-reto` (RFC-0019) | `qrimapp-reto` | — |
 
 La división no es arbitraria: **lo que el operador necesita reiniciar en el día a día corre como
@@ -70,22 +69,15 @@ apt-get install -y postgresql-16 postgresql-16-pgvector caddy python3.12-venv
 # 3. Cortafuegos: solo SSH y HTTP/S (RFC-0007 §5.1, sin cambios)
 ufw allow 22,80,443/tcp && ufw enable
 
-# 4. Ollama nativo
-curl -fsSL https://ollama.com/install.sh | sh
-systemctl disable --now ollama      # ver la nota siguiente
-
-# 5. Que las unidades de usuario arranquen sin sesión abierta
+# 4. Que las unidades de usuario arranquen sin sesión abierta
 loginctl enable-linger qrimapp-reto
 
-# 6. Árbol de despliegue, propiedad del operador
+# 5. Árbol de despliegue, propiedad del operador
 install -d -o qrimapp-reto -g qrimapp-reto /home/qrimapp-reto/rag-cv/{releases,corpus,logs}
 ```
 
-**El paso 4 tiene una trampa que hay que decir.** El instalador oficial de Ollama crea y arranca
-una **unidad del sistema**. Si se deja activa y además se define la unidad de usuario de §5, hay
-dos instancias compitiendo por el 11434: la segunda falla al arrancar y el síntoma —`/readyz` en
-rojo por un embedder que "no responde"— no apunta a la causa. Se deshabilita la del sistema y se
-gestiona una sola, la de usuario, que es la que el operador puede reiniciar sin `sudo`.
+**No se instala ningún motor de inferencia.** Los embeddings van por API (ADR-0007) y la generación
+también (ADR-0008): el host no ejecuta modelos, solo la aplicación.
 
 **`enable-linger` es lo que hace que esto sobreviva a un reinicio.** Sin él, las unidades de
 usuario mueren al cerrar la sesión SSH y no arrancan al iniciar el host: el VPS se reinicia de
@@ -93,21 +85,22 @@ madrugada y por la mañana no hay servicio, sin ningún error que lo explique.
 
 ## 5. Supervisión
 
-Dos unidades de usuario en `~/.config/systemd/user/`, con `Restart=always` y `WantedBy=default.target`:
+Una unidad de usuario en `~/.config/systemd/user/`, con `Restart=always` y
+`WantedBy=default.target`:
 
-| Unidad | Ejecuta | Depende de |
-| :--- | :--- | :--- |
-| `rag-cv-api.service` | `$RAG_CV_HOME/current/.venv/bin/uvicorn` sobre `127.0.0.1:8080`, 2 *workers* | `rag-cv-ollama.service` |
-| `rag-cv-ollama.service` | `ollama serve` con `OLLAMA_HOST=127.0.0.1:11434` | — |
+| Unidad | Ejecuta |
+| :--- | :--- |
+| `rag-cv-api.service` | `$RAG_CV_HOME/current/.venv/bin/uvicorn` sobre `127.0.0.1:8080`, 2 *workers* |
 
 El operador gestiona con `systemctl --user restart rag-cv-api` y diagnostica con
 `journalctl --user -u rag-cv-api`. **Nada de eso requiere `sudo`**, que es el objetivo de
 RFC-0016 §8.1.
 
-**Límites de recurso.** Sin contenedor no hay límites por servicio de forma implícita, y en un
-host de 2 núcleos eso importa (RFC-0016 §5). Se fijan explícitamente en las unidades con
-`MemoryMax` y `CPUWeight`, de modo que una indexación desbocada degrade su propio servicio antes
-que tumbar PostgreSQL o la API. Los valores se ajustan con la medición de RFC-0016 CA-4.
+**Límites de recurso.** Sin contenedor no hay límites por servicio de forma implícita. Se fijan
+explícitamente en la unidad con `MemoryMax` y `CPUWeight`, de modo que una fuga en la aplicación
+degrade su propio servicio antes que tumbar PostgreSQL. Con los embeddings por API el host ya no
+ejecuta modelos (RFC-0016 §5), así que el margen es amplio; el límite existe como red de seguridad,
+no como ajuste fino.
 
 ## 6. Despliegue por SSH e identidad de release
 
@@ -150,7 +143,7 @@ Tres propiedades que esto conserva del diseño con contenedores:
    un hecho comprobable — y ahí es donde el sustituto de RNF-10 se rompería en silencio.
 
 **Se declara la diferencia, sin adornarla:** el SHA garantiza *qué código* corre, no *con qué
-dependencias del sistema*. La versión de PostgreSQL, de pgvector, de Python y de Ollama son estado
+dependencias del sistema*. La versión de PostgreSQL, de pgvector y de Python son estado
 del host. `requirements.lock` fija las de Python; el resto vive en el procedimiento de §4, y un
 procedimiento se desactualiza. Es la deuda que ADR-0010 aceptó.
 
@@ -161,20 +154,19 @@ RNF-7 —la base de datos nunca se expone a internet— se cumple sin la red del
 | Servicio | Mecanismo |
 | :--- | :--- |
 | PostgreSQL | `listen_addresses = 'localhost'` + `ufw` sin el 5432 |
-| Ollama | `OLLAMA_HOST=127.0.0.1:11434`; nunca `0.0.0.0` |
 | API | `uvicorn` sobre `127.0.0.1:8080`; solo Caddy la alcanza |
 | Caddy | Único proceso con puertos públicos, junto a SSH |
 
-**Ollama escuchando en `0.0.0.0` es el fallo grave de esta topología.** Un servicio de inferencia
-abierto a internet sin autenticación es capacidad de cómputo ajena corriendo en tu VPS, y el
-cambio es una variable de entorno. Por eso tiene comprobación propia (CA-4) y severidad
-Bloqueante.
+**Que la API escuche en `0.0.0.0` es el fallo grave de esta topología**, porque saltaría a Caddy y
+con él el TLS y la terminación que RFC-0005 asume. `uvicorn` enlaza por defecto en `127.0.0.1`,
+pero un `--host 0.0.0.0` copiado de un tutorial lo cambia sin que nada falle: el servicio responde
+igual. Por eso la comprobación es explícita (CA-4) y Bloqueante.
 
 ## 8. Configuración que cambia
 
 | Variable | Con contenedores | Nativo |
 | :--- | :--- | :--- |
-| `OLLAMA_BASE_URL` | `http://ollama:11434` | `http://127.0.0.1:11434` |
+| `EMBEDDER` | rama local en la red del compose | `openai` por API (RFC-0017) |
 | `DATABASE_URL` (anfitrión) | `db` | `127.0.0.1` |
 | `CORPUS_PATH` | ruta montada | `$RAG_CV_HOME/corpus/cv.md` |
 
@@ -187,7 +179,7 @@ de la existencia del compose.
 | :--- | :--- | :--- |
 | La API muere | `Restart=always` | `systemd` la reinicia; si entra en bucle, `journalctl` lo muestra y `/readyz` queda en rojo |
 | El VPS se reinicia sin `enable-linger` | Ausencia de servicio tras el arranque | **No hay servicio y no hay error.** Lo previene §4 paso 5 y lo verifica CA-2 |
-| Dos instancias de Ollama por la unidad del sistema | La segunda no arranca | `/readyz` en rojo por embedder ausente. Lo previene §4 paso 4 y lo verifica CA-3 |
+| El proveedor de embeddings no responde | `/readyz` en rojo o degradación a rama léxica | RFC-0017 §9. No es un fallo de esta topología: el host no ejecuta el modelo |
 | Migración fallida a mitad del despliegue | `alembic` devuelve error | El enlace `current` **no se conmuta**: sigue corriendo la release anterior |
 | Una release nueva arranca mal | `/readyz` tras el despliegue | Reversión conmutando el enlace (§6) |
 | Un proceso consume toda la memoria | `MemoryMax` de la unidad | `systemd` lo detiene antes de que el host entre en OOM |
@@ -199,12 +191,12 @@ de la existencia del compose.
 | :--- | :--- | :--- |
 | CA-1 | Ningún proceso de la aplicación corre como `root` ni requiere `sudo` para operar | `ps -o user= -p` sobre los procesos + ciclo completo con la cuenta de operación |
 | CA-2 | Tras `reboot`, el servicio vuelve solo, sin sesión SSH abierta | Reinicio del VPS + `curl /readyz` |
-| CA-3 | Existe **una sola** instancia de Ollama y es la unidad de usuario | `systemctl list-units 'ollama*'` + `ss -ltnp` |
-| CA-4 | Ni PostgreSQL ni Ollama escuchan fuera de `127.0.0.1` | `ss -ltnp` y sondeo desde fuera del host |
+| CA-3 | El host no ejecuta ningún motor de inferencia local | `systemctl list-units` + `ss -ltnp` |
+| CA-4 | Ni PostgreSQL ni la API escuchan fuera de `127.0.0.1` | `ss -ltnp` y sondeo desde fuera del host |
 | CA-5 | `/readyz` expone el SHA de commit desplegado y coincide con el enlace `current` | `curl /readyz` + `readlink $RAG_CV_HOME/current` |
 | CA-6 | Una migración fallida deja corriendo la release anterior | Despliegue con una migración rota a propósito |
 | CA-7 | La reversión a la release anterior se completa sin reconstruir nada | Conmutar el enlace + `curl /readyz` |
-| CA-8 | Las unidades declaran `MemoryMax` y el host no entra en OOM durante una indexación completa | `systemctl --user show -p MemoryMax` + RFC-0016 CA-4 |
+| CA-8 | La unidad declara `MemoryMax` y el host no entra en OOM durante una indexación completa | `systemctl --user show -p MemoryMax` + RFC-0016 CA-4 |
 | CA-9 | El procedimiento de §4 reconstruye un VPS vacío hasta `/readyz` en verde | Ejecución sobre un host limpio |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
 
@@ -212,12 +204,12 @@ de la existencia del compose.
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| **Ollama expuesto en `0.0.0.0`** | §7 + CA-4, severidad Bloqueante |
+| **La API expuesta en `0.0.0.0`**, saltándose Caddy y el TLS | §7 + CA-4, severidad Bloqueante |
 | Sin `enable-linger`, un reinicio deja el VPS sin servicio y sin error | §4 paso 5 + CA-2 |
-| Dos instancias de Ollama con un síntoma que no apunta a la causa | §4 paso 4 + CA-3 |
+| Alguien instala un motor de inferencia local en un host que no da para ello | §4 lo declara; revertirlo exige reabrir ADR-0007 |
 | "Desplegamos el commit X" sin forma de comprobarlo | CA-5: el SHA se expone en `/readyz` |
 | Deriva de dependencias del sistema; el procedimiento de §4 envejece | CA-9 lo ejercita sobre un host limpio, que es lo único que detecta la deriva |
-| Sin aislamiento, un proceso desbocado tumba a los demás | `MemoryMax` y `CPUWeight` por unidad (§5, CA-8) |
+| Sin aislamiento, un proceso desbocado tumba a los demás | `MemoryMax` y `CPUWeight` en la unidad (§5, CA-8) |
 | Los directorios de releases llenan el disco | Retención acotada en el procedimiento de despliegue, junto a la rotación de bitácoras de RFC-0019 §7 |
 | Un `.env` de desarrollo viaja al servidor con el `rsync` | Exclusiones explícitas en §6 + CA-10, severidad Bloqueante |
 | El despliegue pisa el corpus del VPS con el de la máquina de origen | `corpus/` excluido en §6 + CA-10 |
@@ -226,14 +218,14 @@ de la existencia del compose.
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
-| A-1 | Ollama y PostgreSQL solo escuchan en `127.0.0.1` | CA-4 | **Bloqueante** |
+| A-1 | PostgreSQL y la API solo escuchan en `127.0.0.1` | CA-4 | **Bloqueante** |
 | A-2 | Ningún proceso de la aplicación corre como `root` | CA-1 | Bloqueante |
 | A-3 | `/readyz` expone el SHA desplegado y coincide con `current` | CA-5 | Bloqueante |
 | A-4 | Una migración fallida no conmuta el enlace de release | CA-6 | Bloqueante |
 | A-5 | El servicio vuelve solo tras un reinicio del host | CA-2 | Bloqueante |
-| A-6 | Existe una sola instancia de Ollama | CA-3 | Mayor |
+| A-6 | El host no ejecuta modelos localmente | CA-3 | Mayor |
 | A-7 | La operación diaria no necesita `sudo` en ninguna automatización | CA-1 | Mayor |
-| A-8 | Las unidades declaran límites de memoria | CA-8 | Mayor |
+| A-8 | La unidad declara límites de memoria | CA-8 | Mayor |
 | A-9 | El procedimiento de aprovisionamiento reconstruye un host vacío | CA-9 | Mayor |
 | A-10 | RFC-0015 no ha sido editado: sigue siendo el diseño de empaquetado diferido | `git diff` sobre RFC-0015 | Bloqueante |
 | A-11 | La sincronización excluye `.env` y `corpus/` | CA-10 | **Bloqueante** |

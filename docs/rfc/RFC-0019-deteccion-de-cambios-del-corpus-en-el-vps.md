@@ -68,8 +68,7 @@ Cada ejecución del sondeo hace, en este orden y con salida temprana en cuanto p
 
 El paso 2 es el que hace barata esta decisión: con un CV que cambia unas pocas veces al año, la
 inmensa mayoría de las ejecuciones terminan en un `stat` y una consulta indexada, sin leer ni
-hashear nada. Importa en un host de 2 núcleos donde la CPU ya la comparten PostgreSQL, la API y la
-inferencia de embeddings (RFC-0016 §5).
+hashear nada, y sin gastar una sola llamada al proveedor de embeddings.
 
 ## 4. Estabilidad y escritura atómica
 

@@ -48,7 +48,7 @@ partida, que es distinto.
 | **API de Anthropic con `claude-haiku-4-5`** | Sale de AWS conservando exactamente el modelo ya designado: una sola variable cambia en toda la PoC. Rama ya prevista en RFC-0013 §3 y §5. Una única credencial. Sin infraestructura que operar | Una clave de larga vida en el `.env` del VPS. Pago por token. Las preguntas y los fragmentos del CV salen hacia un tercero | **Elegida** |
 | Mantener Bedrock desde el VPS | Cero cambios de configuración respecto a ADR-0005. Usuario IAM ya especificado en RFC-0007 §5.2 | Sostiene toda la cuenta de AWS, el usuario IAM, sus claves y su rotación a 90 días para un solo componente. Contradice el motivo de ADR-0006 | Es la dependencia que ADR-0006 y ADR-0007 vinieron a eliminar; conservarla por un componente deja el trabajo a medias |
 | Endpoint compatible con OpenAI (DeepSeek, Groq, OpenRouter) | Más barato. Rama ya soportada (RFC-0013). Groq da latencias muy bajas | Cambia modelo **y** camino a la vez que cambia el embedder: dos variables, ninguna atribución posible. Obliga a construir la primera línea base con un modelo no evaluado para el caso | Rompe la comparabilidad justo en la corrida que más importa. Queda disponible como siguiente experimento, con la evaluación como gate |
-| Generación local en el VPS (Ollama, 7–8B) | Coste cero y cero dependencia de nube: la PoC quedaría enteramente autoalojada | Un modelo 7–8B exige ~8 GB de RAM solo para él, encima de Postgres, la API, Caddy y el modelo de embeddings. Y los dos comportamientos críticos —decidir cuándo llamar a la herramienta y **abstenerse** sin evidencia— son los primeros en degradar en modelos pequeños, que es precisamente lo que la evaluación mide | El coste de VPS anula el ahorro, y arriesga el criterio que el reto evalúa. Reconsiderable si la evaluación con Haiku fija una línea base contra la cual comparar |
+| Generación local en el VPS (7–8B autoalojado) | Coste cero y cero dependencia de nube: la PoC quedaría enteramente autoalojada | **El VPS no tiene capacidad de cómputo para servir un modelo** (ADR-0007 llegó a la misma conclusión para los embeddings). Y los dos comportamientos críticos —decidir cuándo llamar a la herramienta y **abstenerse** sin evidencia— son los primeros en degradar en modelos pequeños, que es precisamente lo que la evaluación mide | El coste de VPS anula el ahorro, y arriesga el criterio que el reto evalúa. Reconsiderable si la evaluación con Haiku fija una línea base contra la cual comparar |
 | Fallback automático entre proveedores | Resiliencia si Anthropic falla | Un fallback silencioso a otro modelo sorprende en la factura y en la calidad | Ya decidido en ADR-0005: se implementa pero **apagado por defecto**, con métrica y log en cada conmutación. Este ADR no lo cambia |
 
 ## Consecuencias
@@ -66,9 +66,9 @@ partida, que es distinto.
 
 **Negativas / deuda aceptada**
 
-- **Un secreto de larga vida** (`ANTHROPIC_API_KEY`) en `/opt/rag-cv/.env` con permisos `600`.
-  RNF-8 se cumple —el secreto no vive en el repositorio— pero se pierde el "cero claves" que el
-  rol de instancia daba en el PROD diferido.
+- **Un secreto de larga vida** (`ANTHROPIC_API_KEY`) en `$RAG_CV_HOME/.env` con permisos `600`
+  (RFC-0016 §8.1), al que ADR-0007 suma el de OpenAI. RNF-8 se cumple —no viven en el
+  repositorio— pero se pierde el "cero claves" que el rol de instancia daba en el PROD diferido.
 - **Los fragmentos del CV y las preguntas salen hacia un tercero.** Con un CV el impacto es
   acotado, pero es un cambio de residencia de datos y se declara, no se omite.
 - **Pago por token sin infraestructura que lo acote.** RNF-5 (≤ USD 0.05 por conversación de 5
