@@ -43,7 +43,7 @@ de sistema (RFC-0004), los embeddings (RFC-0017).
 | :--- | :--- | :--- |
 | `PROVEEDOR` | `anthropic` | Sustituye al `bedrock` por defecto de RFC-0013 §5 |
 | `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | **El mismo modelo** que designaba ADR-0005; cambia el camino, no el modelo |
-| `ANTHROPIC_API_KEY` | secreto | `/opt/rag-cv/.env`, permisos `600`, propiedad del usuario de servicio sin shell |
+| `ANTHROPIC_API_KEY` | secreto | `$RAG_CV_HOME/.env`, permisos `600` (RFC-0016 §8.1) |
 | `AWS_REGION`, `BEDROCK_MODEL_ID` | **ausentes** | No vacías: ausentes (RFC-0016 §7) |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | sin cambios | RFC-0013 |
 
@@ -55,9 +55,10 @@ sola cosa.
 
 ## 4. Retirada de la credencial de AWS en QA
 
-RFC-0007 §5.2 especificaba para QA un usuario IAM `rag-cv-qa-invoker`, con claves en el `.env` y
-rotación cada 90 días. Con RFC-0017 y este RFC, **ningún componente de la PoC llama a AWS**, así
-que esa sección queda derogada para el alcance vigente y el usuario IAM se elimina.
+RFC-0007 §5.2 especificaba para QA un usuario IAM `rag-cv-qa-invoker`, con claves en el `.env`
+—bajo `/opt/rag-cv`, ruta que RFC-0016 §8.1 reubica— y rotación cada 90 días. Con RFC-0017 y este
+RFC, **ningún componente de la PoC llama a AWS**, así que esa sección queda derogada para el
+alcance vigente y el usuario IAM se elimina.
 
 Efectos concretos:
 
@@ -70,6 +71,11 @@ Efectos concretos:
 Se declara sin adornos: RNF-8 se sigue cumpliendo —el secreto no vive en el repositorio— pero se
 pierde el "cero claves" que el rol de instancia daba en el PROD diferido. Es un secreto menos que
 antes y uno más que en el diseño de PROD.
+
+Y hay un segundo matiz que no conviene callar: sin usuario de servicio sin shell (RFC-0016 §8.1),
+quien entre por SSH con la cuenta de despliegue **lee ese secreto**. Los permisos `600` protegen
+frente a otras cuentas del host, no frente a la propia. Es el precio de no tener privilegios de
+administrador, y se acota con acceso por clave y sin contraseña (RFC-0007 §5.1).
 
 ## 5. Efecto sobre la evaluación
 
@@ -126,7 +132,7 @@ degrada a rama léxica sin afectar a la generación.
 | CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5.json` | `invoke evals --suite full` |
 | CA-4 | La calibración del juez sobre los 15 casos de veredicto humano se ejecutó y publicó **antes** de usarlo como gate | Informe de calibración (RFC-0009 §4.1) |
 | CA-5 | El costo medio por caso y por conversación queda dentro de RNF-5 y del umbral de RFC-0009 | `usage.cost_usd` agregado en la corrida |
-| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `/opt/rag-cv/.env` + inventario de IAM |
+| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM |
 | CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` |
 | CA-8 | El *fallback* entre proveedores sigue apagado por defecto | `test_llm_factory.py::test_fallback_disabled_by_default` |
 

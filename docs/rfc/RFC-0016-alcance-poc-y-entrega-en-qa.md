@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0007, RFC-0008, RFC-0015 |
-| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue; **RFC-0002 §3, solo en «versionado en Git»** (§3.3). *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
+| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue; **RFC-0002 §3, solo en «versionado en Git»** (§3.3); **RFC-0007 §5.3 y RFC-0015 §7, solo en las rutas de despliegue** (§8.1). *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
 | **ADRs** | ADR-0006 |
 | **Fecha** | 2026-08-22 |
 
@@ -232,7 +232,7 @@ cumplido un umbral que ya no se mide sería el peor resultado de este RFC.
 | RNF-5 (costo por conversación ≤ USD 0.05) | **Se mide** | De `usage.cost_usd`; ahora es el único freno de coste (ADR-0008) |
 | RNF-6 (costo de PROD ≤ USD 60/mes) | **No aplica** | No hay PROD. El costo de la PoC es el del VPS, fijo |
 | RNF-7 (la BD nunca se expone a internet) | **Se cumple** | RFC-0007 §5.1 ya lo aplicaba a QA. Se extiende a `ollama` (§4) |
-| RNF-8 (secretos fuera del repositorio) | **Se cumple** | `ANTHROPIC_API_KEY` en `/opt/rag-cv/.env` con permisos `600` |
+| RNF-8 (secretos fuera del repositorio) | **Se cumple** | `ANTHROPIC_API_KEY` en `$RAG_CV_HOME/.env` con permisos `600` (§8.1) |
 | RNF-9 (límite de tasa por API Key) | **Se cumple** | Sin cambios (RFC-0005) |
 | RNF-10 (imagen construida una vez, promovida por digest) | **Se cumple parcialmente** | La imagen se construye una vez en el CI y se despliega a QA por digest. El tramo QA → PROD queda diferido |
 | RNF-11 (independencia del sistema operativo) | **Se cumple** | Sin cambios: el CI en Linux sigue siendo la autoridad |
@@ -263,19 +263,52 @@ despliegue arranque a medias en lugar de fallar de inmediato.
 
 ## 8. Despliegue y promoción futura
 
-El despliegue en QA es el de RFC-0007 §5.3, con dos añadidos:
+### 8.1 Rutas y privilegios en el VPS
+
+RFC-0007 §5.3 y RFC-0015 §7 sitúan el despliegue en `/opt/rag-cv`, y RFC-0007 §5.2 asigna sus
+ficheros a un usuario de servicio sin shell. **Ambas cosas suponen privilegios de administrador
+sobre el VPS, y la cuenta de la PoC no los tiene.**
+
+Toda ruta de despliegue se deriva de una única raíz, para que un cambio de hospedaje sea un
+cambio de una línea y no una búsqueda por cinco documentos:
+
+```sh
+RAG_CV_HOME=/home/qrimapp-reto/rag-cv
+```
+
+| Qué | Ruta | Sustituye a |
+| :--- | :--- | :--- |
+| Compose de QA | `$RAG_CV_HOME/docker-compose.qa.yml` | `/opt/rag-cv/...` (RFC-0007 §5.3) |
+| Secretos | `$RAG_CV_HOME/.env`, permisos `600` | `/opt/rag-cv/.env` (RFC-0007 §5.2, RFC-0015 §7) |
+| Corpus (`CORPUS_PATH`) | `$RAG_CV_HOME/corpus/cv.md` | — |
+| Bitácora del sondeo | `$RAG_CV_HOME/logs/watcher.log` | `/var/log/rag-cv/` (RFC-0019 §7) |
+| Programación del sondeo | **crontab del usuario** | `/etc/cron.d/` (RFC-0019 §7) |
+
+**Consecuencias de no tener privilegios, declaradas y no disimuladas:**
+
+| Lo que se pierde | Impacto real |
+| :--- | :--- |
+| Usuario de servicio sin shell propietario de los ficheros | Los procesos corren como la cuenta de la persona. El aislamiento entre "quien administra" y "quien ejecuta" **desaparece**: quien entra por SSH con esa cuenta tiene todo |
+| `/etc/logrotate.d` | La rotación se hace en espacio de usuario, con estado propio (RFC-0019 §7) |
+| `/etc/cron.d` con usuario explícito | El `crontab` del usuario cumple la misma función, y además sobrevive sin `sudo` |
+| Puertos privilegiados (80/443) para Caddy | **Requiere verificación** (CA-12): sin `CAP_NET_BIND_SERVICE` o `net.ipv4.ip_unprivileged_port_start`, un Caddy sin privilegios no puede escuchar en 443 |
+
+Los permisos `600` sobre el `.env` **siguen siendo exigibles** y son lo que sostiene RNF-8: el
+secreto no está en el repositorio y no es legible por otras cuentas del host.
+
+El despliegue en QA es el de RFC-0007 §5.3 con las rutas de §8.1, y dos añadidos:
 
 ```bash
 # aprovisionamiento, una sola vez por VPS
-docker compose -f /opt/rag-cv/docker-compose.qa.yml up -d ollama
-docker compose -f /opt/rag-cv/docker-compose.qa.yml exec ollama \
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml up -d ollama
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml exec ollama \
     ollama pull <modelo-fijado-por-digest>        # RFC-0017 §5
 
 # despliegue, en cada release (RFC-0007 §5.3, sin cambios)
-docker compose -f /opt/rag-cv/docker-compose.qa.yml pull api
-docker compose -f /opt/rag-cv/docker-compose.qa.yml run --rm api alembic upgrade head
-docker compose -f /opt/rag-cv/docker-compose.qa.yml up -d api
-docker compose -f /opt/rag-cv/docker-compose.qa.yml run --rm api \
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml pull api
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml run --rm api alembic upgrade head
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml up -d api
+docker compose -f $RAG_CV_HOME/docker-compose.qa.yml run --rm api \
     python -m app.ingestion.indexer --corpus corpus/cv.md
 curl -fsS https://qa.<dominio>/readyz
 ```
@@ -324,6 +357,8 @@ sin tocar el segundo.
 | CA-8 | Los RFCs y ADRs marcados `Diferido` conservan su contenido sin modificaciones | `git log --follow` sobre RFC-0007 y RFC-0015 |
 | CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas sin tocar el corpus |
 | CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | `RFC-0019` CA-10 sobre el VPS |
+| CA-12 | Caddy sirve en 443 con la cuenta disponible, o está documentado el mecanismo que lo permite | `ss -ltnp` en el VPS + `curl -fsS https://qa.<dominio>/readyz` |
+| CA-13 | Ninguna ruta de despliegue queda fuera de `$RAG_CV_HOME` y el `.env` conserva permisos `600` | `ls -l` sobre el árbol de despliegue |
 | CA-10 | El token de versión persistido es un ULID por detección, **no** el `content_sha256` ni un SHA de commit | Consulta a `source_documents` tras dos ingestas |
 
 ## 11. Riesgos
@@ -336,6 +371,8 @@ sin tocar el segundo.
 | `Diferido` se lee como `Obsoleto` y alguien borra el diseño de AWS | Regla de lectura explícita en §1 y CA-8 |
 | La reducción de alcance se usa para relajar los umbrales de RFC-0009 | RFC-0009 se declara **Vigente** sin delta: los umbrales no se tocan |
 | El paso de `ollama pull` se omite en un VPS nuevo | Documentado en §8 y detectado por `/readyz` antes de servir tráfico |
+| Sin usuario de servicio, una sesión SSH comprometida da acceso a los secretos y al despliegue completo | Declarado en §8.1. Se acota con acceso por clave, `600` en el `.env` y ausencia de segundos usuarios en la cuenta |
+| Caddy no puede abrir el 443 sin privilegios y el despliegue se descubre roto al final | CA-12 lo verifica antes de dar QA por operativo |
 
 ## Contrato de auditoría (gate ADU)
 
@@ -345,6 +382,8 @@ sin tocar el segundo.
 | A-2 | La aplicación arranca y responde sin ninguna variable `AWS_*` en el entorno | CA-2, CA-3 | Bloqueante |
 | A-3 | Ni la base de datos ni `ollama` publican puertos al host | CA-1 | Bloqueante |
 | A-4 | El dimensionado del VPS está declarado con número y verificado en el host real, incluida la latencia bajo contención de CPU | §5 + CA-4 | Mayor |
+| A-4b | El `.env` tiene permisos `600` y ninguna ruta de despliegue escapa de `$RAG_CV_HOME` | CA-13 | Bloqueante |
+| A-4c | La pérdida del usuario de servicio sin shell está declarada como riesgo aceptado, no omitida | §8.1 | Mayor |
 | A-5 | RNF-4 y RNF-6 figuran como **no verificados** en el informe de la PoC | CA-7 | Bloqueante |
 | A-6 | Los umbrales de RFC-0009 no se han modificado | `git diff` sobre RFC-0009 | Bloqueante |
 | A-7 | El índice de `docs/README.md` refleja el estado de cada RFC frente a la PoC | Lectura | Menor |

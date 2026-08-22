@@ -135,15 +135,34 @@ de la versión actualmente indexada?"**.
 **Cadencia por defecto: cada 5 minutos.** Un CV se edita de vez en cuando; 5 minutos acotan el
 desfase a un coste permanente despreciable.
 
+Se instala en el **crontab del usuario**, no en `/etc/cron.d`: la cuenta de la PoC no tiene
+privilegios de administrador (RFC-0016 §8.1). Un `crontab` de usuario cumple la misma función, no
+necesita `sudo` y sobrevive a los reinicios igual.
+
 ```cron
-# /etc/cron.d/rag-cv-watcher
-*/5 * * * * ragcv cd /opt/rag-cv && \
+# crontab -e  (usuario qrimapp-reto)
+RAG_CV_HOME=/home/qrimapp-reto/rag-cv
+
+*/5 * * * * cd $RAG_CV_HOME && \
   docker compose -f docker-compose.qa.yml run --rm --no-deps api \
-  python -m app.ingestion.watcher >> /var/log/rag-cv/watcher.log 2>&1
+  python -m app.ingestion.watcher >> $RAG_CV_HOME/logs/watcher.log 2>&1
+
+# rotación en espacio de usuario: sin /etc/logrotate.d no hay rotación del sistema
+0 4 * * * /usr/sbin/logrotate --state $RAG_CV_HOME/logs/.logrotate.state \
+  $RAG_CV_HOME/logs/logrotate.conf
 ```
 
-`--no-deps` evita reiniciar `db` y `ollama`, que ya están arriba. El usuario `ragcv` es el usuario
-de servicio sin shell de RFC-0007 §5.2.
+`--no-deps` evita reiniciar `db` y `ollama`, que ya están arriba. `RAG_CV_HOME` es una asignación
+del propio `crontab`, no un comentario: `cron` la coloca en el entorno del proceso hijo y es `sh`
+quien la expande al ejecutar la orden. Escrita como comentario, la ruta quedaría vacía y el `cd`
+llevaría al directorio personal — un fallo que solo se ve leyendo la bitácora.
+
+**La bitácora necesita rotación explícita.** El contenedor sí tiene límite —RFC-0015 §7 fija
+`max-size: 50m` y `max-file: 3` en el controlador de registro—, pero eso no cubre la salida que el
+`cron` redirige a fichero: `docker compose run` escribe a `stdout`, y ese `stdout` acaba en
+`watcher.log`. Sin rotación, un fallo que se repita cada 5 minutos llena el disco de la cuenta, y
+un disco lleno hace fallar el propio sondeo — el fallo silencioso de §7, otra vez, por la puerta
+de atrás.
 
 **El latido no es opcional, es la mitad de esta decisión.** Un `cron` que deja de dispararse
 —porque alguien lo comentó, porque el servicio de `cron` murió, porque el disco se llenó y el
@@ -159,7 +178,7 @@ de RFC-0010, igual que el resto.
 
 | Variable | Por defecto | Descripción |
 | :--- | :--- | :--- |
-| `CORPUS_PATH` | — | Ruta absoluta del corpus en el VPS (RFC-0001) |
+| `CORPUS_PATH` | `$RAG_CV_HOME/corpus/cv.md` | Ruta absoluta del corpus en el VPS (RFC-0001, RFC-0016 §8.1) |
 | `WATCHER_CADENCE` | `*/5 * * * *` | Cadencia del `cron`; no la lee la aplicación, se documenta aquí para que viva junto al resto |
 | `WATCHER_STABILITY_DELAY_SECONDS` | `5` | Retardo de la comprobación de estabilidad (§4) |
 | `WATCHER_LEASE_SECONDS` | `600` | Duración del *lease*. **Debe** superar una reindexación completa (§5) |
@@ -179,6 +198,7 @@ de RFC-0010, igual que el resto.
 | Dos ejecuciones solapadas | *Lease* | La segunda no encuentra trabajo reclamable y sale |
 | Fichero corrupto o vacío que sí es estable | Validación de RFC-0002 | La ingesta falla y hace `rollback`: nunca se promueve un índice vacío |
 | Disco lleno | `docker compose run` falla | El latido no se actualiza ⇒ alerta (§7) |
+| Bitácora sin rotar llenando la cuenta | Rotación diaria en espacio de usuario (§7) | Sin ella, un fallo repetido cada 5 min llena el disco y tumba el propio sondeo |
 
 ## 10. Criterios de aceptación
 
@@ -197,6 +217,8 @@ de RFC-0010, igual que el resto.
 | CA-11 | Un latido más antiguo que el umbral dispara alerta | Prueba de la regla de alerta (RFC-0010) |
 | CA-12 | Superar `WATCHER_MAX_ATTEMPTS` deja el trabajo `dead_lettered` y no reintenta | `test_watcher.py::test_dead_letter` |
 | CA-13 | El fallo del embedder deja el índice intacto, nunca a medias | `test_watcher.py::test_rollback_on_failure` |
+| CA-14 | El sondeo está en el `crontab` del usuario y se ejecuta sin `sudo` | `crontab -l` + latido tras un ciclo |
+| CA-15 | La bitácora rota y no crece sin límite | Ejecución de la rotación + `ls -l` sobre `logs/` |
 
 ## 11. Riesgos
 
@@ -209,6 +231,7 @@ de RFC-0010, igual que el resto.
 | Reintentos en bucle consumiendo CPU del host | `WATCHER_MAX_ATTEMPTS` y `dead_lettered` (CA-12) |
 | Alguien borra el corpus y el sistema "se vacía" | §3 paso 1 y CA-9: ausencia es incidente, no contenido vacío |
 | El sondeo coincide con tráfico y degrada la latencia | Cadencia baja + *lease*; se mide en RFC-0016 CA-4 |
+| La bitácora llena el disco y tumba el sondeo que debía vigilar | Rotación en espacio de usuario (§7, CA-15) |
 
 ## Contrato de auditoría (gate ADU)
 
@@ -225,3 +248,5 @@ de RFC-0010, igual que el resto.
 | A-9 | `WATCHER_MAX_ATTEMPTS` termina en `dead_lettered` con alerta | CA-12 | Mayor |
 | A-10 | El `idempotency_key` es determinista a partir de `object_key` y del token de versión | Lectura + CA-6 | Mayor |
 | A-11 | No se introdujo ninguna tabla ni columna nueva para el sondeo | `git diff` sobre `infra/sql/` | Menor |
+| A-12 | El sondeo no requiere privilegios de administrador para instalarse ni ejecutarse | CA-14 | Mayor |
+| A-13 | La bitácora del sondeo tiene rotación configurada | CA-15 | Mayor |
