@@ -29,7 +29,7 @@ La documentación se produce y se consume bajo la metodología multiagente **ADU
 | :--- | :--- | :--- | :--- |
 | [RFC-0001](./rfc/RFC-0001-arquitectura-general.md) | Arquitectura general y límites del sistema | Aprobado | — |
 | [RFC-0002](./rfc/RFC-0002-ingesta-y-chunking.md) | Ingesta del CV, normalización y chunking | Aprobado | 0001, 0006 |
-| [RFC-0003](./rfc/RFC-0003-retrieval-hibrido-rrf.md) | Recuperación híbrida (HNSW + BM25 + RRF) | Aprobado | 0002, 0006 |
+| [RFC-0003](./rfc/RFC-0003-retrieval-hibrido-rrf.md) | Recuperación híbrida (HNSW + PostgreSQL FTS + RRF) | Aprobado | 0002, 0006 |
 | [RFC-0004](./rfc/RFC-0004-capa-agente-strands.md) | Capa de agente con Strands Agents | Aprobado | 0003 |
 | [RFC-0005](./rfc/RFC-0005-api-rest-y-autenticacion.md) | API REST, contrato y autenticación por API Key | Aprobado | 0004 |
 | [RFC-0006](./rfc/RFC-0006-modelo-de-datos-y-migraciones.md) | Modelo de datos PostgreSQL/pgvector y migraciones | Aprobado | 0001 |
