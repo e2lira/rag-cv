@@ -61,7 +61,7 @@ Tres estados, y solo tres:
 | RFC-0008 CI/CD y release | Vigente con delta | El pipeline construye, prueba y despliega **hasta QA**. El paso de promoción a PROD por digest queda diferido; el job de deriva de Terraform no aplica |
 | RFC-0009 Evaluación y guardrails | **Vigente** | Es el gate que decide la variante de embedder de ADR-0007. Sus umbrales no se relajan |
 | RFC-0010 Observabilidad, costos y runbook | Vigente con delta | Logs JSON + rotación en el VPS **vigentes**. CloudWatch, las diez alarmas de §6 y el presupuesto de PROD, **diferidos**. El runbook mantiene §9.6c (reindexación), que este cambio ejercita |
-| RFC-0011 Entorno DEV Windows nativo | Vigente con delta | Deja de necesitar `aws sso login` y salida a internet para indexar: el embedder es local (RFC-0017 §6) |
+| RFC-0011 Entorno DEV Windows nativo | Vigente con delta | Deja de necesitar `aws sso login`. **CA-0 —el bootstrap comprueba el acceso a los modelos de Bedrock— no aplica**: se sustituye por comprobar que existe la credencial del embedder activo (`OPENAI_API_KEY`, RFC-0017 §6). DEV **sigue necesitando red**: el embedder es por API, no local |
 | RFC-0012 Capa de embeddings enchufable | Vigente con delta | La **interfaz, el contrato y la suite de pruebas siguen intactos**. Cambia la implementación por defecto: RFC-0017 |
 | RFC-0013 Capa de proveedores LLM | Vigente con delta | La **fábrica y la parametrización siguen intactas**. Cambia el proveedor designado: RFC-0018 |
 | RFC-0014 Disciplina TDD | **Vigente** | Sin cambios. Aplica a todo lo que se implemente bajo este alcance |
@@ -403,6 +403,7 @@ el segundo.
 | A-5 | RNF-4 y RNF-6 figuran como **no verificados** en el informe de la PoC | CA-7 | Bloqueante |
 | A-6 | Los umbrales de RFC-0009 no se han modificado | `git diff` sobre RFC-0009 | Bloqueante |
 | A-7 | El índice de `docs/README.md` refleja el estado de cada RFC frente a la PoC | Lectura | Menor |
+| A-7b | Ninguna implementación conserva comprobaciones de acceso a Bedrock heredadas de RFC-0011 CA-0 | `rg -n "bedrock" scripts/ app/` | Mayor |
 | A-8 | El token de versión del ledger no es el `content_sha256`; revertir el CV a una versión anterior inserta fila en vez de fallar | CA-10 + RFC-0019 CA-8 | Bloqueante |
 | A-9 | Reindexar sin cambios de corpus es idempotente y no falla por unicidad | CA-9 | Bloqueante |
 | A-10 | El paso de aprovisionamiento del modelo está en el runbook | Lectura de RFC-0010 §9 | Menor |
