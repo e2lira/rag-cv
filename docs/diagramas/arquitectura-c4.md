@@ -40,7 +40,7 @@ flowchart TB
     subgraph AR["AWS App Runner · contenedor rag-cv (1 vCPU / 2 GB)"]
         API["API FastAPI + Uvicorn<br/>:8080"]
         AGENT["Agente Strands<br/>prompt + herramientas"]
-        RET["Retriever híbrido<br/>HNSW + BM25 + RRF"]
+        RET["Retriever híbrido<br/>HNSW + PostgreSQL FTS + RRF"]
         WORKER["Worker de ingesta<br/>idempotente"]
     end
 
@@ -70,7 +70,7 @@ flowchart TB
         API["Capa API<br/>/v1/chat · /v1/chat/stream · /healthz"]
         SVC["Capa de servicio<br/>orquestación de conversación"]
         AG["Capa de agente<br/>Strands Agent + tools"]
-        RET["Retriever híbrido<br/>HNSW + BM25 + RRF"]
+        RET["Retriever híbrido<br/>HNSW + PostgreSQL FTS + RRF"]
         ING["Ingestión<br/>loader · chunker · indexer"]
         REPO["Repositorios<br/>psycopg / SQLAlchemy Core"]
         PRV["Proveedores<br/>boto3 · Bedrock · LLM"]

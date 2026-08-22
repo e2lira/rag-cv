@@ -43,6 +43,11 @@ BEGIN
         RAISE EXCEPTION 'Expected embedding type vector(1024), got %', embedding_type;
     END IF;
 
+    IF to_regconfig('public.es_unaccent') IS NULL
+       OR NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'unaccent') THEN
+        RAISE EXCEPTION 'Expected public.es_unaccent configuration and unaccent extension';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_attribute AS attribute
@@ -52,6 +57,15 @@ BEGIN
           AND NOT attribute.attisdropped
     ) THEN
         RAISE EXCEPTION 'ingestion_jobs.source_document_id must be NOT NULL';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'rag_cv.rag_chunks'::regclass
+          AND tgname = 'rag_chunks_update_tsv'
+          AND NOT tgisinternal
+    ) THEN
+        RAISE EXCEPTION 'Expected materialized tsv maintenance trigger';
     END IF;
 
     SELECT pg_get_indexdef(index_class.oid)
@@ -69,9 +83,8 @@ BEGIN
       FROM pg_class AS index_class
      WHERE index_class.oid = 'rag_cv.rag_chunks_content_fts_idx'::regclass;
 
-    IF fts_definition NOT ILIKE '%USING gin%'
-       OR fts_definition NOT ILIKE '%to_tsvector%' THEN
-        RAISE EXCEPTION 'Expected GIN full-text index, got %', fts_definition;
+    IF fts_definition NOT ILIKE '%USING gin (tsv)%' THEN
+        RAISE EXCEPTION 'Expected GIN index on materialized tsv column, got %', fts_definition;
     END IF;
 END;
 $$;
@@ -157,7 +170,7 @@ INSERT INTO rag_cv.source_documents (
 INSERT INTO rag_cv.rag_chunks (
     source_document_id, ordinal, content, content_sha256, embedding
 )
-SELECT id, 0, 'new current chunk', repeat('d', 64),
+SELECT id, 0, 'informática current chunk', repeat('d', 64),
        (ARRAY[0::real, 1::real] || array_fill(0::real, ARRAY[1022]))::vector
 FROM rag_cv.source_documents
 WHERE object_key = current_setting('rag_cv.verify_object_key') AND s3_version_id = 'verify-version-3';
@@ -185,7 +198,7 @@ BEGIN
     IF EXISTS (
         SELECT 1 FROM rag_cv.active_chunks WHERE content = 'old current chunk'
     ) OR NOT EXISTS (
-        SELECT 1 FROM rag_cv.active_chunks WHERE content = 'new current chunk'
+        SELECT 1 FROM rag_cv.active_chunks WHERE content = 'informática current chunk'
     ) THEN
         RAISE EXCEPTION 'active_chunks did not exclude stale chunks or include current chunks';
     END IF;
@@ -206,8 +219,16 @@ BEGIN
      ORDER BY embedding <=> (ARRAY[0::real, 1::real] || array_fill(0::real, ARRAY[1022]))::vector
      LIMIT 1;
 
-    IF nearest_content <> 'new current chunk' THEN
+    IF nearest_content <> 'informática current chunk' THEN
         RAISE EXCEPTION 'Cosine nearest-neighbor query returned %, expected only active chunk', nearest_content;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM rag_cv.active_chunks
+        WHERE tsv @@ websearch_to_tsquery('es_unaccent', 'informatica')
+    ) THEN
+        RAISE EXCEPTION 'Unaccent-aware lexical query did not match informática';
     END IF;
 
     SELECT id INTO version_one_id

@@ -28,7 +28,7 @@ documento.
 | **Bedrock Knowledge Bases + OpenSearch Serverless** | Gestionado, ingesta y sincronización automáticas, híbrido incluido | OpenSearch Serverless tiene un mínimo de ~USD 100+/mes que dobla el presupuesto; el chunking y el ranking quedan como caja negra; cuesta más portar QA fuera de AWS | Coste incompatible con RNF-6 y, sobre todo, elimina justo la parte que el reto quiere ver |
 | **Bedrock Knowledge Bases + Aurora Serverless pgvector** | Gestionado con pgvector debajo | Aurora Serverless v2 tiene un mínimo de capacidad con coste sensiblemente mayor a `db.t4g.micro`; sigue ocultando el chunking | Coste y opacidad |
 | **Índice en memoria (FAISS / numpy)** | Cero infraestructura, latencia mínima con este tamaño de corpus | Se pierde la búsqueda léxica sin añadir otra pieza; el índice se reconstruye en cada arranque y por instancia; no hay trazabilidad ni consulta ad hoc | Simplifica de más y no demuestra el criterio de operación de datos |
-| **Solo búsqueda léxica (BM25)** | Muy simple y barato | Falla en preguntas parafraseadas, que son la mitad de las que recibe un CV | Insuficiente para RF-2 |
+| **Solo búsqueda léxica con PostgreSQL FTS** | Muy simple y barata | Falla en preguntas parafraseadas, que son la mitad de las que recibe un CV | Insuficiente para RF-2 |
 
 ## Consecuencias
 

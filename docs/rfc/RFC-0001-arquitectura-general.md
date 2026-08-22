@@ -35,7 +35,7 @@ flowchart TB
         API["Capa API<br/>/v1/chat · /v1/chat/stream · /healthz"]
         SVC["Capa de servicio<br/>orquestación de conversación"]
         AG["Capa de agente<br/>Strands Agent + tools"]
-        RET["Retriever híbrido<br/>HNSW + BM25 + RRF"]
+        RET["Retriever híbrido<br/>HNSW + PostgreSQL FTS + RRF"]
         REPO["Repositorios<br/>psycopg / SQLAlchemy Core"]
     end
     subgraph AWS["Amazon Bedrock"]

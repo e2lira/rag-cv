@@ -1,4 +1,4 @@
-# RFC-0003 — Recuperación híbrida: HNSW + BM25 + Reciprocal Rank Fusion
+# RFC-0003 — Recuperación híbrida: HNSW + PostgreSQL FTS + Reciprocal Rank Fusion
 
 | Campo | Valor |
 | :--- | :--- |
@@ -25,8 +25,8 @@ híbrida y su fusión.
 
 ## 2. Alcance
 
-**Entra:** embebido de la consulta, rama vectorial, rama léxica, fusión RRF, filtros,
-diversificación, formateo del contexto y contrato de la herramienta.
+**Entra:** embebido de la consulta, rama vectorial, rama léxica, fusión RRF, ordenamiento
+determinista, formateo del contexto y contrato de la herramienta.
 
 **No entra:** el DDL y los índices (RFC-0006), la decisión del agente sobre *cuándo* buscar
 (RFC-0004), reranking con modelo dedicado (deuda declarada, §9).
@@ -37,12 +37,12 @@ diversificación, formateo del contexto y contrato de la herramienta.
 flowchart LR
     Q["Consulta del agente"] --> N["Normalización<br/>+ expansión de sinónimos"]
     N --> E["embedder.embed_query<br/>Titan V2 · 1024d"]
-    N --> T["to_tsquery('spanish', ...)"]
+    N --> T["websearch_to_tsquery('es_unaccent', ...)"]
     E --> V["Rama vectorial<br/>HNSW coseno · LIMIT 20"]
     T --> L["Rama léxica<br/>GIN + ts_rank_cd · LIMIT 20"]
     V --> R["RRF k=60"]
     L --> R
-    R --> D["Diversificación<br/>máx. 2 por unidad"]
+    R --> D["Orden determinista<br/>desempate por id"]
     D --> F["Formateo citable · top_k=5"]
 ```
 
@@ -64,11 +64,9 @@ flowchart LR
 ### 3.2 Rama vectorial
 
 ```sql
-SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %(qv)s::vector) AS rank
-FROM cv_chunks
-WHERE doc_id = %(doc_id)s
-  AND (%(chunk_types)s::text[] IS NULL OR chunk_type = ANY(%(chunk_types)s))
-ORDER BY embedding <=> %(qv)s::vector
+SELECT id, ROW_NUMBER() OVER (ORDER BY embedding <=> %(qv)s::vector, id) AS rank
+FROM rag_cv.active_chunks
+ORDER BY embedding <=> %(qv)s::vector, id
 LIMIT %(candidates)s;
 ```
 
@@ -79,11 +77,10 @@ prácticamente perfecto a coste despreciable. El valor es configurable por
 ### 3.3 Rama léxica
 
 ```sql
-SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(tsv, query) DESC) AS rank
-FROM cv_chunks, websearch_to_tsquery('spanish', %(q)s) AS query
-WHERE doc_id = %(doc_id)s
-  AND tsv @@ query
-ORDER BY ts_rank_cd(tsv, query) DESC
+SELECT id, ROW_NUMBER() OVER (ORDER BY ts_rank_cd(tsv, query) DESC, id) AS rank
+FROM rag_cv.active_chunks, websearch_to_tsquery('public.es_unaccent', %(q)s) AS query
+WHERE tsv @@ query
+ORDER BY ts_rank_cd(tsv, query) DESC, id
 LIMIT %(candidates)s;
 ```
 
@@ -103,11 +100,11 @@ fused AS (
          s.rank AS sem_rank, l.rank AS lex_rank
   FROM semantic s FULL OUTER JOIN lexical l ON s.id = l.id
 )
-SELECT c.id, c.unit, c.section, c.chunk_type, c.content, c.date_start, c.date_end,
+SELECT c.id, c.source_document_id, c.ordinal, c.content, c.metadata,
        f.score, f.sem_rank, f.lex_rank
-FROM fused f JOIN cv_chunks c ON c.id = f.id
-ORDER BY f.score DESC
-LIMIT %(top_k_raw)s;
+FROM fused f JOIN rag_cv.active_chunks c ON c.id = f.id
+ORDER BY f.score DESC, c.id
+LIMIT %(top_k)s;
 ```
 
 **Por qué RRF y no una suma ponderada de puntuaciones:** la distancia coseno y `ts_rank_cd`
@@ -124,11 +121,13 @@ degenera hacia "gana quien tenga el mejor rango en cualquier rama".
 sesgo hacia una rama, pero **cualquier cambio de estos pesos exige volver a correr la suite de
 evaluación** (RFC-0009).
 
-### 3.5 Diversificación
+### 3.5 Orden y selección
 
-Sobre los `top_k_raw = top_k + 5` resultados fusionados se aplica: **máximo 2 fragmentos por
-`unit`**. Sin esto, una unidad dividida en 4 partes puede ocupar toda la ventana de contexto y
-dejar fuera la evidencia de otro empleo. Tras diversificar se corta a `top_k = 5`.
+La fusión se ordena por `score DESC, id` para que los empates sean deterministas. Después se
+corta a `top_k = 5`. El esquema QA/PROD no define campos de unidad, sección, tipo o fechas; por
+ello este contrato no aplica filtros ni límites de presentación basados en esos valores. Un
+filtro futuro deberá leer claves documentadas de `metadata`, estar respaldado por una migración e
+índice cuando sea necesario, y añadir sus pruebas antes de exponerse en la herramienta.
 
 ### 3.6 Umbral de relevancia
 
@@ -139,14 +138,19 @@ que fundamente una respuesta en ruido.
 
 ## 4. Contrato de la herramienta
 
+El adaptador consulta únicamente `rag_cv.active_chunks`, que expone solo fragmentos de la versión
+actual e indexada del documento fuente. Sus únicos campos de recuperación son `id`,
+`source_document_id`, `ordinal`, `content`, `metadata`, `embedding` y `tsv`; el contrato no
+asume ningún otro campo de presentación ni filtro.
+
 ```python
 @dataclass(frozen=True)
 class RetrievedChunk:
-    chunk_id: int
-    unit: str            # "Banorte — Ingeniero de Datos Senior"
-    section: str         # "Experiencia"
-    chunk_type: str
-    content: str         # texto enriquecido, listo para el prompt
+    id: UUID
+    source_document_id: UUID
+    ordinal: int
+    content: str         # texto del fragmento, listo para el prompt
+    metadata: Mapping[str, Any]
     score: float
     sem_rank: int | None
     lex_rank: int | None
@@ -154,10 +158,8 @@ class RetrievedChunk:
 async def hybrid_search(
     query: str,
     *,
-    doc_id: str = "cv",
     top_k: int = 5,
     candidates: int = 20,
-    chunk_types: list[str] | None = None,
 ) -> list[RetrievedChunk]: ...
 ```
 
@@ -165,10 +167,10 @@ async def hybrid_search(
 
 ```text
 <contexto_cv>
-[F1 | Experiencia > Banorte — Ingeniero de Datos Senior | 2022-03 a actual]
+[F1 | fragmento 0 del documento fuente]
 <contenido del fragmento>
 
-[F2 | Proyectos > Plataforma de scoring en tiempo real]
+[F2 | fragmento 3 del documento fuente]
 <contenido del fragmento>
 </contexto_cv>
 
@@ -177,9 +179,11 @@ Instrucción de uso: responde únicamente con la información contenida entre la
 ```
 
 Los identificadores `F1..Fn` son **locales a la llamada**, no globales: obligan al modelo a
-citar lo que acaba de ver y permiten mapear la cita al `chunk_id` real en los metadatos de la
-respuesta (RFC-0005 §4). El contenido recuperado va delimitado por etiquetas y precedido de la
-instrucción, materializando la invariante I-2 (contenido = datos, no instrucciones).
+citar lo que acaba de ver y permiten mapear la cita al `id` real en los metadatos de la
+respuesta (RFC-0005 §4). El formato base solo usa `ordinal`; una etiqueta legible adicional se
+permite exclusivamente cuando una clave de `metadata` haya sido documentada y validada. El
+contenido recuperado va delimitado por etiquetas y precedido de la instrucción, materializando
+la invariante I-2 (contenido = datos, no instrucciones).
 
 ## 5. Presupuesto y límites
 
@@ -189,7 +193,6 @@ instrucción, materializando la invariante I-2 (contenido = datos, no instruccio
 | `top_k` final | 5 | `RETRIEVAL_TOP_K` |
 | `hnsw.ef_search` | 40 | `RETRIEVAL_EF_SEARCH` |
 | `k` de RRF | 60 | `RRF_K` |
-| Máx. fragmentos por unidad | 2 | `RETRIEVAL_MAX_PER_UNIT` |
 | Umbral mínimo de score | 0.016 | `RETRIEVAL_MIN_SCORE` |
 | Timeout de la consulta | 2 000 ms | `RETRIEVAL_TIMEOUT_MS` |
 | Presupuesto de contexto | 2 500 tokens | `RETRIEVAL_CONTEXT_BUDGET` |
@@ -218,8 +221,8 @@ silencio.
 | CA-1 | Una consulta con entidad exacta ("Banorte") recupera su fragmento en el top-1 | `tests/integration/test_retrieval.py::test_exact_entity` |
 | CA-2 | Una consulta parafraseada ("liderar personas") recupera el fragmento de liderazgo en top-3 | `test_retrieval.py::test_paraphrase` |
 | CA-3 | La fusión RRF con una sola rama activa produce el mismo orden que esa rama | `tests/unit/test_rrf.py::test_single_branch_identity` |
-| CA-4 | La fusión es determinista ante empates (desempate por `chunk_id`) | `test_rrf.py::test_deterministic_ties` |
-| CA-5 | Nunca se devuelven más de 2 fragmentos de la misma `unit` | `test_retrieval.py::test_diversity_cap` |
+| CA-4 | La fusión es determinista ante empates (desempate por `id`) | `test_rrf.py::test_deterministic_ties` |
+| CA-5 | Ambas ramas y la carga final consultan únicamente `rag_cv.active_chunks`; los fragmentos de una fuente no actual no aparecen | `test_retrieval.py::test_uses_active_chunks_only` |
 | CA-6 | Una consulta sin relación con el corpus devuelve `[]` | `test_retrieval.py::test_below_threshold_returns_empty` |
 | CA-7 | Si el embedder falla, la búsqueda sigue devolviendo resultados léxicos y marca `degraded` | `test_retrieval.py::test_embedding_failure_degrades` |
 | CA-11 | La rama vectorial llama a `embed_query`, nunca a `embed_documents` | `test_retrieval.py::test_uses_query_side` |
@@ -229,7 +232,7 @@ silencio.
 
 ## 8. Estrategia de pruebas
 
-- **Unitarias:** RRF puro (sin BD) con rangos sintéticos; diversificación; formateo; expansión
+- **Unitarias:** RRF puro (sin BD) con rangos sintéticos; ordenamiento determinista; formateo; expansión
   de sinónimos.
 - **Integración:** PostgreSQL efímero con corpus de prueba de 30 fragmentos
   y embeddings **deterministas falsos** (`hash → vector` normalizado) para no depender de
@@ -259,8 +262,8 @@ El SQL de `conversacion_aws_bedrock.md` fue el punto de partida. Cambios y su mo
 | :--- | :--- |
 | `plainto_tsquery` → `websearch_to_tsquery` | Tolera puntuación y comillas de una consulta real sin lanzar excepción |
 | Añadido `unaccent` en indexación y consulta | Sin él, "informatica" no recupera "informática" |
-| `SELECT contenido` → devolver también `unit`, `section`, `score`, rangos | Sin metadatos no hay citas ni trazabilidad (RF-3) |
-| Añadido tope de fragmentos por unidad | Una unidad partida en varias monopolizaba el contexto |
+| `SELECT contenido` → devolver también `id`, `source_document_id`, `ordinal`, `metadata`, `score` y rangos | Los identificadores reales dan citas y trazabilidad sin inventar campos fuera del esquema QA/PROD |
+| Consulta directa de chunks → `rag_cv.active_chunks` | La vista es el contrato de lectura que excluye versiones de fuente no actuales o no indexadas |
 | Añadido umbral mínimo de score | Sin él, siempre se devuelven 4 fragmentos aunque no vengan a cuento, e invitan a alucinar |
 | Añadido `ef_search` explícito | El valor por defecto (40) es correcto, pero debe ser explícito y configurable, no implícito |
 | Conexión `psycopg2.connect` por llamada → pool async | Abrir conexión por petición añade ~30 ms y agota RDS bajo carga |
@@ -273,7 +276,7 @@ El SQL de `conversacion_aws_bedrock.md` fue el punto de partida. Cambios y su mo
 | A-1 | La fusión usa rangos (RRF), no puntuaciones normalizadas | Lectura del SQL | Bloqueante |
 | A-2 | El SQL está parametrizado; no hay interpolación de cadenas | Búsqueda de f-strings/`%` en SQL: 0 resultados | Bloqueante |
 | A-3 | Existe umbral mínimo y devuelve `[]` cuando no se alcanza | CA-6 | Mayor |
-| A-4 | El tope por unidad se aplica antes del corte a `top_k` | Lectura del código + CA-5 | Mayor |
+| A-4 | Ambas ramas y la carga final usan `rag_cv.active_chunks`; no consultan tablas de chunks directamente | Lectura del SQL + CA-5 | Bloqueante |
 | A-5 | El fallo del embedder degrada a léxica y lo registra, no lanza 500 | CA-7 | Mayor |
 | A-6 | El error de BD **no** se devuelve al modelo como texto de resultado | Lectura de `search_cv.py` | Bloqueante |
 | A-7 | La conexión sale de un pool, no se abre por llamada | Lectura de `db/engine.py` y de la herramienta | Mayor |

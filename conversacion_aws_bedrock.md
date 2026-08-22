@@ -42,7 +42,7 @@ CREATE TABLE documentos_rag (
     id SERIAL PRIMARY KEY,
     contenido TEXT NOT NULL,
     embedding VECTOR(1536), -- 1536 dimensiones para Amazon Titan Text Embedding v2
-    tsv_contenido tsvector  -- Para la búsqueda léxica (BM25 / Full Text Search)
+    tsv_contenido tsvector  -- Para la búsqueda léxica con PostgreSQL Full Text Search
 );
 
 -- 3. Crear índice GIN para la búsqueda léxica
