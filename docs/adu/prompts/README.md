@@ -10,8 +10,8 @@ Desarrollador: el orden tests-primero solo es exigible si está escrito.
 | Rol | Modelo | Prompt | Entrega |
 | :--- | :--- | :--- | :--- |
 | **Arquitecto** | Claude Opus 5 | [PROMPT-ARQUITECTO.md](./PROMPT-ARQUITECTO.md) | PRD, RFCs, ADRs. **Ningún código de producción** |
-| **Desarrollador** | ChatGPT 5.6 | [PROMPT-DESARROLLADOR-TDD.md](./PROMPT-DESARROLLADOR-TDD.md) | Tests en rojo → implementación → PR |
-| **Auditor** | Claude Sonnet 5 | [PROMPT-AUDITOR.md](./PROMPT-AUDITOR.md) | Veredicto PASS / PASS-CON-OBSERVACIONES / FAIL |
+| **Desarrollador** | Claude Sonnet 5 | [PROMPT-DESARROLLADOR-TDD.md](./PROMPT-DESARROLLADOR-TDD.md) | Tests en rojo → implementación → PR |
+| **Auditor** | ChatGPT 5.6 Terra | [PROMPT-AUDITOR.md](./PROMPT-AUDITOR.md) | Veredicto PASS / PASS-CON-OBSERVACIONES / FAIL |
 
 ## Ciclo completo de un RFC
 

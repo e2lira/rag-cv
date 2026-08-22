@@ -1,4 +1,4 @@
-# Prompt del Desarrollador (ChatGPT 5.6) — TDD estricto
+# Prompt del Desarrollador (Claude Sonnet 5) — TDD estricto
 
 ## 1. Prompt de sistema
 

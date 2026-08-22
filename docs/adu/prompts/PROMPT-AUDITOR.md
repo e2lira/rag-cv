@@ -1,4 +1,4 @@
-# Prompt del Auditor (Claude Sonnet 5)
+# Prompt del Auditor (ChatGPT 5.6 Terra)
 
 Este prompt se pega **tal cual** al inicio de cada sesión de auditoría, sustituyendo las
 variables entre `<>`. No se improvisa: la reproducibilidad del veredicto depende de que el

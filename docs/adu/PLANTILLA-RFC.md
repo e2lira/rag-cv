@@ -4,8 +4,8 @@
 | :--- | :--- |
 | **Estado** | Borrador / En revisión / Aprobado / Implementado / Obsoleto |
 | **Autor** | Arquitecto (Claude Opus 5) |
-| **Implementa** | Desarrollador (ChatGPT 5.6) |
-| **Audita** | Auditor (Claude Sonnet 5) |
+| **Implementa** | Desarrollador (Claude Sonnet 5) |
+| **Audita** | Auditor (ChatGPT 5.6 Terra) |
 | **Depende de** | RFC-XXXX, RFC-YYYY |
 | **Superseded by** | — |
 | **Fecha** | AAAA-MM-DD |
