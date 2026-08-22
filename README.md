@@ -2,6 +2,23 @@
 
 `rag-cv` será un agente conversacional que responde sobre la trayectoria profesional contenida en un CV. El repositorio está **en fase de planificación y arquitectura**: aún no contiene la aplicación Python ni un framework de migraciones o pipeline de indexación; sí incluye DDL inicial de bootstrap PostgreSQL para QA y PROD. Este README define el alcance técnico que se implementará.
 
+> ## Alcance vigente — leer antes que nada
+>
+> Este README describe el **alcance técnico completo**, cuyo destino final es AWS. El alcance
+> **en ejecución hoy** es más estrecho: la PoC se entrega en **QA (VPS Ubuntu)** y AWS queda
+> **diferido** — App Runner, RDS, ECR, S3, EventBridge, Secrets Manager y CloudWatch no se
+> despliegan. Los embeddings corren con `nomic-embed-text` autoalojado y la generación por la API
+> de Anthropic; **la aplicación no usa credenciales de AWS**.
+>
+> Diferido **no es obsoleto**: es diseño aprobado cuya ejecución se pospone, y ningún documento de
+> AWS ha sido editado. Qué está vigente y qué diferido, documento por documento, está en
+> **[RFC-0016](docs/rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md)**; el porqué, en
+> [ADR-0006](docs/adr/ADR-0006-entorno-de-entrega-de-la-poc.md),
+> [ADR-0007](docs/adr/ADR-0007-embeddings-nomic-autoalojados.md) y
+> [ADR-0008](docs/adr/ADR-0008-generacion-por-api-de-anthropic.md).
+>
+> Donde este README y RFC-0016 difieran sobre qué se ejecuta hoy, **prevalece RFC-0016**.
+
 ## Estado y resultado de la auditoría
 
 La propuesta es viable con algunos ajustes obligatorios antes de construir:
@@ -97,11 +114,11 @@ El último archivo es una prueba SQL transaccional: verifica objetos, `vector(10
 
 ## Ambientes y configuración
 
-| Ambiente | Plataforma | Propósito |
-|---|---|---|
-| **DEV** | Windows | Desarrollo local, pruebas rápidas y configuración aislada. |
-| **QA** | VPS Linux Ubuntu | Validación de integración, despliegue y evaluación antes de liberar. |
-| **PROD** | Amazon AWS | Docker en App Runner desde ECR; RDS PostgreSQL/pgvector privado mediante VPC Connector, con S3, Bedrock, eventos, seguridad y observabilidad. |
+| Ambiente | Plataforma | Propósito | Alcance vigente |
+|---|---|---|---|
+| **DEV** | Windows | Desarrollo local, pruebas rápidas y configuración aislada. | Activo, ya sin credenciales de AWS |
+| **QA** | VPS Linux Ubuntu | Validación de integración, despliegue y evaluación antes de liberar. | **Activo — entorno de entrega de la PoC** |
+| **PROD** | Amazon AWS | Docker en App Runner desde ECR; RDS PostgreSQL/pgvector privado mediante VPC Connector, con S3, Bedrock, eventos, seguridad y observabilidad. | **Diferido** (ADR-0006) |
 
 La configuración se resolverá por variables de entorno y secretos administrados, nunca en código ni en archivos versionados. Cada ambiente tendrá recursos, credenciales, buckets, bases de datos y permisos separados. PROD usará IAM de mínimo privilegio, KMS para cifrado, secretos administrados, registros estructurados, métricas, alarmas y trazas para API, ingestión, recuperación, costos y errores.
 
