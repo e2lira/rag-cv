@@ -40,6 +40,19 @@ Las dependencias apuntan hacia el centro. Los casos de uso reciben interfaces (p
 
 La selección final de modelos de Bedrock, región, límites y costos se configurará por ambiente; no se codificará en los casos de uso.
 
+## Diagramas de arquitectura y costos
+
+La documentación técnica de arquitectura —diagramas en Mermaid (renderizados también a PNG) y la investigación de costos de producción— está en [`docs/diagramas/`](docs/diagramas/):
+
+| Documento | Contenido |
+|---|---|
+| [`hoja-de-ruta.md`](docs/diagramas/hoja-de-ruta.md) | Hoja de ruta: Fases 1–4 e implementación AWS |
+| [`arquitectura-c4.md`](docs/diagramas/arquitectura-c4.md) | Arquitectura C4 (Contexto, Contenedor, Componente) |
+| [`arquitectura-aws.md`](docs/diagramas/arquitectura-aws.md) | Topología de producción en AWS |
+| [`costos-aws.md`](docs/diagramas/costos-aws.md) | Costos mínimos de producción (≈ USD 33–60/mes) |
+
+Para regenerar las imágenes: `pwsh -File docs/diagramas/render.ps1`.
+
 ## Fuente del CV e indexación
 
 En producción, S3 será la fuente autoritativa de `cv.md`. El bucket debe usar versionado, cifrado SSE-KMS y acceso mínimo mediante IAM. Se habilitará la entrega de eventos a EventBridge en el bucket; la regla Object Created invocará un worker dedicado que ejecuta el caso de uso idempotente, con política de reintentos y DLQ. Un job de reconciliación programado, con cadencia configurable y propietario operativo definido, será el respaldo ante eventos perdidos o fallos transitorios.

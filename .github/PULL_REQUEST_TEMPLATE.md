@@ -55,6 +55,7 @@ Marcá todas las áreas que toca esta rama:
 - [ ] Infraestructura AWS
 - [ ] QA / CI/CD
 - [ ] Documentación
+- [ ] Documentación — diagramas (C4, AWS, hoja de ruta)
 - [ ] Seguridad
 
 ## Impacto y riesgo
