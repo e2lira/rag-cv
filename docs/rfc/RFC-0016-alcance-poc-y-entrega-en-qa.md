@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0007, RFC-0008, RFC-0015 |
-| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue. *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
+| **Supersede** | RFC-0007 §6, §7, §9, §10 (para el alcance de la PoC); RFC-0015 §8 y la fila QA de §9; RFC-0001 §topología de despliegue; **RFC-0002 §3, solo en «versionado en Git»** (§3.3). *(RFC-0007 §5.2 lo deroga RFC-0018, no este RFC)* |
 | **ADRs** | ADR-0006 |
 | **Fecha** | 2026-08-22 |
 
@@ -99,7 +99,14 @@ la configuración: está en el esquema.
 
 **Decisión para la PoC.** La fuente del corpus es un **fichero que vive en el VPS**
 (`CORPUS_PATH`, RFC-0001), fuera de la imagen y fuera del repositorio, de modo que actualizar el
-CV no exija un despliegue. Los eventos de S3, el worker y el job de reconciliación quedan
+CV no exija un despliegue. Esto **supersede la única frase de RFC-0002 §3 que dice que el corpus
+va «versionado en Git»**; el resto de esa sección —front-matter, jerarquía de encabezados, rangos
+de fechas, límite de 400 palabras por unidad y prohibición de datos sensibles— sigue **vigente y
+es normativa**: el cargador rechaza la ingesta si se incumple.
+
+Que no vaya en Git no es solo consecuencia de dónde vive: **el repositorio es público y un CV
+contiene datos personales.** La regla 5 de RFC-0002 §3 ya prohíbe teléfono, correo personal y
+documentos de identidad dentro del corpus; no versionarlo cierra el resto del riesgo. Los eventos de S3, el worker y el job de reconciliación quedan
 **diferidos** junto con el resto de AWS, y su función —detectar que el CV cambió— la asume un
 **sondeo programado** cuyo contrato es RFC-0019.
 
