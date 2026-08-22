@@ -21,10 +21,21 @@ Lo primero es lo que **no** cambia, porque es la mayor parte:
   del contrato y la prohibición de un `embed()` genérico siguen exactamente como en RFC-0012 §3.
 - **La fábrica no cambia de forma**, solo gana una rama. Sigue siendo el único módulo que conoce
   implementaciones concretas.
-- **La suite de contrato no se toca.** CA-1 a CA-3 y CA-7 a CA-18 de RFC-0012 siguen siendo el
-  criterio; solo pasan a estar parametrizadas sobre **cinco** implementaciones.
-- **`TitanEmbedder`, `NomicApiEmbedder` y `OllamaEmbedder` no se borran.** Pasan a ser el camino
-  AWS diferido y las contingencias. Siguen cubiertos por la misma suite.
+- **La suite de contrato de RFC-0012 sigue siendo el criterio.** Se implementa parametrizada, de
+  modo que añadir una implementación sea añadir un caso, no escribir pruebas nuevas.
+- **`TitanEmbedder`, `NomicApiEmbedder` y `OllamaEmbedder` no se retiran del diseño.** Siguen
+  siendo el camino AWS diferido y las contingencias documentadas.
+
+**Precisión necesaria sobre qué hay que construir.** RFC-0012 describe la interfaz, la fábrica y
+cuatro implementaciones, pero **nada de eso está implementado todavía**: el repositorio contiene
+documentación y el DDL. Este RFC se lee como delta sobre un diseño, no sobre código existente.
+
+Lo que entra en el alcance de la PoC es **`FakeEmbedder` y `OpenAIEmbedder`**, más la interfaz, la
+fábrica y la suite de contrato de RFC-0012. Las otras tres quedan **diferidas con su camino**:
+`TitanEmbedder` con AWS (ADR-0006) y las de Nomic con el autoalojamiento que este host no sostiene
+(ADR-0007). Exigirlas ahora obligaría a implementar un embedder de Bedrock en una PoC que
+eliminó AWS, que es precisamente el tipo de contradicción que el Definition of Ready existe para
+cazar.
 
 Lo que sí cambia, y hay que decirlo sin rodeos: **hay que escribir código nuevo.** La fábrica de
 RFC-0012 §5 solo contempla `titan | fake | nomic_api | ollama`. No existe una rama de OpenAI para
@@ -209,7 +220,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | CA-8 | `EMBEDDER=openai` sin `OPENAI_API_KEY` impide el arranque | `test_config.py::test_embedder_required_vars` |
 | CA-9 | Con la API caída, la consulta devuelve resultados léxicos y marca `degraded` | `test_retrieval.py::test_embedding_failure_degrades` |
 | CA-10 | La indexación hace `rollback` completo ante fallo del proveedor | `test_indexer.py::test_rollback_on_embedder_failure` |
-| CA-11 | Las **cinco** implementaciones pasan la misma suite de contrato | `test_embedder_contract.py` parametrizado |
+| CA-11 | `FakeEmbedder` y `OpenAIEmbedder` pasan la **misma** suite de contrato, parametrizada. Cualquier implementación que se añada después entra por esa suite | `test_embedder_contract.py` parametrizado |
 | CA-12 | La clave nunca aparece en logs ni en trazas | `SecretStr` + inspección de la salida en una corrida completa |
 
 ## 11. Riesgos
@@ -237,7 +248,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | A-7 | El retrieval alcanza el umbral de RFC-0009, y si no lo alcanza consta el hallazgo escalado en vez de un umbral rebajado | CA-2 | Bloqueante |
 | A-8 | La clave es `SecretStr` y no aparece en logs | CA-12 | Bloqueante |
 | A-9 | `embed_documents` usa el lote del proveedor, no N llamadas sueltas | CA-4 | Mayor |
-| A-10 | Las cinco implementaciones pasan la misma suite de contrato | CA-11 | Mayor |
+| A-10 | Las implementaciones del alcance pasan la misma suite de contrato, y ninguna implementación diferida se exige como requisito de entrega | CA-11 | Mayor |
 | A-11 | La llamada no bloquea el bucle de eventos | Lectura + CA-6 de RFC-0012 | Mayor |
 | A-12 | La comprobación de `EMBED_MAX_TOKENS` sigue activa en la ingesta | CA-9 de RFC-0012 | Mayor |
 | A-13 | La latencia de embedding medida cabe en RNF-3 | CA-5 | Mayor |
