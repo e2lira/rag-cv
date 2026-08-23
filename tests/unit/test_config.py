@@ -13,6 +13,11 @@ from app.core.settings import Settings
 pytestmark = pytest.mark.unit
 
 
+# Reversion verificada (RFC-0014 6.1.2, tercera evidencia): se aflojo
+# temporalmente `openai_api_key` a opcional en app/core/settings.py y esta
+# prueba fallo con "DID NOT RAISE Exception" -- la razon correcta, no un
+# ImportError. Confirmado que prueba lo que dice; revertido antes de commitear
+# (commit original del test: e8ad600).
 def test_embedder_required_vars(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
