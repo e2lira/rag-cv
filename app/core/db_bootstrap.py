@@ -15,6 +15,9 @@ class ExtensionUnavailableError(RuntimeError):
 
 
 def ensure_extension_available(conn: psycopg.Connection, extension_name: str) -> None:
+    """Solo lectura: en autocommit para no dejar la conexion en transaccion
+    si quien llama la reutiliza despues para un CREATE DATABASE."""
+    conn.autocommit = True
     with conn.cursor() as cur:
         cur.execute(
             "SELECT 1 FROM pg_available_extensions WHERE name = %s",

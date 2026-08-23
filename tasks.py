@@ -35,7 +35,7 @@ def dev(c):
     c.run("python -m app.dev_server")
 
 
-_PY_PATHS = "app/ tests/ tasks.py"
+_PY_PATHS = "app/ tests/ scripts/ tasks.py"
 
 
 @task
