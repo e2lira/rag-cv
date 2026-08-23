@@ -42,7 +42,7 @@ de sistema (RFC-0004), los embeddings (RFC-0017).
 | Variable | Valor en la PoC | Nota |
 | :--- | :--- | :--- |
 | `PROVEEDOR` | `anthropic` | Sustituye al `bedrock` por defecto de RFC-0013 §5 |
-| `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | **El mismo modelo** que designaba ADR-0005; cambia el camino, no el modelo |
+| `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5-20251001` | **El mismo modelo** que designaba ADR-0005; cambia el camino, no el modelo. **Versión con fecha, no el alias `claude-haiku-4-5`** (ADR-0012): un alias avanza solo, y entonces la línea base de `evals/baselines/` deja de corresponder al modelo que responde — sin que nada falle |
 | `ANTHROPIC_API_KEY` | secreto | `$RAG_CV_HOME/.env`, permisos `600` (RFC-0016 §8.1) |
 | `AWS_REGION`, `BEDROCK_MODEL_ID` | **ausentes** | No vacías: ausentes (RFC-0016 §7) |
 | `LLM_TEMPERATURE`, `LLM_MAX_TOKENS` | sin cambios | RFC-0013 |

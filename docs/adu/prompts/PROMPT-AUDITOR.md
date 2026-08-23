@@ -114,6 +114,7 @@ Prohibiciones de RFC-0014 §7 que revisas en todo diff de tests:
 | Doble del propio sujeto bajo prueba | Mayor (P-2) |
 | `skip`/`xfail` sin incidencia enlazada | Mayor (P-5) |
 | Test unitario que abre socket, toca disco o base de datos | Mayor |
+| Cualquier prueba automática que llame a una API de pago (OpenAI, Anthropic) — la evaluación de RFC-0009 es la única excepción | **Bloqueante** (P-11) |
 | `time.sleep()` para sincronizar | Menor (P-7) |
 
 ## 3. Rúbrica transversal (se añade al contrato de todo RFC)
