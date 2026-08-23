@@ -3,15 +3,15 @@
 Se prueba que ruff, con la configuracion real del proyecto, detecta ambos
 patrones -- no que el codigo actual este limpio (eso ya lo garantiza el CI en
 cada PR); esto es una prueba de que la regla sigue activa.
+
+Deliberadamente SIN la marca `unit` (auditoria PR #16): lanza un subproceso
+real de ruff -- "test unitario que abre socket, toca disco o base de datos"
+es Mayor segun la rubrica transversal del proceso (PROMPT-AUDITOR.md #2).
 """
 
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
-
-pytestmark = pytest.mark.unit
 
 _ROOT = Path(__file__).resolve().parents[2]
 
