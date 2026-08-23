@@ -251,14 +251,25 @@ excepción que invocar: el orden se rompió. Pero el test suele ser correcto y e
 —lo único que falta es la evidencia—, así que la reparación admisible es producirla: **romper
 deliberadamente el código correcto, registrar el rojo, y restaurarlo.**
 
-Condiciones, y son las cuatro juntas:
+Condiciones, y son las cinco juntas:
 
 | Condición | Cómo la comprueba el Auditor |
 | :--- | :--- |
 | No hay excepción §6.1.2 aplicable — el código es de este PR, no heredado | `git log --diff-filter=A` sobre el archivo implicado |
-| La regresión rompe **cada invariante que el criterio exige**, no una de muestra | El rojo falla en todas las aserciones del test, no en la primera |
+| La regresión elimina **el mecanismo que el criterio nombra**, no un detalle adyacente | El *diff* del commit rojo revierte la línea o el bloque que implementa esa invariante |
+| El rojo falla **en la aserción que formaliza el criterio**, y todo fallo adicional es cascada de ese | `short test summary info` del registro del CI: una raíz, más los tests que solo fallan porque la suite falló (§6.2.3) |
 | Rojo y verde tienen ejecución propia por `SHA` (§6.2, condición operativa 1) | `gh api .../commits/<sha>/check-runs` sobre los dos |
 | El Informe la declara **como reparación**, nombrando el par original que sustituye | Lectura del Informe |
+
+> **Por qué la condición 2 cambió de forma.** Decía «el rojo falla en todas las aserciones del
+> test, no en la primera», y eso **no se puede satisfacer con `pytest`**: un `assert` que falla
+> lanza `AssertionError` y termina la función ahí mismo, así que nunca se observa más de un fallo
+> por función. La forma se aplicó cinco veces —PR #35 (CA-1, CA-12) y PR #52 (CA-8, el literal
+> `actual`, CA-3)— y las cinco rompieron **una** aserción. Las cinco se aceptaron, correctamente.
+> Escribí una condición que la práctica tuvo que ignorar por imposible, y un Auditor que la
+> leyera al pie de la letra habría rechazado una reparación válida. Lo que la condición quería
+> impedir sigue impedido, pero ahora por la vía comprobable: que la regresión toque el mecanismo
+> que el criterio nombra, no un detalle adyacente que produzca un rojo barato.
 
 **Esto no es una forma alternativa de hacer TDD.** Es una reparación, y la diferencia no es
 retórica: si se admite como forma normal, cualquiera puede implementar primero **siempre** y
@@ -278,6 +289,43 @@ después, y la reparación no lo redime — hallazgo **Mayor** sobre el PR compl
 > impida. Es la cuarta vez que una forma recurrente aparece primero como acuerdo dentro de un PR
 > —tras §6.2.1, §6.1.1 y §6.1.2—; ADU-PROCESO ya dice que una decisión del Arquitecto se
 > materializa en el RFC o en un ADR, nunca en un acuerdo verbal dentro del PR.
+
+#### 6.2.3 Fallo raíz y fallo en cascada (normativo)
+
+Un rojo de §6.2.2 casi nunca produce **un** fallo. La suite contiene tests que afirman sobre la
+suite misma —`test_tasks.py::test_invoke_test_succeeds` ejecuta `invoke test` como subproceso y
+comprueba que sale en verde—, y esos se ponen rojos **porque** el fallo raíz existe, no porque la
+regresión los haya alcanzado.
+
+Por eso el recuento de fallos no se lee en bruto:
+
+| Tipo | Qué es | Cómo lo distingue el Auditor |
+| :--- | :--- | :--- |
+| **Raíz** | El test cuya aserción formaliza el criterio | Aparece en `short test summary info` con la aserción del criterio en el mensaje |
+| **Cascada** | Un test que solo falla porque la suite falló | Su fallo *contiene* el resumen del fallo raíz, o ejecuta la suite como subproceso |
+
+La reparación de CA-3 en PR #52 lo muestra en los dos *jobs* del mismo `SHA` (`5ba9537`):
+
+```
+unit-windows       1 failed, 63 passed    -> solo la raíz
+integration-linux  2 failed, 118 passed   -> la raíz + test_invoke_test_succeeds
+```
+
+Es el mismo rojo visto desde dos *jobs* con distinto alcance de recolección. Contar «2 fallos» y
+concluir que la regresión no fue quirúrgica es leer mal la evidencia; contar «1 fallo» mirando
+solo `unit-windows` es leer bien por casualidad.
+
+**Lo que sí es un hallazgo** es un fallo adicional que no sea ninguno de los dos: un test que se
+pone rojo porque la regresión alcanzó comportamiento que el criterio no nombra. Eso significa que
+el mecanismo revertido servía a más de un criterio, y entonces la reparación no prueba lo que
+dice — se rehace acotando la regresión.
+
+> **Por qué está escrito.** Nadie lo había nombrado, y toda reparación por regresión deliberada
+> lo produce por construcción desde que existe `test_invoke_test_succeeds`. Salió al verificar el
+> registro de CI de `5ba9537` mientras redactaba la corrección de la condición 2 — no como
+> hallazgo de auditoría, sino porque estuve a punto de escribir «y el resto de la suite sigue
+> verde», que es falso en `integration-linux` y habría dejado una condición que ni mi propia
+> reparación cumple.
 
 ### 6.3 Reversión: qué evidencia la satisface (normativo)
 
