@@ -37,21 +37,57 @@ _EXPECTED_TABLES = {
     "ingestion_jobs",
 }
 
-_EXPECTED_INDEXES = {
-    "idx_cv_chunks_hnsw",
-    "idx_cv_chunks_tsv",
-    "idx_cv_chunks_tags",
-    "idx_cv_chunks_type",
-    "idx_cv_chunks_unit_trgm",
-    "idx_conversations_key",
-    "idx_messages_conv",
-    "idx_messages_created",
-    "idx_source_object_hash",
-    "idx_source_one_current",
-    "idx_source_status_observed",
+# Los 11 indices que declara 4.2, con su `indexdef` completo -- metodo de
+# acceso, columnas, clase de operadores y predicado parcial incluidos. Sin
+# esto una regresion del metodo HNSW, `vector_cosine_ops`, o del predicado
+# `WHERE is_current` de `idx_source_one_current` pasa en verde con solo
+# comprobar que el nombre existe (auditoria PR #28, cuarta ronda).
+_EXPECTED_INDEX_DEFS = {
+    "idx_cv_chunks_hnsw | CREATE INDEX idx_cv_chunks_hnsw ON public.cv_chunks USING hnsw "
+    "(embedding vector_cosine_ops) WITH (m='16', ef_construction='64')",
+    "idx_cv_chunks_tsv | CREATE INDEX idx_cv_chunks_tsv ON public.cv_chunks USING gin (tsv)",
+    "idx_cv_chunks_tags | CREATE INDEX idx_cv_chunks_tags ON public.cv_chunks USING gin "
+    "(tech_tags)",
+    "idx_cv_chunks_type | CREATE INDEX idx_cv_chunks_type ON public.cv_chunks USING btree "
+    "(doc_id, chunk_type)",
+    "idx_cv_chunks_unit_trgm | CREATE INDEX idx_cv_chunks_unit_trgm ON public.cv_chunks "
+    "USING gin (unit gin_trgm_ops)",
+    "idx_conversations_key | CREATE INDEX idx_conversations_key ON public.conversations "
+    "USING btree (key_id, last_seen_at DESC)",
+    "idx_messages_conv | CREATE INDEX idx_messages_conv ON public.messages USING btree "
+    "(conversation_id, created_at)",
+    "idx_messages_created | CREATE INDEX idx_messages_created ON public.messages USING "
+    "btree (created_at)",
+    "idx_source_object_hash | CREATE INDEX idx_source_object_hash ON public.source_documents "
+    "USING btree (object_key, content_sha256)",
+    "idx_source_one_current | CREATE UNIQUE INDEX idx_source_one_current ON "
+    "public.source_documents USING btree (object_key) WHERE is_current",
+    "idx_source_status_observed | CREATE INDEX idx_source_status_observed ON "
+    "public.source_documents USING btree (ingestion_status, observed_at DESC)",
 }
 
 _EXPECTED_EXTENSIONS = {"vector", "unaccent", "pg_trgm"}
+
+_EXPECTED_TRIGGER_DEF = (
+    "trg_cv_chunks_tsv | CREATE TRIGGER trg_cv_chunks_tsv BEFORE INSERT OR UPDATE ON "
+    "public.cv_chunks FOR EACH ROW EXECUTE FUNCTION cv_chunks_tsv_update()"
+)
+
+_EXPECTED_FUNCTION_DEF = (
+    "cv_chunks_tsv_update | CREATE OR REPLACE FUNCTION public.cv_chunks_tsv_update()\n"
+    " RETURNS trigger\n"
+    " LANGUAGE plpgsql\n"
+    "AS $function$\n"
+    "BEGIN\n"
+    "    NEW.tsv := setweight(to_tsvector('es_unaccent', coalesce(NEW.unit, '')), 'A')\n"
+    "             || setweight(to_tsvector('es_unaccent', array_to_string(NEW.tech_tags, "
+    "' ')), 'B')\n"
+    "             || setweight(to_tsvector('es_unaccent', coalesce(NEW.content, '')), 'C');\n"
+    "    NEW.updated_at := now();\n"
+    "    RETURN NEW;\n"
+    "END\n"
+    "$function$\n"
+)
 
 _EXPECTED_EMBEDDING_DIM = 1536
 
@@ -237,22 +273,16 @@ def _schema_snapshot(database_url: str) -> dict[str, set[str]]:
         }
 
 
-def _names(entries: set[str]) -> set[str]:
-    """Primer campo de cada fila de la huella: el nombre del objeto."""
-    return {entry.split(" | ", 1)[0] for entry in entries}
-
-
 def test_upgrade(database_url: str) -> None:
     snapshot = _schema_snapshot(database_url)
 
     missing_tables = _EXPECTED_TABLES - snapshot["tables"]
-    missing_indexes = _EXPECTED_INDEXES - _names(snapshot["indexes"])
     missing_extensions = _EXPECTED_EXTENSIONS - snapshot["extensions"]
     violated_columns = _EXPECTED_COLUMNS - snapshot["columns"]
     violated_constraints = _EXPECTED_CONSTRAINT_DEFS - snapshot["constraints"]
+    violated_indexes = _EXPECTED_INDEX_DEFS - snapshot["indexes"]
 
     assert not missing_tables, f"faltan tablas: {sorted(missing_tables)}"
-    assert not missing_indexes, f"faltan indices: {sorted(missing_indexes)}"
     assert not missing_extensions, f"faltan extensiones: {sorted(missing_extensions)}"
     assert not violated_columns, (
         f"columnas que no cumplen el contrato de 4: {sorted(violated_columns)}"
@@ -260,8 +290,15 @@ def test_upgrade(database_url: str) -> None:
     assert not violated_constraints, (
         f"restricciones que no cumplen el contrato de 4: {sorted(violated_constraints)}"
     )
-    assert "trg_cv_chunks_tsv" in _names(snapshot["triggers"]), "falta el disparador de tsv"
-    assert "cv_chunks_tsv_update" in _names(snapshot["functions"]), "falta la funcion del tsv"
+    assert not violated_indexes, (
+        f"indices que no cumplen el contrato de 4.2: {sorted(violated_indexes)}"
+    )
+    assert _EXPECTED_TRIGGER_DEF in snapshot["triggers"], (
+        "el disparador de tsv no coincide con el contrato de 4.1"
+    )
+    assert _EXPECTED_FUNCTION_DEF in snapshot["functions"], (
+        "la funcion de tsv no coincide con el contrato de 4.1"
+    )
     assert "es_unaccent" in snapshot["text_search"], "falta la configuracion es_unaccent"
 
 
