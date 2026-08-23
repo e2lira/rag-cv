@@ -65,6 +65,16 @@ TDD-1  ORDEN DE COMMITS (necesaria, no suficiente)
        a su commit `feat(...)`. Si el PR viene aplastado en un solo commit, la
        evidencia fue destruida: hallazgo Mayor.
 
+       DOS FORMAS VÁLIDAS (RFC-0014 §6.1.1). Antes de emitir el hallazgo, decidí
+       cuál corresponde a este RFC: si varios criterios comparten UNA unidad de
+       implementación que no puede partirse (una migración, un bloque DDL, un
+       artefacto generado), la forma correcta es un único commit `test(...)` con
+       TODOS esos criterios en rojo seguido del `feat(...)` que los pone en verde
+       -- no pares por criterio. Comprobalo revirtiendo la implementación de un
+       criterio: si eso deja en rojo también a otros, comparten unidad y van
+       juntos legítimamente. Exigir pares por criterio ahí es exigir commits que
+       el RFC no puede producir.
+
 TDD-2  ROJO REGISTRADO EN CI (fuerte)
        Historial de ejecuciones del PR. El commit que solo añade tests debe tener
        una ejecución FALLIDA, y el siguiente una en verde. Un PR cuyo primer commit
