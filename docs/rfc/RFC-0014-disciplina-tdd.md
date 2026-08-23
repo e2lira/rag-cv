@@ -193,7 +193,24 @@ cada criterio.
 
 Un PR cuyo primer commit ya está en verde es un PR sin TDD, y es un hallazgo **Mayor**.
 
-**Condición operativa (normativa).** Un `workflow` con `on: pull_request` no registra nada
+**Condición operativa 1 (normativa): cada commit del par se publica solo.** El CI corre en cada
+*push*, pero la ejecución queda adjunta al `HEAD` de ese *push*, **no a cada commit que el push
+contiene**. Un par rojo → verde cuyos dos commits viajan juntos deja al primero sin ejecución
+propia: el rojo no queda registrado en ninguna parte, y el verde que sí existe pertenece a otro
+`SHA`. Por eso cada commit del par se publica en su propio *push*, sin nada encolado detrás.
+
+La comprobación es mecánica y no admite interpretación — se consulta por `SHA`, no por la vista
+de *checks* del PR, que muestra el estado del `HEAD` y no dice a qué commit pertenece:
+
+```bash
+gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[] | {name, conclusion}'
+```
+
+Una respuesta vacía para el commit de implementación significa que ese commit no tiene evidencia,
+por verde que esté el PR. Es hallazgo **Bloqueante**, y la corrección es rehacer la transición,
+no argumentar que el `HEAD` está en verde.
+
+**Condición operativa 2 (normativa).** Un `workflow` con `on: pull_request` no registra nada
 mientras el PR no exista: los *pushes* previos a abrirlo no dejan ejecución. Por eso la rama se
 publica y el PR se abre **en borrador antes del primer commit de test**, no al terminar. Un PR
 abierto al final produce una única ejecución, verde, sobre el `HEAD` final — y esa ejecución no
@@ -225,6 +242,42 @@ ser la falta de CI sino haber abierto el PR tarde, que es responsabilidad del De
 > contradicción del propio contrato no se arregla firmando excepciones: se arregla corrigiendo el
 > contrato. Lo contrario convierte la excepción en el mecanismo por defecto, que es exactamente
 > el antipatrón que ADU existe para cortar.
+
+#### 6.2.2 Reparación por regresión deliberada (normativo)
+
+Un criterio puede llegar a la auditoría con el test **posterior** a la implementación y sin que
+§6.1.2 lo ampare, porque el código no viene de un RFC anterior sino del propio PR. Ahí no hay
+excepción que invocar: el orden se rompió. Pero el test suele ser correcto y el código también
+—lo único que falta es la evidencia—, así que la reparación admisible es producirla: **romper
+deliberadamente el código correcto, registrar el rojo, y restaurarlo.**
+
+Condiciones, y son las cuatro juntas:
+
+| Condición | Cómo la comprueba el Auditor |
+| :--- | :--- |
+| No hay excepción §6.1.2 aplicable — el código es de este PR, no heredado | `git log --diff-filter=A` sobre el archivo implicado |
+| La regresión rompe **cada invariante que el criterio exige**, no una de muestra | El rojo falla en todas las aserciones del test, no en la primera |
+| Rojo y verde tienen ejecución propia por `SHA` (§6.2, condición operativa 1) | `gh api .../commits/<sha>/check-runs` sobre los dos |
+| El Informe la declara **como reparación**, nombrando el par original que sustituye | Lectura del Informe |
+
+**Esto no es una forma alternativa de hacer TDD.** Es una reparación, y la diferencia no es
+retórica: si se admite como forma normal, cualquiera puede implementar primero **siempre** y
+fabricar el par rojo → verde al final. El resultado se ve idéntico en `git log` y no prueba nada
+—el test nunca guio el diseño, solo lo describió cuando ya estaba escrito—, que es precisamente
+lo que §6 existe para impedir.
+
+De ahí la lectura que el Auditor debe hacer: **la reparación se cuenta, no solo se acepta.** Un
+PR con alguna reparación declarada entre varios criterios llevados por ciclo directo es un PR con
+un tropiezo corregido. Un PR donde la reparación es la vía por la que llegó la mayoría de los
+criterios no es un PR reparado: es un PR hecho sin TDD al que se le construyó la evidencia
+después, y la reparación no lo redime — hallazgo **Mayor** sobre el PR completo.
+
+> **Por qué se escribe en vez de resolverse en el PR.** Esta forma se usó y se aceptó en PR #35
+> (RFC-0017 CA-1 y CA-12) sin estar en ninguna parte, y eso deja el peor de los dos mundos: el
+> Desarrollador que la necesite no sabe que existe, y el que abuse de ella no tiene nada que se lo
+> impida. Es la cuarta vez que una forma recurrente aparece primero como acuerdo dentro de un PR
+> —tras §6.2.1, §6.1.1 y §6.1.2—; ADU-PROCESO ya dice que una decisión del Arquitecto se
+> materializa en el RFC o en un ADR, nunca en un acuerdo verbal dentro del PR.
 
 ### 6.3 Prueba de mutación (la definitiva)
 
@@ -321,13 +374,15 @@ texto generado, que no lo es.
 | CA-6 | Toda la suite pasa dos veces seguidas y en orden aleatorio | `pytest -p no:randomly` vs `pytest --randomly-seed=…` |
 | CA-7 | No hay `skip`/`xfail` sin enlace a incidencia | `grep` + revisión |
 | CA-8 | El historial del PR muestra commit de test antes que el de implementación en cada criterio | `git log --reverse` |
-| CA-9 | El CI registra una ejecución roja en el commit de tests de cada criterio | Historial de ejecuciones del PR |
+| CA-9 | El CI registra una ejecución roja en el commit de tests de cada criterio, **adjunta a ese `SHA`** | `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` por commit del par — no la vista de *checks* del PR, que informa del `HEAD` (§6.2, condición operativa 1) |
+| CA-10 | Toda reparación por regresión deliberada está declarada como tal, y no son la vía de la mayoría de los criterios del PR | Informe de Implementación + recuento contra los criterios llevados por ciclo directo (§6.2.2) |
 
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
 | :--- | :--- |
 | TDD ceremonial: tests escritos después y ordenados a posteriori | Rojo registrado en CI (§6.2) + mutación (§6.3) |
+| La reparación de §6.2.2 se vuelve la vía normal: implementar primero y fabricar el par rojo → verde al final | Se declara en el Informe y **se cuenta**: si es la vía de la mayoría de los criterios, es Mayor sobre el PR completo (§6.2.2) |
 | Intentar hacer TDD del LLM ⇒ tests intermitentes que se desactivan | Frontera de §4 + prohibición P-4 + suite de evaluación como el sitio correcto |
 | La suite se vuelve lenta y se deja de ejecutar en local | Presupuesto por nivel (§5) + prohibición de IO en unitarias |
 | Cobertura alta y calidad baja | Mutación en los módulos críticos; manda la mutación |

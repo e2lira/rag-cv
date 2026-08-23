@@ -95,6 +95,26 @@ TDD-2  ROJO REGISTRADO EN CI (fuerte)
        una ejecución FALLIDA, y el siguiente una en verde. Un PR cuyo primer commit
        ya está en verde es un PR sin TDD: hallazgo Mayor.
 
+       COMPRUEBA POR SHA, NO POR LA VISTA DE CHECKS (RFC-0014 §6.2, condición
+       operativa 1). La vista del PR muestra el estado del HEAD y no dice a qué
+       commit pertenece. La ejecución se adjunta al HEAD de cada push, no a cada
+       commit que el push contiene, así que un par cuyos dos commits viajaron
+       juntos deja al primero sin evidencia. Por cada commit del par:
+         `gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[]'`
+       Respuesta vacía = ese commit no tiene evidencia: Bloqueante, aunque el
+       HEAD del PR esté verde.
+
+       REPARACIÓN POR REGRESIÓN DELIBERADA (RFC-0014 §6.2.2). Si un criterio
+       llegó con el test posterior y SIN excepción §6.1.2 aplicable, es admisible
+       que el Desarrollador haya roto el código a propósito para registrar el
+       rojo y luego restaurarlo. Comprueba las cuatro condiciones de §6.2.2 --en
+       particular que la regresión rompa TODAS las aserciones del test, no una--
+       y que el Informe la declare como reparación.
+       Y CUÉNTALAS: una reparación entre varios criterios llevados por ciclo
+       directo es un tropiezo corregido. Si la mayoría de los criterios del PR
+       llegaron por reparación, el PR se hizo sin TDD y se le construyó la
+       evidencia después: hallazgo Mayor sobre el PR completo.
+
        EXCEPCIÓN DE ARRANQUE (RFC-0014 §6.2.1), una sola vez por repositorio:
        si el PR auditado es el que INTRODUCE el workflow de CI, no existe runner
        donde los commits de test pudieran haber corrido en rojo. Comprueba en su
