@@ -7,11 +7,12 @@ nuevo de este PR (creado en 8d463e9), no una implementacion de un RFC
 anterior ya fusionada sin cambios -- T-9 es la rubrica transversal que exige
 el patron, pero aplicarlo aqui fue una decision nueva, no una heredada.
 
-Reversion verificada (RFC-0014 6.1.2, tercera evidencia, aplicada por
-disciplina TDD-3 aunque el criterio no calce en 6.1.2): se agrego
-temporalmente un __repr__ que exponia la clave y test_repr_does_not_expose_
-the_key fallo mostrando la clave real en el mensaje de assert -- la razon
-correcta. Revertido antes de commitear (commit original del test: 4c90e0f)."""
+Este test llego originalmente despues de la implementacion (4c90e0f, sobre
+7f915cf) sin rojo real -- el tipado SecretStr ya era correcto desde el
+primer stub, asi que no habia brecha que TDD pudiera cerrar. Reauditoria de
+PR #35: rehecho como par TDD trazable con una regresion deliberada
+(ab33a41, rojo real en CI para las dos invariantes) seguida de la
+restauracion (0988179, verde)."""
 
 import httpx2
 import pytest

@@ -33,6 +33,9 @@ def test_openai_branch_returns_openai_embedder(http: httpx2.AsyncClient) -> None
     assert isinstance(embedder, OpenAIEmbedder)
 
 
+# Reauditoria de PR #35: esta rama llego originalmente sin rojo real
+# (5672db9 sobre 207b6bd, ya implementado). Rehecho como par TDD trazable:
+# b5f13ad (regresion deliberada, rojo real en CI) -> aad60ad (verde).
 def test_fake_branch_returns_fake_embedder(http: httpx2.AsyncClient) -> None:
     from app.retrieval.embedder_fake import FakeEmbedder
 
