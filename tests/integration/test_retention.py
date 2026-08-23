@@ -74,3 +74,53 @@ def test_purges_old_rate_buckets(database_url: str) -> None:
 
     assert report["rate_buckets"] == 1
     assert remaining == {"recent"}
+
+
+def test_conversation_boundary_is_exclusive_at_30_days(database_url: str) -> None:
+    """El umbral es `< now - 30d`: justo en 30 dias NO se purga, un segundo
+    antes si. Sin este caso, un `<=` accidental pasaria desapercibido."""
+    exactly_30d = _NOW - timedelta(days=30)
+    one_second_older = exactly_30d - timedelta(seconds=1)
+
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        boundary_id = _insert_conversation(cur, key_id="boundary", last_seen_at=exactly_30d)
+        older_id = _insert_conversation(cur, key_id="older", last_seen_at=one_second_older)
+        conn.commit()
+
+        report = purge_expired_records(conn, now=_NOW)
+        conn.commit()
+
+        cur.execute("SELECT id FROM conversations")
+        remaining = {str(row[0]) for row in cur.fetchall()}
+
+    assert report["conversations"] == 1
+    assert boundary_id in remaining, "en el umbral exacto no debe purgarse"
+    assert older_id not in remaining
+
+
+def test_rate_bucket_boundary_is_exclusive_at_48_hours(database_url: str) -> None:
+    """El umbral es `< now - 48h`: justo en 48 horas NO se purga."""
+    exactly_48h = _NOW - timedelta(hours=48)
+    one_second_older = exactly_48h - timedelta(seconds=1)
+
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO rate_buckets (key_id, window_kind, window_start, count) "
+            "VALUES ('boundary', 'minute', %s, 1)",
+            (exactly_48h,),
+        )
+        cur.execute(
+            "INSERT INTO rate_buckets (key_id, window_kind, window_start, count) "
+            "VALUES ('older', 'minute', %s, 1)",
+            (one_second_older,),
+        )
+        conn.commit()
+
+        report = purge_expired_records(conn, now=_NOW)
+        conn.commit()
+
+        cur.execute("SELECT key_id FROM rate_buckets")
+        remaining = {row[0] for row in cur.fetchall()}
+
+    assert report["rate_buckets"] == 1
+    assert remaining == {"boundary"}
