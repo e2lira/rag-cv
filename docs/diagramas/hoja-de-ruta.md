@@ -1,5 +1,12 @@
 # Hoja de ruta: Fases 1–4 e implementación en AWS
 
+> **Diferida para el alcance vigente.** Esta hoja de ruta termina en PROD sobre AWS y su Fase 3
+> despliega S3, IAM, EventBridge y CloudWatch. La PoC se entrega en **QA (VPS Ubuntu)** y AWS
+> queda diferido ([ADR-0006](../adr/ADR-0006-entorno-de-entrega-de-la-poc.md)).
+> El plan que se ejecuta hoy es **[PLAN-DE-EJECUCION.md](../PLAN-DE-EJECUCION.md)**.
+>
+> No se edita: recupera vigencia si se cierra ADR-0006.
+
 Una sola vista que recorre la entrega del proyecto: la hoja de ruta en cuatro fases, qué
 produce cada fase y el destino final, la implementación de producción en AWS.
 

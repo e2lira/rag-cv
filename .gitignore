@@ -218,3 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 .atl/
+
+# Corpus del CV
+#   No se versiona: por RFC-0016 §3.3 vive en el VPS, fuera del repositorio y de la
+#   imagen, para que actualizar el CV no exija un despliegue. Y este repositorio es
+#   PUBLICO, mientras que un CV contiene datos personales.
+corpus/
