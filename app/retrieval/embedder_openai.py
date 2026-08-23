@@ -54,10 +54,31 @@ class OpenAIEmbedder:
         )
         response.raise_for_status()
         payload = response.json()
+        data = payload["data"]
+
+        # RFC-0017 CA-13/A-18: el SDK oficial de OpenAI itera en el orden de
+        # llegada y NO usa data[].index (verificado en su codigo fuente).
+        # Confiar en ese orden asocia el vector equivocado a un texto sin dar
+        # ningun error -- el peor modo de fallo posible en un RAG. Este
+        # contrato ordena por indice a proposito, mas estricto que el
+        # cliente de referencia.
+        expected_count = len(texts)
+        if len(data) != expected_count:
+            raise ValueError(
+                f"la respuesta trae {len(data)} vectores, se pidieron "
+                f"{expected_count} textos (RFC-0017 CA-13)"
+            )
+
+        by_index = {item["index"]: item["embedding"] for item in data}
+        missing = set(range(expected_count)) - by_index.keys()
+        if missing:
+            raise ValueError(
+                f"la respuesta no trae vector para el indice {sorted(missing)} (RFC-0017 CA-13)"
+            )
 
         vectors = []
-        for item in payload["data"]:
-            vector = item["embedding"]
+        for i in range(expected_count):
+            vector = by_index[i]
             if len(vector) != self._dimension:
                 raise ValueError(
                     f"la respuesta trae dimension {len(vector)}, se esperaba "
