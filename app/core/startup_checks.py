@@ -44,13 +44,53 @@ def check_single_embed_model(conn: psycopg.Connection, expected_model_id: str) -
         )
 
 
+_REQUIRED_EXTENSIONS = ("vector", "unaccent", "pg_trgm")
+
+
 def check_extensions_present(conn: psycopg.Connection) -> None:
-    raise NotImplementedError
+    """RFC-0006 7 #1: vector, unaccent y pg_trgm deben estar instaladas."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT extname FROM pg_extension WHERE extname = ANY(%s)",
+            (list(_REQUIRED_EXTENSIONS),),
+        )
+        installed = {row[0] for row in cur.fetchall()}
+
+    missing = set(_REQUIRED_EXTENSIONS) - installed
+    if missing:
+        raise StartupCheckError(f"faltan extensiones requeridas: {sorted(missing)} (RFC-0006 7 #1)")
+
+
+def _parse_version(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
 
 
 def check_pgvector_version(conn: psycopg.Connection, minimum: str = "0.8") -> None:
-    raise NotImplementedError
+    """RFC-0006 7 #2: por debajo del minimo, HNSW y halfvec cambian entre
+    versiones de pgvector."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        row = cur.fetchone()
+
+    if row is None:
+        raise StartupCheckError("la extension vector no esta instalada (RFC-0006 7 #2)")
+
+    installed = row[0]
+    if _parse_version(installed) < _parse_version(minimum):
+        raise StartupCheckError(
+            f"pgvector {installed} instalado, se requiere >= {minimum} (RFC-0006 7 #2)"
+        )
 
 
 def check_alembic_head(conn: psycopg.Connection, expected_head: str) -> None:
-    raise NotImplementedError
+    """RFC-0006 7 #5: la base debe estar en la revision Alembic mas reciente."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT version_num FROM alembic_version")
+        row = cur.fetchone()
+
+    actual_head = row[0] if row else None
+    if actual_head != expected_head:
+        raise StartupCheckError(
+            f"la base esta en la revision {actual_head!r}, se esperaba "
+            f"{expected_head!r} (RFC-0006 7 #5)"
+        )

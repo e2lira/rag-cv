@@ -77,7 +77,7 @@ def test_extensions_present_passes_after_migration(database_url: str) -> None:
 
 def test_extensions_present_fails_if_missing(database_url: str) -> None:
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
-        cur.execute("DROP EXTENSION pg_trgm")
+        cur.execute("DROP EXTENSION pg_trgm CASCADE")
         conn.commit()
 
         with pytest.raises(StartupCheckError):
