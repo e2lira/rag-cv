@@ -28,10 +28,25 @@ def ensure_extension_available(conn: psycopg.Connection, extension_name: str) ->
             )
 
 
-def ensure_database_with_spanish_locale(
-    maintenance_conn: psycopg.Connection, db_name: str
-) -> bool:
-    raise NotImplementedError
+def database_exists(maintenance_conn: psycopg.Connection, db_name: str) -> bool:
+    with maintenance_conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (db_name,))
+        return cur.fetchone() is not None
+
+
+def ensure_database_with_spanish_locale(maintenance_conn: psycopg.Connection, db_name: str) -> bool:
+    """Crea la base si no existe. Devuelve True si la creo, False si ya existia.
+
+    CREATE DATABASE no acepta IF NOT EXISTS en PostgreSQL -- este chequeo
+    previo es lo que hace posible correr el bootstrap dos veces (CA-1).
+    """
+    maintenance_conn.autocommit = True  # database_exists() abriria una
+    # transaccion en modo por defecto, y CREATE DATABASE no puede correr
+    # dentro de una transaccion ya iniciada.
+    if database_exists(maintenance_conn, db_name):
+        return False
+    create_database_with_spanish_locale(maintenance_conn, db_name)
+    return True
 
 
 def create_database_with_spanish_locale(maintenance_conn: psycopg.Connection, db_name: str) -> None:
