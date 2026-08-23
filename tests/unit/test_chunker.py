@@ -72,6 +72,24 @@ def test_long_unit_split() -> None:
         assert prev_body[-120:] == next_body[:120]
 
 
+def test_global_summary_present() -> None:
+    """CA-4: existe siempre un fragmento perfil_global -- unit='perfil_global',
+    chunk_type='perfil' (RFC-0002 4.3: perfil_global es la unit, no el
+    chunk_type, que el DDL restringe a un enum fijo)."""
+    chunks = chunk_corpus(VALID_CORPUS)
+
+    matching = [c for c in chunks if c.unit == "perfil_global"]
+
+    assert len(matching) == 1
+    global_chunk = matching[0]
+    assert global_chunk.chunk_type == "perfil"
+    assert global_chunk.part == 1
+    assert global_chunk.parts == 1
+    assert "Ana Prueba" in global_chunk.content
+    assert "Empresa Uno" in global_chunk.content
+    assert "Empresa Dos" in global_chunk.content
+
+
 def test_context_header_omits_dates_when_absent() -> None:
     """CA-2: "cuando existen" -- una unidad sin fechas (fuera de
     Experiencia) no inventa un rango."""
