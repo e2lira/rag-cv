@@ -26,8 +26,13 @@ def downgrade() -> None:
 
 
 def test_resolves_current_repo_head() -> None:
-    """Contra el arbol real de este repositorio: hoy una sola revision."""
-    assert resolve_expected_head() == "0001_rfc0006_initial_schema"
+    """Contra el arbol real de este repositorio, no uno sintetico.
+
+    El literal se actualiza con CADA migracion nueva, a proposito: es lo que
+    hace que anadir una revision sin querer -- o anadirla mal encadenada --
+    rompa una prueba en vez de pasar inadvertida. La prueba de abajo cubre la
+    propiedad de RFC-0021 CA-4; esta cubre el arbol real."""
+    assert resolve_expected_head() == "0002_rfc0019_watcher"
 
 
 def test_reflects_a_new_migration_without_code_changes(tmp_path: Path) -> None:
