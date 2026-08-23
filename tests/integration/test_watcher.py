@@ -225,6 +225,16 @@ def _ledger(conn: psycopg.Connection, object_key: str) -> list[Any]:
         return list(cur.fetchall())
 
 
+def _ledger_fingerprint(conn: psycopg.Connection, object_key: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT source_fingerprint FROM source_documents WHERE object_key = %s AND is_current",
+            (object_key,),
+        )
+        row = cur.fetchone()
+    return str(row[0]) if row else ""
+
+
 def _chunk_contents(conn: psycopg.Connection) -> str:
     with conn.cursor() as cur:
         cur.execute("SELECT string_agg(content, '||' ORDER BY unit, part) FROM cv_chunks")
@@ -368,3 +378,107 @@ async def test_revert_respects_ledger_uniqueness(
 
     hashes = [r[3] for r in rows]
     assert hashes[0] == hashes[2], "la reversion deberia repetir el content_sha256 original"
+
+
+class _ExplodingEmbedder:
+    """Estalla si alguien lo llama. Mas fuerte que comprobar embed_calls == 0:
+    un ciclo que embebiera y descartara el resultado tambien daria cero."""
+
+    model_id = "exploding"
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        raise AssertionError("el camino de contenido identico no puede embeber")
+
+    async def embed_query(self, text: str) -> list[float]:
+        raise AssertionError("el camino de contenido identico no puede embeber")
+
+
+@pytest.mark.asyncio
+async def test_identical_content_skips_embedding(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-3: una reescritura con contenido identico al is_current no regenera
+    embeddings -- el proveedor no se llama ni una vez."""
+    corpus_path = tmp_path / "cv.md"
+    texto = _corpus_variant("IDENTICO")
+    corpus_path.write_text(texto, encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+
+        # Misma cadena, mtime nuevo: la huella difiere y el paso 2 no ataja.
+        corpus_path.write_text(texto, encoding="utf-8")
+        second = await run_once(conn, FakeEmbedder(1536), settings)
+
+        corpus_path.write_text(texto, encoding="utf-8")
+        third = await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
+
+    assert second.embed_calls == 0, "una reescritura identica regenero embeddings"
+    assert third.embed_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_touch_updates_fingerprint_only(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-17: un touch actualiza source_fingerprint de la fila vigente y NO
+    registra version nueva.
+
+    Registrar una fila por cada touch engordaria el ledger sin que el corpus
+    cambie, y obligaria a un ciclo promover/degradar entre dos versiones de
+    contenido identico (RFC-0019 6 fila 1).
+    """
+    corpus_path = tmp_path / "cv.md"
+    texto = _corpus_variant("SIN CAMBIOS")
+    corpus_path.write_text(texto, encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        huella_inicial = _ledger_fingerprint(conn, object_key)
+
+        corpus_path.write_text(texto, encoding="utf-8")
+        nueva_huella = f"{corpus_path.stat().st_mtime_ns}-{corpus_path.stat().st_size}"
+        await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
+
+        rows = _ledger(conn, object_key)
+        huella_final = _ledger_fingerprint(conn, object_key)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM ingestion_jobs WHERE object_key = %s", (object_key,))
+            jobs = cur.fetchone()
+
+    assert len(rows) == 1, f"el touch registro version nueva: {len(rows)} filas"
+    assert huella_final != huella_inicial, "no se actualizo source_fingerprint"
+    assert huella_final == nueva_huella
+    assert jobs is not None
+    assert jobs[0] == 1, "el touch creo un trabajo de ingesta"
+
+
+@pytest.mark.asyncio
+async def test_touch_restores_the_short_circuit(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-17: actualizar la huella deja el atajo del paso 2 operativo desde el
+    ciclo siguiente -- que es la razon de actualizarla en vez de ignorarla."""
+    corpus_path = tmp_path / "cv.md"
+    texto = _corpus_variant("ATAJO")
+    corpus_path.write_text(texto, encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        corpus_path.write_text(texto, encoding="utf-8")
+        await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
+
+        def _explode(*args: object, **kwargs: object) -> object:
+            raise AssertionError("el ciclo siguiente al touch deberia atajar sin leer")
+
+        monkeypatch.setattr(Path, "read_bytes", _explode)
+        monkeypatch.setattr(Path, "read_text", _explode)
+
+        tercero = await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
+
+    assert tercero.outcome == OUTCOME_NO_CHANGE
