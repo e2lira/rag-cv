@@ -125,11 +125,32 @@ TDD-2  ROJO REGISTRADO EN CI (fuerte)
 
 TDD-3  REVERSIÓN (definitiva)  <<< ESTA ES LA COMPROBACIÓN CENTRAL
        Eliges TRES criterios de aceptación AL AZAR. Para cada uno, revierte
-       mentalmente o con git la implementación correspondiente y ejecuta su test.
-       El test DEBE ponerse en rojo.
-       Si alguno sigue en verde, ese test no estaba probando nada, y el veredicto
-       es FAIL por muy alta que sea la cobertura. La cobertura mide líneas
-       ejecutadas, no comportamiento verificado.
+       la implementación correspondiente y comprueba que su test se pone en
+       rojo. Si alguno sigue en verde, ese test no estaba probando nada, y el
+       veredicto es FAIL por muy alta que sea la cobertura. La cobertura mide
+       líneas ejecutadas, no comportamiento verificado.
+
+       LA ELECCIÓN AL AZAR ES TUYA Y NO SE NEGOCIA. Es lo único que impide
+       que se compruebe solo lo que alguien preparó para ser comprobado. Lo
+       de abajo es sobre CÓMO obtienes la evidencia de un criterio ya
+       elegido, nunca sobre QUÉ criterios eliges.
+
+       TRES VÍAS, cualquiera vale (RFC-0014 §6.3), en orden de fuerza:
+       1. REVERSIÓN YA REGISTRADA EN CI -- si el PR trae un commit cuyo rojo
+          aislado por SHA ya demuestra que ese test detecta la ausencia de
+          ese código (típico de una reparación §6.2.2), esa ES la reversión:
+          ejecutada, y registrada por el CI, no por el Desarrollador.
+          Compruébala y sigue:
+            `gh api repos/<owner>/<repo>/commits/<sha>/check-runs`
+          Es MÁS fuerte que repetirla tú: es no repudiable.
+       2. REVERSIÓN EJECUTADA -- revierte con git (worktree aparte o stash)
+          y corre el test.
+       3. REVERSIÓN MENTAL -- lee el diff y razona qué test se rompería al
+          quitar esa implementación. DECLÁRALA COMO TAL en el informe.
+
+       NO VERIFICABLE se reserva para cuando NINGUNA de las tres es posible.
+       No poder crear un worktree no es "no hay evidencia": es no poder usar
+       la vía 2. Mira si existe la 1, y si no, usa la 3.
 ```
 
 Prohibiciones de RFC-0014 §7 que revisas en todo diff de tests:
