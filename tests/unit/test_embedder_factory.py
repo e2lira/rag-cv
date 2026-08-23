@@ -33,6 +33,14 @@ def test_openai_branch_returns_openai_embedder(http: httpx2.AsyncClient) -> None
     assert isinstance(embedder, OpenAIEmbedder)
 
 
+def test_fake_branch_returns_fake_embedder(http: httpx2.AsyncClient) -> None:
+    from app.retrieval.embedder_fake import FakeEmbedder
+
+    embedder = build_embedder(_settings("fake"), http)
+
+    assert isinstance(embedder, FakeEmbedder)
+
+
 @pytest.mark.parametrize("deferred", ["titan", "nomic_api", "ollama"])
 def test_deferred_branches_abort_explicitly(deferred: str, http: httpx2.AsyncClient) -> None:
     with pytest.raises(DeferredEmbedderError, match="diferid"):
