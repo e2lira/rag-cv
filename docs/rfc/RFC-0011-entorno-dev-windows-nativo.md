@@ -141,6 +141,37 @@ CREATE EXTENSION unaccent;
 CREATE EXTENSION pg_trgm;
 ```
 
+**La verificación de abajo usa `es_unaccent`, y esa configuración no la crea ninguna de las tres
+extensiones anteriores.** Vive en `infra/sql/001_initialize_rag_cv.sql`, que es artefacto de
+RFC-0006 (fuera del alcance de este RFC, §2). Sin este bloque, las consultas de verificación
+fallan con `text search configuration "es_unaccent" does not exist` — un error que no dice nada
+sobre el problema real (la configuración regional), y por eso hay que evitarlo aquí:
+
+```sql
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_ts_config AS config
+        JOIN pg_namespace AS namespace ON namespace.oid = config.cfgnamespace
+        WHERE namespace.nspname = 'public'
+          AND config.cfgname = 'es_unaccent'
+    ) THEN
+        CREATE TEXT SEARCH CONFIGURATION public.es_unaccent (COPY = spanish);
+    END IF;
+END;
+$$;
+
+ALTER TEXT SEARCH CONFIGURATION public.es_unaccent
+    ALTER MAPPING FOR hword, hword_part, word WITH unaccent, spanish_stem;
+```
+
+**Es el mismo texto, palabra por palabra, que usa `infra/sql/001_initialize_rag_cv.sql`.** No es
+una duplicación accidental: es deliberada, para que cuando RFC-0006 lo vuelva a aplicar sea un
+no-op idempotente (`IF NOT EXISTS`), no una segunda fuente de verdad que pueda divergir. Si algún
+día cambia la definición de `es_unaccent`, cambia en los dos sitios a la vez o queda documentada
+la deriva.
+
 Se usa el proveedor **ICU** (disponible desde PostgreSQL 16) en lugar de la configuración
 regional de Windows, porque `Spanish_Mexico.1252` no es compatible con `UTF8` y `C` clasifica
 mal los acentos. ICU da el mismo comportamiento que el `es_MX.UTF-8` de Ubuntu, que es
