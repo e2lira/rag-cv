@@ -184,6 +184,25 @@ async def run_once(
     _create_job(conn, object_key, version_id, source_document_id)
     conn.commit()
 
+    # Paso 7a: reclamacion por lease ANTES de mutar nada (A-3). Si otra
+    # ejecucion sostiene un lease VIVO sobre este object_key, esta sale sin
+    # indexar: "la segunda no encuentra trabajo reclamable y sale" (RFC-0019
+    # 9). Un lease CADUCADO no bloquea -- es lo que permite recuperarse de una
+    # ejecucion que murio a mitad (5).
+    idempotency_key = f"{object_key}@{version_id}"
+    lease_token = _claim_job(conn, object_key, idempotency_key, settings.watcher_lease_seconds)
+    conn.commit()
+    if lease_token is None:
+        _record_heartbeat(
+            conn,
+            object_key,
+            OUTCOME_UNSTABLE,
+            success=False,
+            detail={"reason": "lease_held", "source_version_id": version_id},
+        )
+        conn.commit()
+        return WatcherReport(outcome=OUTCOME_UNSTABLE, source_version_id=version_id)
+
     # Paso 7: la decision de re-embeber es de index_corpus, no de aqui
     # (RFC-0019 6, A-1b). Compara el content_hash de cada fragmento contra lo
     # que hay en cv_chunks: identico -> no embebe; reversion -> difiere y
@@ -192,6 +211,7 @@ async def run_once(
 
     # Paso 8: promocion y degradacion, una sola transaccion (RFC-0019 6.1).
     _promote(conn, object_key, version_id)
+    _complete_job(conn, idempotency_key)
 
     # Paso 9.
     _record_heartbeat(
@@ -257,6 +277,51 @@ def _create_job(
             "(idempotency_key, object_key, source_version_id, source_document_id) "
             "VALUES (%s, %s, %s, %s) ON CONFLICT (idempotency_key) DO NOTHING",
             (f"{object_key}@{version_id}", object_key, version_id, source_document_id),
+        )
+
+
+def _claim_job(
+    conn: psycopg.Connection, object_key: str, idempotency_key: str, lease_seconds: int
+) -> str | None:
+    """Paso 7a -- RFC-0019 5. Devuelve el token si reclamo, None si otra
+    ejecucion sostiene un lease vivo sobre el mismo `object_key`.
+
+    El NOT EXISTS es la exclusion mutua: mira leases VIVOS, no cualquier
+    trabajo en curso. Un `lease_expires_at` en el pasado es reclamable a
+    proposito -- si no lo fuera, una ejecucion que muriera a mitad dejaria el
+    corpus sin indexar para siempre y nadie lo notaria salvo por el latido.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ingestion_jobs SET job_state = 'processing', "
+            "  lease_token = gen_random_uuid(), "
+            "  lease_expires_at = now() + make_interval(secs => %(lease)s), "
+            "  attempt_count = attempt_count + 1, started_at = now(), updated_at = now() "
+            "WHERE idempotency_key = %(idem)s "
+            "  AND NOT EXISTS ( "
+            "    SELECT 1 FROM ingestion_jobs AS live "
+            "    WHERE live.object_key = %(key)s "
+            "      AND live.job_state = 'processing' "
+            "      AND live.lease_expires_at > now() "
+            "      AND live.idempotency_key <> %(idem)s) "
+            "RETURNING lease_token",
+            {"lease": lease_seconds, "idem": idempotency_key, "key": object_key},
+        )
+        row = cur.fetchone()
+
+    return None if row is None else str(row[0])
+
+
+def _complete_job(conn: psycopg.Connection, idempotency_key: str) -> None:
+    """El lease se SUELTA al terminar: sin esto el `object_key` quedaria
+    ocupado hasta que caducara. `ck_lease` exige anular token y expiracion
+    juntos, nunca uno solo."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ingestion_jobs SET job_state = 'succeeded', lease_token = NULL, "
+            "  lease_expires_at = NULL, completed_at = now(), updated_at = now() "
+            "WHERE idempotency_key = %s",
+            (idempotency_key,),
         )
 
 
