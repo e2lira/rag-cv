@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0016, RFC-0007, RFC-0008, RFC-0017, RFC-0019 |
-| **Supersede** | RFC-0007 §5.1 y §5.3 (topología y despliegue de QA) y RFC-0015 §7 (composición de QA), para el alcance de la PoC |
+| **Supersede** | RFC-0007 §5.1 y §5.3 (topología y despliegue de QA, incluido Caddy como terminador TLS) y RFC-0015 §7 (composición de QA), para el alcance de la PoC |
 | **ADRs** | ADR-0010 |
 | **Fecha** | 2026-08-22 |
 
@@ -37,7 +37,7 @@ del corpus (RFC-0019), el diseño de empaquetado en contenedor (RFC-0015, diferi
 
 ```mermaid
 flowchart LR
-    I["Internet"] -->|443| CD["caddy<br/>servicio del sistema<br/>TLS Let's Encrypt"]
+    I["Internet"] -->|443| CD["nginx<br/>servicio del sistema<br/>reto.qrimapp.com"]
     CD -->|127.0.0.1:8080| API["uvicorn · rag-cv<br/>systemd de usuario"]
     API -->|127.0.0.1:5432| DB[("postgresql 16 + pgvector<br/>listen_addresses = localhost")]
     API -->|HTTPS| AN["API de Anthropic<br/>generación"]
@@ -48,7 +48,7 @@ flowchart LR
 
 | Proceso | Cómo corre | Quién lo gestiona | Escucha en |
 | :--- | :--- | :--- | :--- |
-| `caddy` | Servicio del sistema (`systemd`) | `root`, aprovisionamiento | `0.0.0.0:80`, `0.0.0.0:443` |
+| `nginx` | Servicio del sistema (`systemd`) — **ya instalado en el VPS** | `root`, aprovisionamiento | `0.0.0.0:80`, `0.0.0.0:443` |
 | `postgresql` | Servicio del sistema (`systemd`) | `root`, aprovisionamiento | `127.0.0.1:5432` |
 | `rag-cv` (uvicorn) | **Unidad de usuario** de `systemd` | `qrimapp-reto` | `127.0.0.1:8080` |
 | `watcher` | `crontab` de `qrimapp-reto` (RFC-0019) | `qrimapp-reto` | — |
@@ -60,14 +60,17 @@ misma separación por momento y no por persona que fija RFC-0016 §8.1, aplicada
 ## 4. Aprovisionamiento — una vez por VPS, con privilegios
 
 ```bash
-# 1. Paquetes del sistema
-apt-get install -y postgresql-16 postgresql-16-pgvector caddy python3.12-venv
+# 1. Paquetes del sistema. nginx YA esta instalado y sirviendo: no se toca,
+#    y sobre todo NO se instala Caddy, que competiria por los puertos 80 y 443.
+apt-get install -y postgresql-16 postgresql-16-pgvector python3.12-venv
 
 # 2. Base de datos: solo por bucle local
 #    postgresql.conf -> listen_addresses = 'localhost'
 
-# 3. Cortafuegos: solo SSH y HTTP/S (RFC-0007 §5.1, sin cambios)
-ufw allow 22,80,443/tcp && ufw enable
+# 3. Cortafuegos: VERIFICAR antes de tocar.
+#    Si el VPS trae panel de control, el cortafuegos puede estar gestionado por el:
+#    un `ufw enable` a ciegas puede dejarte fuera o romper reglas existentes.
+ufw status verbose        # y solo entonces decidir
 
 # 4. Que las unidades de usuario arranquen sin sesión abierta
 loginctl enable-linger qrimapp-reto
@@ -156,7 +159,7 @@ ssh qrimapp-reto@vps bash -se <<'EOS'
   mv -Tf "$RAG_CV_HOME/current.new" "$RAG_CV_HOME/current"
   systemctl --user restart rag-cv-api
 EOS
-curl -fsS https://qa.<dominio>/readyz
+curl -fsS https://reto.qrimapp.com/readyz
 ```
 
 **Las exclusiones del `rsync` no son higiene, son seguridad.** Sin ellas, un `.env` de desarrollo
@@ -189,13 +192,60 @@ RNF-7 —la base de datos nunca se expone a internet— se cumple sin la red del
 | Servicio | Mecanismo |
 | :--- | :--- |
 | PostgreSQL | `listen_addresses = 'localhost'` + `ufw` sin el 5432 |
-| API | `uvicorn` sobre `127.0.0.1:8080`; solo Caddy la alcanza |
-| Caddy | Único proceso con puertos públicos, junto a SSH |
+| API | `uvicorn` sobre `127.0.0.1:8080`; solo nginx la alcanza |
+| nginx | Único proceso con puertos públicos, junto a SSH |
 
-**Que la API escuche en `0.0.0.0` es el fallo grave de esta topología**, porque saltaría a Caddy y
+**Que la API escuche en `0.0.0.0` es el fallo grave de esta topología**, porque saltaría a nginx y
 con él el TLS y la terminación que RFC-0005 asume. `uvicorn` enlaza por defecto en `127.0.0.1`,
 pero un `--host 0.0.0.0` copiado de un tutorial lo cambia sin que nada falle: el servicio responde
 igual. Por eso la comprobación es explícita (CA-4) y Bloqueante.
+
+### 7.1 El proxy inverso: nginx, y el detalle que rompe RNF-1 en silencio
+
+El VPS **ya tiene nginx** sirviendo, con raíz de documentos en
+`/home/qrimapp-reto/htdocs/reto.qrimapp.com`. Eso sustituye a Caddy: instalar un segundo
+terminador TLS competiría por los puertos 80 y 443 y el segundo simplemente no arrancaría.
+
+**La aplicación no es un sitio estático.** La raíz de documentos no sirve para publicarla: nginx
+tiene que hacer `proxy_pass` a `127.0.0.1:8080`. El directorio queda para el desafío ACME o sin
+uso.
+
+**Y aquí está el problema serio.** RFC-0005 §5 define `/v1/chat/stream` como `text/event-stream`
+**"sin *buffering* intermedio"**, y RNF-1 exige primer token en p95 ≤ 2 s. **nginx bufferea las
+respuestas proxied por defecto.** Con `proxy_buffering` activo, el cliente no recibe nada hasta que
+nginx vacía el búfer: el endpoint sigue respondiendo, los tests de contrato de eventos siguen
+pasando, y **la latencia de primer token se convierte en la de respuesta completa**. RNF-1 se cae
+sin un solo error en los registros.
+
+Directivas obligatorias en la ubicación del *stream*:
+
+```nginx
+location /v1/chat/stream {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;          # sin esto no hay streaming, solo la ilusion
+    proxy_cache off;
+    gzip off;                     # comprimir tambien bufferea
+    proxy_read_timeout 300s;      # el defecto de 60s corta respuestas largas
+}
+```
+
+**Defensa que no depende de la configuración: la aplicación emite `X-Accel-Buffering: no`** en la
+respuesta SSE. nginx honra esa cabecera y desactiva el búfer para esa respuesta aunque el
+`location` esté mal configurado. Es un delta sobre RFC-0005 y tiene criterio propio (CA-13), porque
+la corrección no debería depender de que alguien acierte con el *vhost*.
+
+**Cabeceras de reenvío.** `uvicorn` corre con `--proxy-headers` y
+`--forwarded-allow-ips=127.0.0.1`, y nginx envía `X-Forwarded-For` y `X-Forwarded-Proto`. Sin eso,
+la aplicación registra `127.0.0.1` como cliente de todas las peticiones y construye URLs con
+esquema `http`.
+
+**Si nginx lo gestiona un panel de control**, la disposición `/home/<usuario>/htdocs/<dominio>` lo
+sugiere: **no se edita a mano el *vhost* generado**. Un cambio del panel lo sobrescribe y el
+servicio vuelve al comportamiento anterior sin avisar. Se usa el mecanismo de fragmento
+personalizado que el panel ofrezca, y si no ofrece ninguno, se documenta el fichero exacto y se
+verifica tras cada actualización (CA-14).
 
 ## 8. Configuración que cambia
 
@@ -213,6 +263,7 @@ de la existencia del compose.
 | Fallo | Detección | Comportamiento |
 | :--- | :--- | :--- |
 | La API muere | `Restart=always` | `systemd` la reinicia; si entra en bucle, `journalctl` lo muestra y `/readyz` queda en rojo |
+| nginx bufferea el *stream* | **Ningún error.** Solo se detecta midiendo el tiempo hasta el primer byte | §7.1 + CA-13. Es el fallo silencioso de esta capa |
 | El VPS se reinicia sin `enable-linger` | Ausencia de servicio tras el arranque | **No hay servicio y no hay error.** Lo previene §4 paso 5 y lo verifica CA-2 |
 | El proveedor de embeddings no responde | `/readyz` en rojo o degradación a rama léxica | RFC-0017 §9. No es un fallo de esta topología: el host no ejecuta el modelo |
 | Migración fallida a mitad del despliegue | `alembic` devuelve error | El enlace `current` **no se conmuta**: sigue corriendo la release anterior |
@@ -235,13 +286,18 @@ de la existencia del compose.
 | CA-9 | El procedimiento de §4 reconstruye un VPS vacío hasta `/readyz` en verde | Ejecución sobre un host limpio |
 | CA-11 | La unidad declara las directivas de §5.1 y el servicio **no puede leer `/home`** | `systemd-analyze security rag-cv-api` + intento de lectura de `~/.ssh` desde el proceso |
 | CA-12 | `pip-audit` sobre `requirements.lock` corre en CI y bloquea severidad alta | Ejecución del workflow |
+| CA-13 | El primer evento SSE llega al cliente **antes** de que termine la respuesta, a través de nginx | `curl -N https://reto.qrimapp.com/v1/chat/stream` midiendo el tiempo hasta el primer byte de datos |
+| CA-14 | La configuración de nginx sobrevive a una actualización del panel, o está documentado el fichero y su verificación | Revisión tras actualizar |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
 
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| **La API expuesta en `0.0.0.0`**, saltándose Caddy y el TLS | §7 + CA-4, severidad Bloqueante |
+| **La API expuesta en `0.0.0.0`**, saltándose nginx y el TLS | §7 + CA-4, severidad Bloqueante |
+| **nginx bufferea el SSE y RNF-1 se cae sin error visible** | §7.1: `proxy_buffering off` **y** `X-Accel-Buffering: no` desde la aplicación, verificado por CA-13 |
+| Un panel de control sobrescribe el *vhost* editado a mano | §7.1 + CA-14 |
+| Instalar Caddy sobre un nginx que ya sirve, y que no arranque | §4 lo advierte; A-14 lo verifica |
 | Sin `enable-linger`, un reinicio deja el VPS sin servicio y sin error | §4 paso 5 + CA-2 |
 | Alguien instala un motor de inferencia local en un host que no da para ello | §4 lo declara; revertirlo exige reabrir ADR-0007 |
 | "Desplegamos el commit X" sin forma de comprobarlo | CA-5: el SHA se expone en `/readyz` |
@@ -271,4 +327,7 @@ de la existencia del compose.
 | A-11b | La unidad declara `ProtectHome=yes`, `NoNewPrivileges=yes` y `ProtectSystem=strict` | CA-11 | **Bloqueante** |
 | A-11c | El árbol de despliegue está fuera de `/home`, y por tanto `ProtectHome` es aplicable | Lectura de `$RAG_CV_HOME` | Bloqueante |
 | A-11d | Existe el sustituto del escaneo de imagen: `pip-audit` en CI | CA-12 | Mayor |
+| A-12 | El SSE llega sin *buffering* a través de nginx, y la aplicación emite `X-Accel-Buffering: no` | CA-13 | **Bloqueante** |
+| A-13 | `uvicorn` corre con `--proxy-headers` y la aplicación no registra `127.0.0.1` como cliente | Lectura de la unidad + registros | Mayor |
+| A-14 | No se instaló Caddy ni ningún segundo terminador TLS | `ss -ltnp` sobre 80 y 443 | Mayor |
 | A-12 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |

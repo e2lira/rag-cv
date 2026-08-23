@@ -35,8 +35,9 @@ portátil que solo corre en un sitio no está demostrando portabilidad.
 
 **QA se despliega de forma nativa sobre Ubuntu Server 24.04**: PostgreSQL con pgvector como
 paquete del sistema, la aplicación en un entorno virtual de Python bajo `systemd` de usuario, y
-Caddy como servicio del sistema terminando TLS. El despliegue se hace
-por **SSH**, sincronizando un árbol de fuentes en un commit concreto. El contrato está en RFC-0020.
+**el nginx que el VPS ya tiene sirviendo** como proxy inverso y terminador TLS —no se instala
+Caddy, que competiría por los puertos 80 y 443—. El despliegue se hace por **SSH**, sincronizando
+un árbol de fuentes en un commit concreto. El contrato está en RFC-0020.
 
 **El artefacto deja de ser la imagen y pasa a ser el commit.** Es un cambio de identidad del
 artefacto, no su desaparición: lo que RNF-10 protegía —que lo que corre en QA sea exactamente lo

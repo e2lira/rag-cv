@@ -72,7 +72,7 @@ PR.
 
 | # | RFC | Produce | Deltas obligatorios que leer junto al RFC |
 | :--- | :--- | :--- | :--- |
-| 11 | **RFC-0020** Topología nativa | Aprovisionamiento, unidad `systemd` de usuario, `enable-linger`, despliegue `rsync` + enlace `current`, reversión, **endurecimiento de la unidad (§5.1)** | Sustituye RFC-0007 §5.1 y §5.3 y RFC-0015 §7. **Excluir `.env` y `corpus/` del `rsync`**. §5.1 recupera las diez medidas de endurecimiento que se perdieron al diferir RFC-0015 |
+| 11 | **RFC-0020** Topología nativa (nginx, no Caddy) | Aprovisionamiento, unidad `systemd` de usuario, `enable-linger`, despliegue `rsync` + enlace `current`, reversión, **endurecimiento de la unidad (§5.1)** | Sustituye RFC-0007 §5.1 y §5.3 y RFC-0015 §7. **Excluir `.env` y `corpus/` del `rsync`**. §5.1 recupera las diez medidas de endurecimiento que se perdieron al diferir RFC-0015 |
 | 12 | **RFC-0008** CI/CD | Pipeline de calidad, construcción y despliegue **hasta QA** | El paso de promoción a PROD por *digest* y la deriva de Terraform **no aplican** |
 | 13 | **RFC-0010** Observabilidad | Logs JSON con rotación, métricas, alertas, runbook | CloudWatch y las diez alarmas de §6 **diferidas**. El runbook incorpora el reemplazo atómico del corpus (RFC-0019 §4) y la reindexación (§9.6c) |
 
@@ -106,7 +106,7 @@ cierra ADR-0006.
 
 ## 5. Definición de terminado para la PoC
 
-- El agente responde sobre el CV en `https://qa.<dominio>`, fundamentado y citando fragmentos.
+- El agente responde sobre el CV en `https://reto.qrimapp.com`, fundamentado y citando fragmentos.
 - Se abstiene correctamente cuando la respuesta no está en el corpus.
 - Actualizar `cv.md` en el VPS reindexa solo, y se puede demostrar.
 - La suite de RFC-0009 corre contra QA y publica sus métricas.
@@ -119,5 +119,5 @@ cierra ADR-0006.
 | Mergear el PR de los contratos | Todo: sin gate G1 no hay RFC aprobado que tomar |
 | `OPENAI_API_KEY` | Verificar CA-0' de RFC-0011 y toda la fase 1 |
 | `ANTHROPIC_API_KEY` | Fase 2, punto 7 |
-| Dominio real para `qa.<dominio>` | Fase 4: sin DNS no hay TLS de Let's Encrypt |
+| ~~Dominio~~ **resuelto**: `reto.qrimapp.com`, servido por el nginx que ya corre en el VPS | — |
 | Respuestas de las preguntas frecuentes del corpus | No bloquea, pero el agente se abstendrá en disponibilidad, modalidad y expectativas de rol |

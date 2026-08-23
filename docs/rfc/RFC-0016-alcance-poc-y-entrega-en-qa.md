@@ -55,7 +55,7 @@ Tres estados, y solo tres:
 | RFC-0002 Ingesta y chunking | Vigente con delta | El troceado y la normalización no cambian; la **fuente** del corpus y su disparador sí (§3.3, RFC-0019) |
 | RFC-0003 Retrieval híbrido (HNSW + FTS + RRF) | **Vigente** | La degradación a rama léxica de §6 pasa a cubrir la caída del embedder local en vez de la de Bedrock |
 | RFC-0004 Capa de agente Strands | Vigente con delta | La construcción del modelo ya la delegaba en RFC-0013; ahora se lee junto a RFC-0018 |
-| RFC-0005 API REST y autenticación | **Vigente** | Sin cambios |
+| RFC-0005 API REST y autenticación | Vigente con delta | El *stream* SSE de §5 pasa por nginx: la aplicación debe emitir **`X-Accel-Buffering: no`** para que no se bufferee (RFC-0020 §7.1). `/readyz` expone además el SHA desplegado |
 | RFC-0006 Modelo de datos y migraciones | Vigente con delta | `VECTOR(1024)` → `VECTOR(1536)` y recreación del HNSW (RFC-0017 §4). **Ojo:** RFC-0012 A-6 prohibía `1536` por corresponder a Titan G1; bajo RFC-0017 §4 es el valor correcto |
 | RFC-0007 Entornos e infraestructura | Parcial | §3 y §4 **vigentes**. §5.1 y §5.3 (topología y despliegue de QA con contenedores) los **sustituye RFC-0020**; §5.2 (credenciales AWS) lo **deroga** RFC-0018. §6 (PROD), §7 (IAM), §9 (IaC) y §10 (costos AWS) **diferidos** |
 | RFC-0008 CI/CD y release | Vigente con delta | El pipeline construye, prueba y despliega **hasta QA**. El paso de promoción a PROD por digest queda diferido; el job de deriva de Terraform no aplica |
@@ -172,7 +172,7 @@ Lo que interesa a este RFC es qué cambia respecto al diseño anterior:
 
 | Aspecto | RFC-0007 §5 (con contenedores) | Alcance vigente (RFC-0020) |
 | :--- | :--- | :--- |
-| Ejecución | `docker compose`: `caddy`, `api`, `db` | Procesos nativos; `caddy` y `postgresql` como servicios del sistema, la API como unidad de usuario |
+| Ejecución | `docker compose`: `caddy`, `api`, `db` | Procesos nativos; **`nginx` ya instalado** y `postgresql` como servicios del sistema, la API como unidad de usuario |
 | Base de datos | `pgvector/pgvector:pg16` en contenedor | PostgreSQL 16 + pgvector del sistema, `listen_addresses = 'localhost'` |
 | Embeddings | Bedrock con usuario IAM | API de OpenAI, `text-embedding-3-small` (RFC-0017) |
 | Generación | Bedrock con usuario IAM | API de Anthropic (RFC-0018) |
@@ -196,7 +196,7 @@ ser holgado:
 | Componente | Memoria estimada |
 | :--- | :--- |
 | Sistema operativo (Ubuntu 24.04, sin escritorio) | ~400 MB |
-| Caddy | ~30 MB |
+| nginx (ya en el host) | ~25 MB |
 | API (`uvicorn`, 2 *workers*) | ~350 MB |
 | PostgreSQL 16 + pgvector | ~400 MB |
 
@@ -268,7 +268,7 @@ momento, no por persona.**
 
 | Rol | Cuándo | Con qué cuenta | Qué hace |
 | :--- | :--- | :--- | :--- |
-| **Aprovisionamiento** | Una vez por VPS | `root` o `sudo` | Instala PostgreSQL, pgvector, Caddy y Python; abre el cortafuegos; crea el árbol y su propiedad; habilita `linger` (RFC-0020 §4) |
+| **Aprovisionamiento** | Una vez por VPS | `root` o `sudo` | Instala PostgreSQL, pgvector y Python; configura el *vhost* de nginx; verifica el cortafuegos; crea el árbol y su propiedad; habilita `linger` (RFC-0020 §4) |
 | **Operación** | Cada release, cada ciclo del sondeo | `qrimapp-reto` | Despliega, migra, indexa, reinicia unidades de usuario, lee bitácoras. **Nunca necesita `sudo`** |
 
 Que la operación no requiera `sudo` no es comodidad: es lo que permite que el `crontab` del
@@ -317,10 +317,10 @@ añadido, así que la convención acompaña.
 | Programación del sondeo | `crontab` de `qrimapp-reto` | — | `/etc/cron.d/` (RFC-0019 §7) |
 | Unidades de servicio | `~/.config/systemd/user/` | `qrimapp-reto` | Servicios del compose (RFC-0015 §7) |
 
-**Puertos 80 y 443.** Los abre `caddy` como servicio del sistema, instalado en el
-aprovisionamiento (RFC-0020 §4). No hacen falta capacidades ni ajustar
-`net.ipv4.ip_unprivileged_port_start` para la cuenta de operación, porque no es ella quien los
-abre.
+**Puertos 80 y 443.** Los abre **`nginx`, que ya está instalado y sirviendo** en el VPS
+(RFC-0020 §7.1). No hacen falta capacidades ni ajustar `net.ipv4.ip_unprivileged_port_start` para
+la cuenta de operación, porque no es ella quien los abre. **No se instala Caddy**: competiría por
+esos puertos y no arrancaría.
 
 **Lo que se renuncia, y conviene decirlo entero:**
 
@@ -395,7 +395,7 @@ el segundo.
 
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
-| CA-1 | Solo `caddy` escucha en interfaces públicas; API y PostgreSQL solo en el bucle local | `ss -ltnp` en el VPS (RFC-0020 CA-4) |
+| CA-1 | Solo `nginx` escucha en interfaces públicas; API y PostgreSQL solo en el bucle local | `ss -ltnp` en el VPS (RFC-0020 CA-4) |
 | CA-2 | La aplicación arranca y sirve `/readyz` en verde **sin ninguna credencial de AWS presente** en el entorno | Despliegue con `env` sin variables `AWS_*` |
 | CA-3 | No queda ninguna referencia a `bedrock`, `titan` ni `AWS_REGION` en la configuración efectiva de la PoC | `systemctl --user show-environment` + lectura del `.env` |
 | CA-4 | La latencia p95 de recuperación cabe en RNF-3 con tráfico concurrente y durante una indexación completa | Latencia medida durante la indexación con tráfico simultáneo |
@@ -405,7 +405,7 @@ el segundo.
 | CA-8 | Los RFCs y ADRs marcados `Diferido` conservan su contenido sin modificaciones | `git log --follow` sobre RFC-0007 y RFC-0015 |
 | CA-9 | Dos despliegues consecutivos sin cambios de corpus no violan unicidad y no regeneran embeddings | Ejecutar `§8` dos veces seguidas sin tocar el corpus |
 | CA-11 | El sondeo del corpus está instalado y su latido se actualiza tras el despliegue | RFC-0019 CA-10 sobre el VPS |
-| CA-12 | Caddy sirve en 443 y la cuenta de operación no pertenece a ningún grupo equivalente a `root` | `id -nG qrimapp-reto` + `curl -fsS https://qa.<dominio>/readyz` |
+| CA-12 | nginx sirve la aplicación en 443 y la cuenta de operación no pertenece a ningún grupo equivalente a `root` | `id -nG qrimapp-reto` + `curl -fsS https://reto.qrimapp.com/readyz` |
 | CA-13 | Ninguna ruta de despliegue queda fuera de `$RAG_CV_HOME`, todo pertenece a `qrimapp-reto` y el `.env` conserva permisos `600` | `ls -l` sobre el árbol de despliegue |
 | CA-14 | Ninguna operación de despliegue, indexación o sondeo requiere `sudo` | Ejecutar el ciclo completo con la cuenta de operación |
 | CA-10 | El token de versión persistido es un ULID por detección, **no** el `content_sha256` ni un SHA de commit | Consulta a `source_documents` tras dos ingestas |
