@@ -28,6 +28,12 @@ def ensure_extension_available(conn: psycopg.Connection, extension_name: str) ->
             )
 
 
+def ensure_database_with_spanish_locale(
+    maintenance_conn: psycopg.Connection, db_name: str
+) -> bool:
+    raise NotImplementedError
+
+
 def create_database_with_spanish_locale(maintenance_conn: psycopg.Connection, db_name: str) -> None:
     """CREATE DATABASE con proveedor ICU es-MX -- RFC-0011 #4.3.
 
