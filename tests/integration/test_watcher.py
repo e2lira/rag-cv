@@ -20,6 +20,7 @@ import pytest
 import app.ingestion.watcher as watcher_module
 from app.core.settings import Settings
 from app.ingestion.watcher import (
+    OUTCOME_FAILED,
     OUTCOME_INDEXED,
     OUTCOME_MISSING_CORPUS,
     OUTCOME_NO_CHANGE,
@@ -611,3 +612,87 @@ async def test_claim_marks_the_job_and_releases_it(
     assert lease_token is None, "el lease no se solto al completarse el trabajo"
     assert lease_expires_at is None, "ck_lease exige que las dos se anulen juntas"
     assert attempts == 1, "el intento no quedo contado"
+
+
+class _FailingEmbedder:
+    """Simula la caida del proveedor: RuntimeError, no AssertionError -- una
+    excepcion de dominio, como la que lanzaria httpx ante un 503."""
+
+    model_id = "failing"
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("el proveedor de embeddings no responde")
+
+    async def embed_query(self, text: str) -> list[float]:
+        raise RuntimeError("el proveedor de embeddings no responde")
+
+
+@pytest.mark.asyncio
+async def test_rollback_on_failure(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-13: el fallo del embebedor deja el indice intacto, nunca a medias.
+
+    Se indexa primero una version buena, y el fallo llega DESPUES: asi se
+    comprueba que el indice conserva lo anterior, no solo que quede vacio --
+    un rollback que borrara todo tambien pasaria un test que mirara "vacio".
+    """
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("BUENA"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        antes = _chunk_contents(conn)
+
+        corpus_path.write_text(_corpus_variant("LA QUE FALLA AL EMBEBER"), encoding="utf-8")
+        report = await run_once(conn, _FailingEmbedder(), settings)  # type: ignore[arg-type]
+
+        despues = _chunk_contents(conn)
+        rows = _ledger(conn, object_key)
+        jobs = _jobs(conn, object_key)
+        beat = _heartbeat(conn, object_key)
+
+    assert report.outcome == OUTCOME_FAILED
+    assert despues == antes, "el fallo dejo el indice a medias"
+    assert "BUENA" in despues
+    assert "LA QUE FALLA" not in despues
+    assert len([r for r in rows if r[2]]) == 1, "el fallo cambio la version vigente"
+    assert any(job[0] == "failed" for job in jobs), "el trabajo no quedo en 'failed'"
+    assert beat is not None
+    assert beat[2] == OUTCOME_FAILED
+
+
+@pytest.mark.asyncio
+async def test_dead_letter(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-12: superar WATCHER_MAX_ATTEMPTS deja el trabajo dead_lettered y no
+    se reintenta en bucle.
+
+    Los intentos tienen que ACUMULARSE sobre el mismo trabajo. Si cada ciclo
+    creara uno nuevo, attempt_count nunca llegaria al tope y el sondeo
+    reintentaria para siempre, consumiendo CPU del host -- justo el riesgo
+    que 11 declara.
+    """
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("SIEMPRE FALLA"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path, WATCHER_MAX_ATTEMPTS="2")
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        primero = await run_once(conn, _FailingEmbedder(), settings)  # type: ignore[arg-type]
+        segundo = await run_once(conn, _FailingEmbedder(), settings)  # type: ignore[arg-type]
+        tercero = await run_once(conn, _FailingEmbedder(), settings)  # type: ignore[arg-type]
+
+        jobs = _jobs(conn, object_key)
+
+    assert primero.outcome == OUTCOME_FAILED
+    assert segundo.outcome == OUTCOME_FAILED
+    assert len(jobs) == 1, f"cada ciclo creo un trabajo nuevo: {len(jobs)} -- no acumulan"
+    assert jobs[0][0] == "dead_lettered", f"el trabajo quedo en '{jobs[0][0]}'"
+    assert jobs[0][3] == 2, f"attempt_count = {jobs[0][3]}, se esperaba el tope 2"
+    assert tercero.outcome != OUTCOME_FAILED, (
+        "un trabajo dead_lettered se siguio reintentando (11: reintentos en bucle)"
+    )
