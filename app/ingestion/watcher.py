@@ -13,12 +13,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import psycopg
 from ulid import ULID
 
+from app.core.engine import build_pool
 from app.core.settings import Settings
 from app.ingestion.indexer import index_corpus
-from app.retrieval.embedder import Embedder
+from app.retrieval.embedder import Embedder, build_embedder
 
 # Viaja en source_metadata: si el algoritmo de deteccion cambia, el ledger
 # dice con cual se observo cada version (RFC-0019 3 paso 5).
@@ -453,8 +455,39 @@ def _promote(conn: psycopg.Connection, object_key: str, version_id: str) -> None
         )
 
 
+# El cron no lee el latido: lee el codigo de salida y lo escribe en la
+# bitacora. Por eso un ciclo que no pudo comprobar el corpus sale != 0 aunque
+# no sea un error del programa -- es lo unico que un operador ve sin abrir la
+# base (RFC-0019 7, 9).
+_EXIT_CODES = {
+    OUTCOME_NO_CHANGE: 0,
+    OUTCOME_INDEXED: 0,
+    OUTCOME_UNSTABLE: 0,
+    OUTCOME_MISSING_CORPUS: 2,
+    OUTCOME_FAILED: 1,
+    OUTCOME_DEAD_LETTERED: 1,
+}
+
+
 async def _run_cli(argv: list[str] | None = None) -> int:
-    raise NotImplementedError
+    """Entrada de `python -m app.ingestion.watcher` -- RFC-0019 7."""
+    settings = Settings()
+
+    pool = build_pool(settings.database_url.get_secret_value())
+    try:
+        async with httpx2.AsyncClient() as http:
+            embedder = build_embedder(settings, http)
+        with pool.connection() as conn:
+            report = await run_once(conn, embedder, settings)
+    finally:
+        pool.close()
+
+    print(
+        f"outcome={report.outcome} "
+        f"version={report.source_version_id or '-'} "
+        f"embed_calls={report.embed_calls}"
+    )
+    return _EXIT_CODES.get(report.outcome, 1)
 
 
 if __name__ == "__main__":  # pragma: no cover
