@@ -62,6 +62,16 @@ NO aplastas los commits. El historial del PR es la evidencia de que hubo TDD, y
 aplastarlo la destruye. El CI corre en cada push: el commit de tests debe quedar
 registrado en ROJO y el siguiente en VERDE.
 
+PUSHEÁ CADA COMMIT DEL PAR SOLO. La ejecución de CI se adjunta al HEAD del push,
+NO a cada commit que el push contiene. Si commiteás el rojo, seguís trabajando y
+después pusheás los dos juntos, el rojo se queda sin ejecución propia y el verde
+le pertenece al último commit del push, no al de implementación: evidencia
+destruida, igual que si hubieras aplastado (RFC-0014 §6.2, condición operativa
+1). Commit de test -> push -> esperás el rojo. Commit de implementación -> push
+-> esperás el verde. Nada encolado detrás. Lo verificás por SHA, no en la vista
+de checks del PR:
+  gh api repos/<owner>/<repo>/commits/<sha>/check-runs --jq '.check_runs[]'
+
 ═══════════════════════════════════════════════════════════════════════
 
 QUÉ SE PRUEBA CON TDD Y QUÉ NO
