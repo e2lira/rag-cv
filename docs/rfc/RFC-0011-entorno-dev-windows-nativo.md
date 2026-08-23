@@ -3,7 +3,7 @@
 | Campo | Valor |
 | :--- | :--- |
 | **Estado** | Aprobado |
-| **Depende de** | RFC-0006, RFC-0007 |
+| **Depende de** | RFC-0007 (decisión de diseño, ya aprobada; no exige implementación previa) |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -29,15 +29,23 @@ configuración regional correcta, incompatibilidades concretas de Python/psycopg
 Windows, scripts de tarea multiplataforma, estrategia de pruebas sin Docker, contrato de
 paridad con Linux.
 
-**No entra:** QA y PROD (RFC-0007), el pipeline (RFC-0008), el esquema (RFC-0006).
+**No entra:** QA y PROD (RFC-0007), el pipeline (RFC-0008), el esquema (RFC-0006), la ingesta
+(RFC-0002), la API de negocio (RFC-0005).
+
+**Y sin embargo entra un `app/dev_server.py` mínimo.** El §7 exige probar que `uvicorn` arranca
+en Windows sin el error de bucle de eventos (CA-4, CA-5), y eso no se puede verificar sin *algún*
+punto de entrada `uvicorn` real. Este RFC construye el **esqueleto**: `app/core/platform.py`
+—detección de plataforma y política de bucle de eventos— y `app/dev_server.py` con una única ruta
+`/readyz` que responde `200` sin tocar base de datos ni lógica de negocio. Es la prueba de que el
+mecanismo funciona, no la API. RFC-0005 lo amplía con el contrato real.
 
 ## 3. Requisitos de la estación de trabajo
 
 | Componente | Versión | Cómo se instala |
 | :--- | :--- | :--- |
 | Windows | 10/11 x64 | — |
-| PostgreSQL | 16.x x64 | Instalador de EDB (incluye `unaccent` y `pg_trgm` en contrib) |
-| pgvector | 0.8.5 | **Compilado con `nmake`** (§4.2) |
+| PostgreSQL | **≥ 16.x** x64 (16.x recomendado, iguala el VPS de QA) | Instalador de EDB (incluye `unaccent` y `pg_trgm` en contrib) |
+| pgvector | 0.8.5 o la que traiga el instalador de EDB | **Compilar con `nmake`** solo si el instalador no la incluye (§4.2) |
 | Visual Studio Build Tools | 2022, carga «Desarrollo para el escritorio con C++» | Requisito **solo** para compilar pgvector |
 | Python | 3.12 x64 | python.org o `winget install Python.Python.3.12` |
 | Git | ≥ 2.40 | `winget install Git.Git` |
@@ -64,9 +72,26 @@ Get-Service postgresql-x64-16
 Restart-Service postgresql-x64-16
 ```
 
+### 4.1.1 Sobre exigir exactamente PostgreSQL 16
+
+Ninguno de los criterios de aceptación de §10 (CA-0 a CA-12) verifica un número de versión de
+PostgreSQL. La comprobación exacta contra la versión real de producción **ya existe y corre en
+Linux**: `TEST_DB_MODE=container` levanta `pgvector/pgvector:pg16` por *testcontainers* (§8), que
+replica el 16.14 del VPS de QA. Es la autoridad — "Linux es la autoridad" (§9) — no este entorno.
+
+**El requisito para DEV es un PostgreSQL con `vector` disponible, ≥ 16** (por la configuración
+regional ICU de §4.3, que exige 16 o superior). Usar una versión mayor ya instalada en la máquina
+—18, por ejemplo— es válido: RFC-0007 §3 asigna a DEV validar el código, no el artefacto, y esa
+distinción es justo la que hace innecesaria la paridad exacta de versión aquí. Si algún día una
+migración usara una característica exclusiva de una versión concreta, el job de CI contra
+`pg16` lo detendría antes del merge, que es donde tiene que detenerse.
+
 ### 4.2 pgvector — compilación
 
-pgvector **no publica binarios para Windows**: hay que compilarlo. Desde el
+pgvector **no publicaba binarios oficiales para Windows**, y el procedimiento de esta sección
+sigue siendo la vía correcta si hace falta. **Verificalo primero**: los instaladores recientes de
+EDB para Windows incluyen la extensión ya compilada — el paso 2 del bootstrap (§7) lo detecta y
+solo cae a este procedimiento si `CREATE EXTENSION vector` falla. Desde el
 *x64 Native Tools Command Prompt for VS 2022* **como administrador**:
 
 ```bat
@@ -377,7 +402,7 @@ Solo hay dos scripts de shell en el repositorio, y ninguno se ejecuta en Windows
 `scripts/bootstrap-dev.ps1`, idempotente, ejecutable las veces que haga falta:
 
 ```powershell
-# 1. Verifica versiones (Python 3.12, PostgreSQL 16, git)
+# 1. Verifica versiones (Python 3.12, PostgreSQL >= 16, git)
 # 2. Verifica que la extensión vector esté disponible; si no, imprime las
 #    instrucciones de compilación de §4.2 y sale con código 1
 # 3. Crea la base de datos 'ragcv' con ICU es-MX si no existe (idempotente)
@@ -385,13 +410,25 @@ Solo hay dos scripts de shell en el repositorio, y ninguno se ejecuta en Windows
 # 5. Ejecuta la prueba de configuración de texto de §4.3 y falla si no pasa
 # 6. Crea el venv, instala dependencias con uv sync
 # 7. Copia .env.example a .env si no existe y aplica la ACL
-# 8. alembic upgrade head
-# 9. python -m app.ingestion.indexer --corpus corpus/cv.md
+# 8. Si existe alembic.ini: alembic upgrade head. Si no (RFC-0006 aun no
+#    implementado), lo omite con un aviso -- no es un fallo del bootstrap.
+# 9. Si existe app/ingestion/indexer.py: reindexa. Si no (RFC-0002 aun no
+#    implementado), lo omite con un aviso.
 # 10. Imprime el resumen y el comando para arrancar
 ```
 
 El paso 5 es el que evita el fallo silencioso de §4.3: el entorno no se declara listo si la
 búsqueda léxica en español no se comporta como en Linux.
+
+**Por qué los pasos 8 y 9 son condicionales, y no un error de este documento.** El §2 excluye
+explícitamente el esquema (RFC-0006) y la ingesta (RFC-0002) del alcance de este RFC. Si el
+bootstrap exigiera esos pasos sin condición, este RFC sería literalmente imposible de implementar
+en aislamiento — contradiría su propio Definition of Ready (ADU-PROCESO §4, punto 6:
+"Dependencias — RFCs previos que deben estar Implementado"), porque ninguno de los dos está
+implementado todavía. La condicionalidad es lo que permite que **este RFC sea el primero de la
+cadena** sin mentir sobre lo que hace: en su primera ejecución dice "no hay migraciones ni corpus
+que indexar todavía" y se detiene ahí; cuando RFC-0006 y RFC-0002 aterricen, los mismos pasos
+empiezan a ejecutarse sin tocar el script.
 
 ## 8. Estrategia de pruebas sin Docker
 
@@ -448,11 +485,11 @@ unitarias en `windows-latest`: para proteger también el camino inverso).
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
 | CA-0 | El bootstrap comprueba el acceso a los modelos de Bedrock y no declara el entorno listo si falta | Ejecutar sin acceso habilitado al modelo |
-| CA-1 | `scripts/bootstrap-dev.ps1` deja el entorno listo desde cero y es idempotente | Ejecutarlo dos veces en una máquina limpia |
+| CA-1 | `scripts/bootstrap-dev.ps1` completa los pasos 1-7 y 10 desde cero, es idempotente, y los pasos 8-9 se omiten con aviso si sus RFCs no están implementados todavía | Ejecutarlo dos veces en una máquina limpia, sin `alembic.ini` ni `app/ingestion/` presentes |
 | CA-2 | El bootstrap falla con instrucciones claras si `vector` no está disponible | Ejecutar sin pgvector instalado |
 | CA-3 | La prueba de configuración de texto (§4.3) pasa en Windows y en Ubuntu con el mismo resultado | `pytest tests/integration/test_text_search.py` en ambos |
 | CA-4 | Arrancar con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
-| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows | Manual + humo |
+| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows, con el esqueleto mínimo de §2 (sin base de datos ni lógica de negocio) | Manual + humo |
 | CA-6 | `uvloop` no se instala en Windows y sí en Linux | `uv sync` en ambos + inspección |
 | CA-7 | Existe `.gitattributes` y `git status` está limpio tras `--renormalize` | `git status --short` vacío |
 | CA-8 | Ningún `.sh` ni el `Dockerfile` tienen CRLF | `file infra/**/*.sh Dockerfile` en el CI |
