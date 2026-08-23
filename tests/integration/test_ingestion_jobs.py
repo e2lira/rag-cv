@@ -97,9 +97,12 @@ def test_job_state_check(database_url: str) -> None:
 
 
 def test_source_delete_restricted(database_url: str) -> None:
+    # PostgreSQL 18 (DEV) reporta RestrictViolation; PostgreSQL 16 (CI Linux,
+    # la autoridad -- RFC-0011 9) reporta ForeignKeyViolation para el mismo
+    # RESTRICT. Se aceptan las dos formas conocidas, no cualquier IntegrityError.
     with (
         psycopg.connect(database_url) as conn,
-        pytest.raises(psycopg.errors.RestrictViolation),
+        pytest.raises((psycopg.errors.RestrictViolation, psycopg.errors.ForeignKeyViolation)),
         conn.cursor() as cur,
     ):
         _insert_source(cur)
