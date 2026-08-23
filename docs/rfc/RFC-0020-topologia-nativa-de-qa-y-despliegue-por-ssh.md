@@ -329,6 +329,12 @@ de la existencia del compose.
 | CA-15 | El `.env` tiene permisos `600` desde su creación y el secreto no está en el panel ni en el perfil del usuario | `ls -l`, `stat`, revisión del panel y de `~/.bashrc` |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
 | CA-16 | La base `ragcv` de QA está creada con proveedor ICU y configuración regional `es-MX`, y la búsqueda léxica encuentra un término acentuado escribiéndolo sin tilde | `SELECT datlocprovider, datcollate FROM pg_database WHERE datname='ragcv'` devuelve `i` y `es-MX`; y la consulta de RFC-0006 §3.1 devuelve `true` **ejecutada contra el VPS**. Cierra A-3b de RFC-0006 para QA |
+| CA-17 | El sondeo de RFC-0019 está en el `crontab` del usuario de operación, se ejecuta sin `sudo`, y no existe ninguna regla `NOPASSWD` que lo sostenga | `crontab -l` + `sudo -l` + latido tras un ciclo |
+| CA-18 | La bitácora del sondeo rota y no crece sin límite | Ejecutar la rotación + `ls -l` sobre `$RAG_CV_HOME/logs/` |
+
+**CA-17 y CA-18 llegan de RFC-0019.** Ese RFC define el `cron` y la rotación como contrato (§7);
+*instalarlos* es aprovisionamiento, y el aprovisionamiento es de este RFC. Estaban entre sus
+criterios como CA-14 y CA-15, exigiendo un VPS ocho puntos antes de que exista.
 
 ## 11. Riesgos
 
@@ -372,5 +378,7 @@ de la existencia del compose.
 | A-13 | `uvicorn` corre con `--proxy-headers` y la aplicación no registra `127.0.0.1` como cliente | Lectura de la unidad + registros | Mayor |
 | A-14 | No se instaló Caddy ni ningún segundo terminador TLS | `ss -ltnp` sobre 80 y 443 | Mayor |
 | A-15 | El secreto vive solo en `$RAG_CV_HOME/.env` con `600`: no en el panel, no en el perfil del usuario, no en el repositorio | CA-15 | **Bloqueante** |
-| A-12 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |
+| A-19 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |
 | A-16 | La base `ragcv` de QA está creada con ICU `es-MX`, verificado **contra el VPS** y no por lectura del script. Recoge la mitad de RFC-0006 A-3b que este RFC entrega | CA-16 | **Bloqueante** |
+| A-17 | El sondeo de RFC-0019 se instala y se ejecuta sin `sudo`, y no se añadió ninguna regla `NOPASSWD` para sostenerlo | CA-17 | Mayor |
+| A-18 | La bitácora del sondeo tiene rotación configurada en espacio de usuario | CA-18 | Mayor |

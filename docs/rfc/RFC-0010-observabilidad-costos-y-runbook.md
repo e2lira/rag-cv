@@ -3,7 +3,7 @@
 | Campo | Valor |
 | :--- | :--- |
 | **Estado** | Aprobado |
-| **Depende de** | RFC-0005, RFC-0007 |
+| **Depende de** | RFC-0005, RFC-0007, RFC-0019 |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -254,6 +254,13 @@ en Git).
 | CA-9 | Vaciar `cv_chunks` en QA dispara `AbstentionSpike` en menos de 20 min | Simulacro documentado |
 | CA-10 | El trabajo de retención elimina mensajes de más de 30 días | `test_retention.py` |
 | CA-11 | El runbook cubre la recompilación de pgvector en DEV tras una actualización de PostgreSQL | Simulacro documentado |
+| CA-12 | Un `last_success_at` de `watcher_heartbeat` más antiguo que `WATCHER_HEARTBEAT_MAX_AGE_SECONDS` dispara alerta | Simulacro: detener el sondeo y esperar el umbral |
+| CA-13 | El runbook documenta el reemplazo atómico del corpus (escribir a temporal + `mv` en el mismo sistema de ficheros) | Lectura |
+
+**CA-12 y CA-13 llegan de RFC-0019.** Ese RFC *escribe* el latido y declara el umbral (§7.1, §7.2)
+y la regla de escritura atómica (§4); *alertar* y *documentar el procedimiento* es trabajo de este.
+Estaban entre sus criterios como CA-11 y A-8, lo que dejaba el gate de un RFC del punto 5
+dependiendo del punto 13.
 
 ## 11. Riesgos
 
@@ -278,3 +285,5 @@ en Git).
 | A-8 | Las alarmas están en IaC, no creadas a mano | CA-7 | Mayor |
 | A-9 | La emisión de métricas no añade latencia en la ruta crítica (EMF) | Lectura del código | Menor |
 | A-10 | El trabajo de retención existe y está programado | CA-10 | Mayor |
+| A-11 | Existe la alerta por ausencia de latido del sondeo, y mira `last_success_at`, no `last_run_at` | CA-12 | **Bloqueante** |
+| A-12 | La regla de reemplazo atómico del corpus está en el runbook | CA-13 | Mayor |
