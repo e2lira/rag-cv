@@ -137,3 +137,37 @@ async def test_embedding_shape_and_norm(database_url: str, tmp_path: Path) -> No
     assert len(vector) == 1536
     norm = sum(x * x for x in vector) ** 0.5
     assert abs(norm - 1.0) < 1e-6
+
+
+class _ExplodingEmbedder:
+    """CA-10 / A-8/A-4: si `--dry-run` llegara a llamar a embed_documents,
+    esta prueba debe fallar aqui -- no basta con contar filas, porque un
+    dry-run que llama al embedder y descarta el resultado tambien deja la
+    tabla vacia."""
+
+    model_id = "exploding@test"
+    dimension = 1536
+
+    async def embed_documents(self, texts: object) -> list[list[float]]:
+        raise AssertionError("dry-run no debe llamar a embed_documents (RFC-0002 CA-10 / A-8)")
+
+    async def embed_query(self, text: str) -> list[float]:
+        raise AssertionError("dry-run no debe llamar al embedder")
+
+
+@pytest.mark.asyncio
+async def test_dry_run_no_side_effects(database_url: str, tmp_path: Path) -> None:
+    """CA-10 / A-8: --dry-run no ejecuta ningun INSERT/UPDATE ni llama a la
+    API de embeddings."""
+    corpus_path = _write_corpus(tmp_path)
+
+    with psycopg.connect(database_url) as conn:
+        report = await index_corpus(conn, _ExplodingEmbedder(), corpus_path, dry_run=True)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM cv_chunks WHERE doc_id = %s", ("cv",))
+            (count,) = cur.fetchone()
+
+    assert count == 0
+    assert report.embed_calls == 0
+    assert report.inserted > 0
