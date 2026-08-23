@@ -10,15 +10,15 @@ _OBJECT_KEY = "cv.md"
 _SOURCE_VERSION = "v1"
 
 
-def _insert_source(cur: psycopg.Cursor) -> None:
+def _insert_source(cur: psycopg.Cursor, *, version: str = _SOURCE_VERSION) -> None:
     cur.execute(
         """
         INSERT INTO source_documents
             (object_key, source_version_id, source_fingerprint, content_sha256,
              ingestion_status, is_current)
-        VALUES (%s, %s, 'fp', %s, 'indexed', true)
+        VALUES (%s, %s, 'fp', %s, 'indexed', false)
         """,
-        (_OBJECT_KEY, _SOURCE_VERSION, "0" * 64),
+        (_OBJECT_KEY, version, "0" * 64),
     )
 
 
@@ -26,6 +26,7 @@ def _insert_job(
     cur: psycopg.Cursor,
     *,
     idempotency_key: str,
+    version: str = _SOURCE_VERSION,
     job_state: str = "pending",
     lease_token: str | None = None,
     lease_expires_at: str | None = None,
@@ -44,9 +45,9 @@ def _insert_job(
         (
             idempotency_key,
             _OBJECT_KEY,
-            _SOURCE_VERSION,
+            version,
             _OBJECT_KEY,
-            _SOURCE_VERSION,
+            version,
             job_state,
             lease_token,
             lease_expires_at,
@@ -82,8 +83,8 @@ def test_lease_pair(database_url: str) -> None:
 
 def test_job_state_check(database_url: str) -> None:
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
-        _insert_source(cur)
-        _insert_job(cur, idempotency_key="k1", job_state="dead_lettered")
+        _insert_source(cur, version="v1")
+        _insert_job(cur, idempotency_key="k1", version="v1", job_state="dead_lettered")
         conn.commit()
 
     with (
@@ -91,14 +92,14 @@ def test_job_state_check(database_url: str) -> None:
         pytest.raises(psycopg.errors.CheckViolation),
         conn.cursor() as cur,
     ):
-        _insert_source(cur)
-        _insert_job(cur, idempotency_key="k2", job_state="no-es-un-estado-valido")
+        _insert_source(cur, version="v2")
+        _insert_job(cur, idempotency_key="k2", version="v2", job_state="no-es-un-estado-valido")
 
 
 def test_source_delete_restricted(database_url: str) -> None:
     with (
         psycopg.connect(database_url) as conn,
-        pytest.raises(psycopg.errors.ForeignKeyViolation),
+        pytest.raises(psycopg.errors.RestrictViolation),
         conn.cursor() as cur,
     ):
         _insert_source(cur)

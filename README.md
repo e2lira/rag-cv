@@ -92,31 +92,14 @@ Las inserciones y eliminaciones normales actualizan HNSW y quedan acompañadas p
 
 `REINDEX INDEX CONCURRENTLY` no tiene rollback transaccional. El worker de mantenimiento conservará el índice anterior hasta que el intercambio sea exitoso, monitorizará errores, reintentará o reprogramará de forma segura y, si fuera necesario, restaurará o reconstruirá el índice desde la fuente y el ledger.
 
-## Esquema de base de datos para QA y PROD
+## Esquema de base de datos
 
-El DDL inicial está en [`infra/sql/001_initialize_rag_cv.sql`](infra/sql/001_initialize_rag_cv.sql). Crea de forma aditiva el esquema `rag_cv`, las extensiones `vector`/`pgcrypto`, el **source ledger**, el ledger de trabajos idempotentes, los chunks con `vector(1024)` para Amazon Titan Text Embeddings V2 y los índices relacionales, FTS y HNSW necesarios. No ejecuta `VACUUM` ni `REINDEX` automático; incluye una eliminación protegida de una restricción única obsoleta, sin borrar datos, para que cada `VersionId` permanezca auditable aunque su contenido no cambie.
-
-### Ejecución segura
-
-1. Aprovisionar PostgreSQL con **pgvector** disponible y crear una identidad de migración con permiso para `CREATE EXTENSION`, esquema, tablas, funciones e índices. La identidad de aplicación debe recibir después solo permisos mínimos de `USAGE`/DML.
-2. Ejecutar, por separado y con URL de conexión de cada ambiente: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/001_initialize_rag_cv.sql`.
-3. Verificar las extensiones y objetos creados, y otorgar permisos a la identidad runtime según los adaptadores que se implementen. Ejecutar el script repetidamente es seguro para el bootstrap; cambios posteriores deben ser migraciones aditivas y compatibles hacia atrás.
-
-El modelo de datos bloquea eventos duplicados con claves únicas de `(object_key, s3_version_id)` e `idempotency_key`; el índice no único de `(object_key, SHA-256)` permite detectar contenido repetido. Así, **cada** `VersionId` de S3 queda en el ledger, pero un hash ya indexado se resuelve como trabajo idempotente sin regenerar embeddings. Todo job referencia obligatoriamente el UUID de su registro de fuente y una clave foránea compuesta verifica que ese UUID corresponde al mismo `object_key` y `s3_version_id` del evento. Solo una versión indexada puede ser actual por objeto. El worker debe reclamar un job mediante transacción/lease antes de mutar el estado. El ETag se guarda como marcador opaco y el SHA-256 sigue siendo la prueba del cambio real.
-
-Los adaptadores de recuperación deben consultar exclusivamente [`rag_cv.active_chunks`](infra/sql/001_initialize_rag_cv.sql), la vista que une chunks con la versión `is_current`. Los chunks vectoriales predecesores permanecen hasta que un sucesor validado sea promovido en la misma transacción; entonces se eliminan sus embeddings para acotar HNSW. Los metadatos de fuente, versión y job siguen auditables en el ledger, y un rollback regenera los embeddings desde la versión correspondiente de S3.
-
-### Verificación de base de datos en QA
-
-Ejecutar únicamente contra una base PostgreSQL con pgvector **controlada y desechable** de QA/CI, usando una identidad con los privilegios de bootstrap:
-
-```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/001_initialize_rag_cv.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/001_initialize_rag_cv.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/tests/001_initialize_rag_cv_verify.sql
-```
-
-El último archivo es una prueba SQL transaccional: verifica objetos, `vector(1024)`, HNSW coseno, FTS, reejecución, eventos duplicados, versiones distintas con el mismo hash, la referencia obligatoria job→fuente, la única versión actual y la exclusión de chunks obsoletos por la vista. Usa un `object_key` derivado de la transacción y termina con `ROLLBACK`, por lo que no conserva sus datos de prueba. También ejecuta una consulta KNN coseno mediante `rag_cv.active_chunks`; es un activo para QA/CI, no una afirmación de ejecución local.
+El esquema vive en migraciones de **Alembic** (`migrations/`), no en un script SQL de bootstrap
+— ver [RFC-0006](docs/rfc/RFC-0006-modelo-de-datos-y-migraciones.md) §2.2, §4 y §5 para el
+contrato completo (extensiones, `cv_chunks`, `conversations`/`messages`, el ledger
+`source_documents` y `ingestion_jobs`, e índices). Aplicar con `alembic upgrade head` contra la
+URL de conexión de cada ambiente; el ciclo `upgrade`/`downgrade` está probado contra una base
+efímera (RFC-0006 CA-2).
 
 ## Ambientes y configuración
 

@@ -134,15 +134,60 @@ CREATE TABLE rate_buckets (
 );
 
 CREATE TABLE ingestion_jobs (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    status      TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
-    force       BOOLEAN NOT NULL DEFAULT false,
-    report      JSONB,
-    error       TEXT,
-    started_at  TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key     TEXT        NOT NULL,
+    object_key          TEXT        NOT NULL,
+    source_version_id   TEXT        NOT NULL,
+    source_document_id  UUID        NOT NULL,
+    job_state           TEXT        NOT NULL DEFAULT 'pending',
+    attempt_count       INT         NOT NULL DEFAULT 0,
+    lease_token         UUID,
+    lease_expires_at    TIMESTAMPTZ,
+    error_code          TEXT,
+    error_detail        TEXT,
+    job_metadata        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_job_state
+        CHECK (job_state IN ('pending','processing','succeeded','failed','dead_lettered')),
+    CONSTRAINT ck_attempt_count CHECK (attempt_count >= 0),
+    CONSTRAINT ck_lease CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL)),
+    CONSTRAINT uq_job_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_job_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT fk_job_source_version
+        FOREIGN KEY (source_document_id, object_key, source_version_id)
+        REFERENCES source_documents (id, object_key, source_version_id)
+        ON DELETE RESTRICT
 );
+"""
+
+_LEDGER = """
+CREATE TABLE source_documents (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    object_key          TEXT        NOT NULL,
+    source_version_id   TEXT        NOT NULL,
+    source_fingerprint  TEXT        NOT NULL,
+    content_sha256      CHAR(64)    NOT NULL,
+    ingestion_status    TEXT        NOT NULL DEFAULT 'discovered',
+    is_current          BOOLEAN     NOT NULL DEFAULT false,
+    source_metadata     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    observed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    indexed_at          TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_source_status
+        CHECK (ingestion_status IN ('discovered','processing','indexed','failed','superseded')),
+    CONSTRAINT ck_source_sha256 CHECK (content_sha256 ~ '^[0-9A-Fa-f]{64}$'),
+    CONSTRAINT ck_source_current CHECK (NOT is_current OR ingestion_status = 'indexed'),
+    CONSTRAINT uq_source_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT uq_source_id_object_version UNIQUE (id, object_key, source_version_id)
+);
+
+CREATE INDEX idx_source_object_hash ON source_documents (object_key, content_sha256);
+CREATE UNIQUE INDEX idx_source_one_current ON source_documents (object_key) WHERE is_current;
+CREATE INDEX idx_source_status_observed ON source_documents (ingestion_status, observed_at DESC);
 """
 
 
@@ -150,12 +195,14 @@ def upgrade() -> None:
     op.execute(_EXTENSIONS_AND_TEXT_SEARCH)
     op.execute(_CV_CHUNKS)
     op.execute(_CONVERSATIONS_AND_MESSAGES)
+    op.execute(_LEDGER)
     op.execute(_QUOTAS_AND_JOBS)
 
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS ingestion_jobs")
     op.execute("DROP TABLE IF EXISTS rate_buckets")
+    op.execute("DROP TABLE IF EXISTS source_documents")
     op.execute("DROP TABLE IF EXISTS messages")
     op.execute("DROP TABLE IF EXISTS conversations")
     op.execute("DROP TABLE IF EXISTS cv_chunks")
