@@ -42,3 +42,15 @@ def check_single_embed_model(conn: psycopg.Connection, expected_model_id: str) -
             f"cv_chunks.embed_model_id={next(iter(model_ids))!r} no coincide con "
             f"la configuracion activa {expected_model_id!r} (RFC-0006 7 #4)"
         )
+
+
+def check_extensions_present(conn: psycopg.Connection) -> None:
+    raise NotImplementedError
+
+
+def check_pgvector_version(conn: psycopg.Connection, minimum: str = "0.8") -> None:
+    raise NotImplementedError
+
+
+def check_alembic_head(conn: psycopg.Connection, expected_head: str) -> None:
+    raise NotImplementedError
