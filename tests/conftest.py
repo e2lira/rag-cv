@@ -47,9 +47,17 @@ def _maybe_run_migrations(database_url: str) -> None:
     raise NotImplementedError("RFC-0006 aun no define como se invocan las migraciones aqui")
 
 
-def _ephemeral_local_database() -> Generator[str, None, None]:
-    db_name = f"ragcv_test_{os.getpid()}"
+def _ephemeral_database(db_name: str) -> Generator[str, None, None]:
+    """Crea, prepara y limpia una base efimera contra DATABASE_MAINTENANCE_URL.
 
+    Local y container comparten esta funcion: la diferencia entre ambos
+    modos no es el codigo, es de donde sale DATABASE_MAINTENANCE_URL --
+    el PostgreSQL nativo de DEV, o el contenedor de servicio que provee CI
+    (ver .github/workflows/*.yml, mismo patron que
+    verify-database-bootstrap.yml). RFC-0011 8 nombraba 'testcontainers'
+    (la libreria Python); se usa en cambio el patron 'services:' que el
+    repositorio ya tenia, para no duplicar mecanismos -- delta declarado.
+    """
     with psycopg.connect(_MAINTENANCE_URL) as maint_conn:
         create_database_with_spanish_locale(maint_conn, db_name)
 
@@ -67,9 +75,12 @@ def _ephemeral_local_database() -> Generator[str, None, None]:
             drop_database_force(maint_conn, db_name)
 
 
+def _ephemeral_local_database() -> Generator[str, None, None]:
+    yield from _ephemeral_database(f"ragcv_test_{os.getpid()}")
+
+
 def _testcontainer_database() -> Generator[str, None, None]:
-    raise NotImplementedError
-    yield  # pragma: no cover
+    yield from _ephemeral_database(f"ragcv_ci_{os.getpid()}")
 
 
 @pytest.fixture
