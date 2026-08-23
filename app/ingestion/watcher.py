@@ -30,6 +30,8 @@ OUTCOME_INDEXED = "indexed"
 OUTCOME_UNSTABLE = "unstable"
 OUTCOME_MISSING_CORPUS = "missing_corpus"
 OUTCOME_FAILED = "failed"
+# Agotado: espera intervencion humana, no se reintenta (RFC-0019 7.1).
+OUTCOME_DEAD_LETTERED = "dead_lettered"
 
 
 @dataclass(frozen=True)
@@ -167,7 +169,32 @@ async def run_once(
     # que una ejecucion que muera durante la ingesta deje traza de que la
     # deteccion ocurrio. El UNIQUE sobre idempotency_key absorbe el reintento.
     stat = corpus_path.stat()
-    version_id = str(ULID())
+
+    # Un reintento debe caer sobre el MISMO trabajo, no crear uno nuevo: si
+    # no, attempt_count nunca llega al tope y el sondeo reintenta para siempre
+    # (CA-12, riesgo de 11). Se reutiliza la deteccion pendiente del mismo
+    # contenido, que es lo que 3 paso 6 ya anticipa al decir que el UNIQUE
+    # sobre idempotency_key "absorbe una ejecucion que muriera tras el paso 5".
+    # Un contenido ya dead_lettered no vuelve al bucle: si volviera, el ciclo
+    # siguiente lo detectaria como cambio, crearia otro trabajo y reintentaria
+    # para siempre -- el mismo bucle que CA-12 impide, entrando por la puerta
+    # de la deteccion en vez de por la del reintento.
+    if _is_dead_lettered(conn, object_key, content_sha256):
+        _record_heartbeat(
+            conn,
+            object_key,
+            OUTCOME_DEAD_LETTERED,
+            success=False,
+            detail={"content_sha256": content_sha256},
+        )
+        conn.commit()
+        return WatcherReport(outcome=OUTCOME_DEAD_LETTERED)
+
+    pending = _pending_version(conn, object_key, content_sha256)
+    if pending is not None:
+        version_id = pending
+    else:
+        version_id = str(ULID())
     source_document_id = _register_version(
         conn,
         object_key,
@@ -207,11 +234,27 @@ async def run_once(
     # (RFC-0019 6, A-1b). Compara el content_hash de cada fragmento contra lo
     # que hay en cv_chunks: identico -> no embebe; reversion -> difiere y
     # re-embebe. Duplicar esa logica aqui podria contradecirla.
-    report = await index_corpus(conn, embedder, corpus_path)
+    try:
+        report = await index_corpus(conn, embedder, corpus_path)
 
-    # Paso 8: promocion y degradacion, una sola transaccion (RFC-0019 6.1).
-    _promote(conn, object_key, version_id)
-    _complete_job(conn, idempotency_key)
+        # Paso 8: promocion y degradacion, una sola transaccion (RFC-0019 6.1).
+        _promote(conn, object_key, version_id)
+        _complete_job(conn, idempotency_key)
+    except Exception as error:
+        # index_corpus ya hizo rollback de lo suyo; esto revierte ademas
+        # cualquier escritura de la promocion, para que el fallo NUNCA deje el
+        # indice a medias ni cambie la version vigente (CA-13, A-4).
+        conn.rollback()
+        _fail_job(conn, idempotency_key, settings.watcher_max_attempts, str(error))
+        _record_heartbeat(
+            conn,
+            object_key,
+            OUTCOME_FAILED,
+            success=False,
+            detail={"source_version_id": version_id, "error": str(error)},
+        )
+        conn.commit()
+        return WatcherReport(outcome=OUTCOME_FAILED, source_version_id=version_id)
 
     # Paso 9.
     _record_heartbeat(
@@ -255,7 +298,10 @@ def _register_version(
             "INSERT INTO source_documents "
             "(object_key, source_version_id, source_fingerprint, content_sha256, "
             " source_metadata, ingestion_status) "
-            "VALUES (%s, %s, %s, %s, %s::jsonb, 'discovered') RETURNING id",
+            "VALUES (%s, %s, %s, %s, %s::jsonb, 'discovered') "
+            "ON CONFLICT (object_key, source_version_id) DO UPDATE SET "
+            "  source_fingerprint = EXCLUDED.source_fingerprint, updated_at = now() "
+            "RETURNING id",
             (object_key, version_id, observed_fingerprint, content_sha256, json.dumps(metadata)),
         )
         row = cur.fetchone()
@@ -322,6 +368,60 @@ def _complete_job(conn: psycopg.Connection, idempotency_key: str) -> None:
             "  lease_expires_at = NULL, completed_at = now(), updated_at = now() "
             "WHERE idempotency_key = %s",
             (idempotency_key,),
+        )
+
+
+def _pending_version(conn: psycopg.Connection, object_key: str, content_sha256: str) -> str | None:
+    """La deteccion del mismo contenido que sigue sin completarse, si la hay.
+
+    Se excluye `dead_lettered`: un trabajo que agoto sus intentos no vuelve al
+    bucle -- reabrirlo seria justo el reintento infinito que CA-12 impide.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT d.source_version_id FROM source_documents AS d "
+            "JOIN ingestion_jobs AS j ON j.object_key = d.object_key "
+            "  AND j.source_version_id = d.source_version_id "
+            "WHERE d.object_key = %s AND d.content_sha256 = %s AND NOT d.is_current "
+            "  AND j.job_state IN ('pending', 'failed', 'processing') "
+            "ORDER BY d.observed_at LIMIT 1",
+            (object_key, content_sha256),
+        )
+        row = cur.fetchone()
+
+    return None if row is None else str(row[0])
+
+
+def _is_dead_lettered(conn: psycopg.Connection, object_key: str, content_sha256: str) -> bool:
+    """Este contenido ya agoto sus intentos y espera intervencion humana."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM source_documents AS d "
+            "JOIN ingestion_jobs AS j ON j.object_key = d.object_key "
+            "  AND j.source_version_id = d.source_version_id "
+            "WHERE d.object_key = %s AND d.content_sha256 = %s "
+            "  AND j.job_state = 'dead_lettered' LIMIT 1",
+            (object_key, content_sha256),
+        )
+        return cur.fetchone() is not None
+
+
+def _fail_job(
+    conn: psycopg.Connection, idempotency_key: str, max_attempts: int, detail: str
+) -> None:
+    """El trabajo vuelve a 'failed' y suelta el lease para que el ciclo
+    siguiente lo reintente -- salvo que ya haya agotado los intentos, y
+    entonces queda 'dead_lettered' y no se reintenta en bucle (CA-12, A-9)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ingestion_jobs SET "
+            "  job_state = CASE WHEN attempt_count >= %(max)s "
+            "                   THEN 'dead_lettered' ELSE 'failed' END, "
+            "  lease_token = NULL, lease_expires_at = NULL, "
+            "  error_detail = %(detail)s, updated_at = now(), "
+            "  completed_at = CASE WHEN attempt_count >= %(max)s THEN now() ELSE NULL END "
+            "WHERE idempotency_key = %(idem)s",
+            {"max": max_attempts, "detail": detail[:500], "idem": idempotency_key},
         )
 
 
