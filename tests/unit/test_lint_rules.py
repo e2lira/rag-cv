@@ -39,3 +39,4 @@ def test_ruff_flags_os_path_join_and_open_without_encoding(tmp_path: Path) -> No
 
     assert result.returncode != 0, "ruff no marco ninguna violacion"
     assert "PTH118" in result.stdout, f"esperaba PTH118 (os.path.join):\n{result.stdout}"
+    assert "PTH123" in result.stdout, f"esperaba PTH123 (open() sin Path.open()):\n{result.stdout}"
