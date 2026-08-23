@@ -42,7 +42,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # (RFC-0021 6).
         embedder = build_embedder(settings, http)
 
-    pool = build_pool(settings.database_url)
+    pool = build_pool(settings.database_url.get_secret_value())
     try:
         with pool.connection() as conn:
             check_extensions_present(conn)

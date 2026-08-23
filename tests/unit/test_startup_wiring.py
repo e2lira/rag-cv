@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
 import app.main as main_module
 
@@ -49,7 +50,9 @@ def patch_successful_startup(
     monkeypatch.setattr(
         main_module,
         "Settings",
-        lambda: SimpleNamespace(database_url="postgresql://test/test", embedding_dim=1536),
+        lambda: SimpleNamespace(
+            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+        ),
         raising=False,
     )
     monkeypatch.setattr(main_module, "build_pool", lambda url: pool, raising=False)

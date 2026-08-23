@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import app.main as main_module
 from app.main import app
@@ -53,7 +54,9 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         main_module,
         "Settings",
-        lambda: SimpleNamespace(database_url="postgresql://test/test", embedding_dim=1536),
+        lambda: SimpleNamespace(
+            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+        ),
         raising=False,
     )
     monkeypatch.setattr(main_module, "build_pool", lambda url: _FakePool(), raising=False)
@@ -98,7 +101,9 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         main_module,
         "Settings",
-        lambda: SimpleNamespace(database_url="postgresql://test/test", embedding_dim=1536),
+        lambda: SimpleNamespace(
+            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+        ),
         raising=False,
     )
     monkeypatch.setattr(

@@ -17,8 +17,9 @@ class Settings(BaseSettings):
 
     # Sin valor por defecto y a proposito (RFC-0021 4): una URL de base por
     # defecto es una invitacion a arrancar apuntando sin querer a la base
-    # equivocada.
-    database_url: str = Field(alias="DATABASE_URL", min_length=1)
+    # equivocada. SecretStr porque, a diferencia de las API keys, trae la
+    # credencial embebida en la propia URL (auditoria PR #44, B-1).
+    database_url: SecretStr = Field(alias="DATABASE_URL", min_length=1)
 
     embedder: str = Field(alias="EMBEDDER", default="openai")
     openai_embed_model: str = Field(alias="OPENAI_EMBED_MODEL", default="text-embedding-3-small")
