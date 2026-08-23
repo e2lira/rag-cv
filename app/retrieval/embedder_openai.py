@@ -14,7 +14,10 @@ class OpenAIEmbedder:
         dimension: int,
         http: httpx2.AsyncClient,
     ) -> None:
-        raise NotImplementedError
+        self._api_key = api_key
+        self._model = model
+        self._dimension = dimension
+        self._http = http
 
     @property
     def model_id(self) -> str:

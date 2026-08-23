@@ -7,6 +7,13 @@ import httpx2
 
 from app.core.settings import Settings
 
+_VALID_EMBEDDERS = ("titan", "fake", "nomic_api", "ollama", "openai")
+_DEFERRED = {
+    "titan": "AWS (ADR-0006)",
+    "nomic_api": "el autoalojamiento que este host no sostiene (ADR-0007)",
+    "ollama": "el autoalojamiento que este host no sostiene (ADR-0007)",
+}
+
 
 class Embedder(Protocol):
     """Contrato de la capa de embeddings -- RFC-0012 3.
@@ -41,4 +48,22 @@ class DeferredEmbedderError(RuntimeError):
 
 
 def build_embedder(settings: Settings, http: httpx2.AsyncClient) -> Embedder:
-    raise NotImplementedError
+    match settings.embedder:
+        case "openai":
+            from app.retrieval.embedder_openai import OpenAIEmbedder
+
+            return OpenAIEmbedder(
+                settings.openai_api_key, settings.openai_embed_model, settings.embedding_dim, http
+            )
+        case "fake":
+            from app.retrieval.embedder_fake import FakeEmbedder
+
+            return FakeEmbedder(settings.embedding_dim)
+        case deferred if deferred in _DEFERRED:
+            raise DeferredEmbedderError(
+                f"EMBEDDER={deferred!r} esta diferida en la PoC: {_DEFERRED[deferred]} (RFC-0017 1)"
+            )
+        case other:
+            raise ValueError(
+                f"EMBEDDER desconocido: {other!r}. Validos: {', '.join(_VALID_EMBEDDERS)}"
+            )
