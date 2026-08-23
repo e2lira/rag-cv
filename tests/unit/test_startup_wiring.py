@@ -104,27 +104,39 @@ async def test_checks_run_in_the_order_of_rfc_0021_5(monkeypatch: pytest.MonkeyP
     assert order == ["extensions", "pgvector", "alembic", "dimension", "model"]
 
 
+_CHECK_ORDER = ["extensions", "pgvector", "alembic", "dimension", "model"]
+_CHECK_ATTR = {
+    "extensions": "check_extensions_present",
+    "pgvector": "check_pgvector_version",
+    "alembic": "check_alembic_head",
+    "dimension": "check_embedding_dimension",
+    "model": "check_single_embed_model",
+}
+
+
 @pytest.mark.asyncio
-async def test_first_failure_aborts_without_running_the_rest(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("failing", _CHECK_ORDER)
+async def test_each_check_individually_aborts_the_rest(
+    failing: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """RFC-0021 CA-1 / A-1: cada una de las cinco comprobaciones, al fallar
+    por si sola, aborta el arranque sin que se ejecute ninguna de las que
+    le siguen -- no solo una comprobacion de muestra."""
     calls: list[str] = []
     patch_successful_startup(monkeypatch, calls, pool=FakePool())
 
     def _fail(*args: Any, **kwargs: Any) -> None:
-        calls.append("pgvector")
-        raise RuntimeError("pgvector no cumple")
+        calls.append(failing)
+        raise RuntimeError(f"{failing} no cumple")
 
-    monkeypatch.setattr(main_module, "check_pgvector_version", _fail, raising=False)
+    monkeypatch.setattr(main_module, _CHECK_ATTR[failing], _fail, raising=False)
 
-    with pytest.raises(RuntimeError, match="pgvector"):
+    with pytest.raises(RuntimeError, match=f"{failing} no cumple"):
         async with main_module.lifespan(main_module.app):
             pass
 
-    assert calls.count("pgvector") == 1
-    assert "alembic" not in calls
-    assert "dimension" not in calls
-    assert "model" not in calls
+    index = _CHECK_ORDER.index(failing)
+    assert [c for c in calls if c != "loop"] == _CHECK_ORDER[:index] + [failing]
 
 
 @pytest.mark.asyncio

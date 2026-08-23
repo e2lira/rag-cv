@@ -33,8 +33,12 @@ def test_readyz_returns_200() -> None:
 def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     """RFC-0021 CA-8: con el lifespan real, pero sus dependencias dobladas
     (misma disciplina que test_startup_wiring.py -- no se repite contra una
-    base real lo que RFC-0006 ya prueba), /readyz responde 200 despues de
-    que las cinco comprobaciones pasaron."""
+    base real lo que RFC-0006 ya prueba), /readyz responde 200 solo despues
+    de que las cinco comprobaciones se ejecutaron de verdad -- no basta con
+    que la ruta responda, tiene que haber pasado por ellas (auditoria de
+    PR #44, M-1: la version anterior de este test pasaba igual aunque el
+    lifespan no invocara ninguna)."""
+    calls: list[str] = []
 
     class _FakePool:
         def connection(self) -> Any:
@@ -67,18 +71,31 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
-    monkeypatch.setattr(main_module, "check_extensions_present", lambda conn: None, raising=False)
-    monkeypatch.setattr(main_module, "check_pgvector_version", lambda conn: None, raising=False)
     monkeypatch.setattr(
-        main_module, "check_alembic_head", lambda conn, expected_head: None, raising=False
+        main_module,
+        "check_extensions_present",
+        lambda conn: calls.append("extensions"),
+        raising=False,
     )
     monkeypatch.setattr(
-        main_module, "check_embedding_dimension", lambda conn, expected_dim: None, raising=False
+        main_module, "check_pgvector_version", lambda conn: calls.append("pgvector"), raising=False
+    )
+    monkeypatch.setattr(
+        main_module,
+        "check_alembic_head",
+        lambda conn, expected_head: calls.append("alembic"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "check_embedding_dimension",
+        lambda conn, expected_dim: calls.append("dimension"),
+        raising=False,
     )
     monkeypatch.setattr(
         main_module,
         "check_single_embed_model",
-        lambda conn, expected_model_id: None,
+        lambda conn, expected_model_id: calls.append("model"),
         raising=False,
     )
 
@@ -86,6 +103,7 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
         response = client.get("/readyz")
 
     assert response.status_code == 200
+    assert calls == ["extensions", "pgvector", "alembic", "dimension", "model"]
 
 
 def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPatch) -> None:
