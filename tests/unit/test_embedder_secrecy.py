@@ -1,6 +1,17 @@
 """RFC-0017 CA-12: la clave de OpenAIEmbedder nunca aparece en repr(), str()
 ni en el mensaje de una excepcion -- mismo criterio que T-9 de la rubrica
-transversal, aplicado a la capa de embeddings en vez de a Settings."""
+transversal, aplicado a la capa de embeddings en vez de a Settings.
+
+Esto NO es un criterio heredado de RFC-0014 6.1.2: OpenAIEmbedder es codigo
+nuevo de este PR (creado en 8d463e9), no una implementacion de un RFC
+anterior ya fusionada sin cambios -- T-9 es la rubrica transversal que exige
+el patron, pero aplicarlo aqui fue una decision nueva, no una heredada.
+
+Reversion verificada (RFC-0014 6.1.2, tercera evidencia, aplicada por
+disciplina TDD-3 aunque el criterio no calce en 6.1.2): se agrego
+temporalmente un __repr__ que exponia la clave y test_repr_does_not_expose_
+the_key fallo mostrando la clave real en el mensaje de assert -- la razon
+correcta. Revertido antes de commitear (commit original del test: 4c90e0f)."""
 
 import httpx2
 import pytest
