@@ -8,10 +8,18 @@ seleccionadas por TEST_DB_MODE. Las pruebas reciben database_url y punto.
 import os
 import sys
 from collections.abc import Generator
+from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
 from dotenv import load_dotenv
+
+from app.core.db_bootstrap import (
+    bootstrap_spanish_search_extensions,
+    create_database_with_spanish_locale,
+    drop_database_force,
+)
 
 load_dotenv()
 
@@ -19,10 +27,44 @@ _MAINTENANCE_URL = os.getenv(
     "DATABASE_MAINTENANCE_URL", "postgresql://postgres@localhost:5432/postgres"
 )
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _database_url(base_url: str, db_name: str) -> str:
+    parts = urlsplit(base_url)
+    return urlunsplit(parts._replace(path=f"/{db_name}"))
+
+
+def _maybe_run_migrations(database_url: str) -> None:
+    """RFC-0011 no incluye el esquema (RFC-0006): sin alembic.ini, se omite
+    con aviso -- no es un fallo, es que ese RFC todavia no aterrizo."""
+    if not (_REPO_ROOT / "alembic.ini").exists():
+        print(  # noqa: T201 -- aviso deliberado, no un log de aplicacion
+            "aviso: alembic.ini no existe todavia (RFC-0006 sin implementar); "
+            "se omiten las migraciones en la base efimera"
+        )
+        return
+    raise NotImplementedError("RFC-0006 aun no define como se invocan las migraciones aqui")
+
 
 def _ephemeral_local_database() -> Generator[str, None, None]:
-    raise NotImplementedError
-    yield  # pragma: no cover
+    db_name = f"ragcv_test_{os.getpid()}"
+
+    with psycopg.connect(_MAINTENANCE_URL) as maint_conn:
+        create_database_with_spanish_locale(maint_conn, db_name)
+
+    test_url = _database_url(_MAINTENANCE_URL, db_name)
+    with psycopg.connect(test_url) as conn:
+        bootstrap_spanish_search_extensions(conn)
+        conn.commit()
+
+    _maybe_run_migrations(test_url)
+
+    try:
+        yield test_url
+    finally:
+        with psycopg.connect(_MAINTENANCE_URL) as maint_conn:
+            drop_database_force(maint_conn, db_name)
 
 
 def _testcontainer_database() -> Generator[str, None, None]:
