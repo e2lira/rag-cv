@@ -3,7 +3,12 @@
 Contrato normativo: docs/rfc/RFC-0011-entorno-dev-windows-nativo.md #4.5.
 """
 
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class Settings:
-    def __init__(self) -> None:
-        raise NotImplementedError
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    openai_api_key: str = Field(alias="OPENAI_API_KEY")
+    anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY")
