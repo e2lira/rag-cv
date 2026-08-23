@@ -25,3 +25,17 @@ def ensure_extension_available(conn: psycopg.Connection, extension_name: str) ->
                 f"de PostgreSQL. Sigue las instrucciones de compilacion de "
                 f"RFC-0011 #4.2 (docs/rfc/RFC-0011-entorno-dev-windows-nativo.md)."
             )
+
+
+def create_database_with_spanish_locale(
+    maintenance_conn: psycopg.Connection, db_name: str
+) -> None:
+    raise NotImplementedError
+
+
+def bootstrap_spanish_search_extensions(conn: psycopg.Connection) -> None:
+    raise NotImplementedError
+
+
+def drop_database_force(maintenance_conn: psycopg.Connection, db_name: str) -> None:
+    raise NotImplementedError
