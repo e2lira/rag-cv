@@ -176,8 +176,9 @@ RNF-12 se cumple: un mismo texto produce el mismo vector en DEV y en QA, porque 
 mismo modelo por el mismo camino. No hay cuantización local ni *digest* que fijar.
 
 **Y se pierde el desarrollo offline**, que el plan autoalojado habría devuelto. DEV necesita red y
-credencial para indexar y consultar. La contingencia `EMBEDDER=ollama` sigue implementada para
-quien tenga cómputo local, a cambio de recrear la columna a 768 y reindexar la base local.
+credencial para indexar y consultar. La contingencia `EMBEDDER=ollama` sigue **diseñada** —no
+implementada: ADR-0007 la difiere junto con las otras dos (§1)— y recuperarla costaría, además de
+escribirla, recrear la columna a 768 y reindexar la base local.
 
 ## 7. Por qué la interfaz conserva dos métodos aunque este modelo sea simétrico
 
