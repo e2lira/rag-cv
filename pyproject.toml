@@ -9,7 +9,7 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "psycopg[binary]>=3.2",
-    "uvloop>=0.19; sys_platform != 'win32'",
+    "uvloop>=0.19",
 ]
 
 [dependency-groups]
