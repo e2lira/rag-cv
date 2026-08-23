@@ -26,6 +26,16 @@ def _format_vector(vector: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vector) + "]"
 
 
+def _delete_stale_chunks(
+    cur: psycopg.Cursor, doc_id: str, stale_keys: set[tuple[str, int]]
+) -> None:
+    for unit, part in stale_keys:
+        cur.execute(
+            "DELETE FROM cv_chunks WHERE doc_id = %s AND unit = %s AND part = %s",
+            (doc_id, unit, part),
+        )
+
+
 def _upsert_chunk(
     cur: psycopg.Cursor,
     doc_id: str,
@@ -112,12 +122,17 @@ async def index_corpus(
             else:
                 unchanged += 1
 
+        stale_keys = set(existing) - seen_keys
+
         embed_calls = 0
         if to_embed:
             vectors = await embedder.embed_documents([chunk.content for chunk in to_embed])
             embed_calls = 1
             for chunk, vector in zip(to_embed, vectors, strict=True):
                 _upsert_chunk(cur, doc_id, chunk, vector, embedder.model_id)
+
+        if stale_keys:
+            _delete_stale_chunks(cur, doc_id, stale_keys)
 
         conn.commit()
 
@@ -126,7 +141,7 @@ async def index_corpus(
             inserted=inserted,
             updated=updated,
             unchanged=unchanged,
-            deleted=0,
+            deleted=len(stale_keys),
             embed_calls=embed_calls,
             duration_ms=duration_ms,
             errors=[],
