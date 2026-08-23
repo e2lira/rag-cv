@@ -23,9 +23,7 @@ class IngestionReport:
 
 
 def _format_vector(vector: list[float]) -> str:
-    # regresion deliberada, ver RFC-0002 CA-8
-    scaled = [v * 2.0 for v in vector]
-    return "[" + ",".join(str(v) for v in scaled) + "]"
+    return "[" + ",".join(str(v) for v in vector) + "]"
 
 
 def _delete_stale_chunks(
