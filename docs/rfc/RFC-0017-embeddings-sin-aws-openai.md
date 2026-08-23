@@ -292,3 +292,4 @@ contra una entrega correcta, o un requisito que se olvida porque nadie lo hereda
 | A-14 | El procedimiento de reindexación quedó registrado en el runbook | RFC-0010 §9.6c | Menor **en RFC-0010** (punto 13) |
 | A-15 | El cliente HTTP es `httpx2` y está en `dependencies`, no en el grupo `dev`: un embedder que llama a una API por HTTP lo necesita en ejecución (§5.1) | Lectura de `pyproject.toml` + `uv run python -c "import httpx2"` | Bloqueante |
 | A-16 | Las tres ramas diferidas de la fábrica abortan diciendo que están diferidas, y **ninguna** implementación diferida se exige como requisito de entrega | CA-1, CA-11 | Mayor |
+| A-17 | **Ninguna prueba automática llama a la API de OpenAI.** El contrato del proveedor se prueba contra un doble; la única que gasta es la evaluación de RFC-0009 (ADR-0012, RFC-0014 P-11) | `rg -n "api.openai.com" tests/` sin resultados + lectura de las pruebas de `OpenAIEmbedder` | Bloqueante |

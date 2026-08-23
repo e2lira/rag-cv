@@ -231,10 +231,18 @@ Cada una es un hallazgo del Auditor con la severidad indicada.
 | P-8 | Aumentar la cobertura con tests que no afirman nada | Convierte la métrica en teatro | Mayor |
 | P-9 | Modificar un test para que pase, en vez de arreglar el código | Invierte la relación entre especificación e implementación | Bloqueante |
 | P-10 | Fechas, UUID o aleatoriedad sin fijar | Rojo intermitente | Menor |
+| P-11 | Cualquier prueba automática que llame a una **API de pago** (OpenAI, Anthropic) | Se ejecuta en cada `invoke test`, cada *push* y los dos *jobs* de CI: el gasto se multiplica por la frecuencia. Y una prueba que depende de un tercero deja de medir nuestro código — se pone roja cuando el proveedor falla, y la reacción es desactivarla (ADR-0012) | Bloqueante |
 
 Sobre **P-9**: cambiar un test es legítimo **solo** cuando el criterio de aceptación del RFC ha
 cambiado, y entonces el RFC se modifica primero. Un test modificado en el mismo commit que la
 implementación que estaba fallando es un hallazgo Bloqueante automático.
+
+Sobre **P-11**: la excepción es la **suite de evaluación** (RFC-0009), cuya razón de ser es medir
+el sistema real y que por eso sí gasta — a mano o en el *job* nocturno, nunca en el bucle de
+desarrollo. La barrera es estructural además de normativa: el CI **no tiene credenciales de ningún
+proveedor**, así que una prueba que llame de verdad no puede pasar. Añadir una clave a los
+*secrets* del repositorio para "poder probar de verdad" desactiva esa barrera sin que nadie lo
+note, y es lo que ADR-0012 existe para impedir.
 
 ## 8. Cobertura
 
