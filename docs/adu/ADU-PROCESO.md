@@ -58,6 +58,10 @@ producir la **suite de tests en rojo**, en su propio commit, antes de escribir u
 implementación. Ese commit rojo registrado en CI es la evidencia de que hubo TDD; sin él, el
 Auditor emite un hallazgo Mayor, salvo la excepción de arranque de RFC-0014 §6.2.1.
 
+Ese ciclo tiene **dos formas** —suite completa en un commit, o pares `test`/`feat` por criterio— y
+cuál corresponde no lo elige el Desarrollador por gusto: lo determina si la implementación de un
+criterio puede separarse de la de los demás (RFC-0014 §6.1.1).
+
 **Produce:** ramas `feat/rfc-000N-<slug>`, PRs con la plantilla de PR, cobertura de pruebas
 según el DoD, y un **Informe de Implementación** que enumera desviaciones respecto al RFC.
 
