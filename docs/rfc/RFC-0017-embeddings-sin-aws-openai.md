@@ -133,6 +133,7 @@ PostgreSQL 16 real. Sustituye a `verify-database-bootstrap.yml`, retirado junto 
 | **Lote real**: el endpoint acepta un array de entradas | A diferencia de Titan, que exigía una llamada por texto. `embed_documents` hace **una** llamada por lote, no N |
 | Cliente asíncrono **`httpx2`**, no bloqueante — ver §5.1 | La fábrica recibe un `httpx2.AsyncClient`. No se repite el error de bloquear el bucle de eventos |
 | `model_id` = `text-embedding-3-small@openai` | Modelo **más camino** (RFC-0012 invariante 5): detecta que se indexó con una implementación y se consulta con otra |
+| **Cardinalidad y orden de la respuesta se validan** (CA-13) | El endpoint devuelve `data[]` con un campo `index` por elemento. El SDK oficial **no lo usa**: itera en el orden de llegada. Confiar en ese orden es apostar a un detalle no garantizado por el contrato de la API, y el fallo no da error — asocia el vector de un fragmento a otro, y el RAG recupera con confianza el fragmento equivocado |
 
 **El lote cambia el perfil operativo.** `EMBEDDER_MAX_CONCURRENCY` existía para no chocar contra la
 cuota de Bedrock con 60 llamadas sueltas. Con lote, la indexación completa es una o dos llamadas y
@@ -249,7 +250,7 @@ contra una entrega correcta, o un requisito que se olvida porque nadie lo hereda
 | :--- | :--- | :--- | :--- |
 | CA-1 | La fábrica acepta `EMBEDDER=openai` y devuelve `OpenAIEmbedder`; un valor desconocido aborta con la lista de válidos. Las tres ramas diferidas (`titan`, `nomic_api`, `ollama`) abortan con un mensaje que dice que están diferidas, **no** con un `NotImplementedError` desnudo | `test_embedder_factory.py` parametrizado sobre las cinco ramas | **Este RFC** |
 | CA-2 | El retrieval con `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` | **RFC-0009** (punto 10): necesita conjunto dorado, ingesta y recuperación |
-| CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | *job* `integration-linux` de `python-tests.yml` + `test_startup_checks.py::test_dim_mismatch` | **Este RFC** (el DDL ya está en `main`; falta `EMBEDDING_DIM`) |
+| CA-3 | `EMBEDDING_DIM=1536` existe en `Settings` y el DDL declara `VECTOR(1536)`. Que el **proceso real aborte** al desincronizarse lo entrega RFC-0005 CA-13/A-11: la dimensión es la comprobación **#3 de las cinco** de RFC-0006 §7, y `app/main.py` tiene prohibido tocar la base (RFC-0011 §2) | *job* `integration-linux` de `python-tests.yml` + `test_startup_checks.py::test_dim_mismatch` | **Este RFC** el valor; **RFC-0005** el aborto real |
 | CA-4 | `embed_documents` de N textos hace **una** llamada con los N en el cuerpo | `test_embedder_openai.py::test_batches_in_one_call` | **Este RFC** |
 | CA-5 | Latencia p95 del embedding de consulta medida y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA | **RFC-0020** (punto 11): QA no existe hasta la Fase 4 |
 | CA-6 | Una respuesta con dimensión distinta de 1536 se rechaza en vez de almacenarse | `test_embedder_openai.py::test_rejects_wrong_dimension` | **Este RFC** |
@@ -259,6 +260,7 @@ contra una entrega correcta, o un requisito que se olvida porque nadie lo hereda
 | CA-10 | La indexación hace `rollback` completo ante fallo del proveedor | `test_indexer.py::test_rollback_on_embedder_failure` | **RFC-0002** (punto 4): no hay indexador |
 | CA-11 | `FakeEmbedder` y `OpenAIEmbedder` pasan la **misma** suite de contrato, parametrizada. Cualquier implementación que se añada después entra por esa suite | `test_embedder_contract.py` parametrizado | **Este RFC** |
 | CA-12 | La clave nunca aparece en logs ni en trazas | `SecretStr` + inspección de la salida en una corrida completa | **Este RFC** |
+| CA-13 | `embed_documents` de N textos devuelve **N** vectores, y cada uno corresponde al texto de su misma posición: se valida la cardinalidad y se ordena por `data[].index` en vez de confiar en el orden de llegada | `test_embedder_openai.py::test_rejects_wrong_cardinality`, `::test_reorders_by_index` | **Este RFC** |
 
 ## 11. Riesgos
 
@@ -293,3 +295,4 @@ contra una entrega correcta, o un requisito que se olvida porque nadie lo hereda
 | A-15 | El cliente HTTP es `httpx2` y está en `dependencies`, no en el grupo `dev`: un embedder que llama a una API por HTTP lo necesita en ejecución (§5.1) | Lectura de `pyproject.toml` + `uv run python -c "import httpx2"` | Bloqueante |
 | A-16 | Las tres ramas diferidas de la fábrica abortan diciendo que están diferidas, y **ninguna** implementación diferida se exige como requisito de entrega | CA-1, CA-11 | Mayor |
 | A-17 | **Ninguna prueba automática llama a la API de OpenAI.** El contrato del proveedor se prueba contra un doble; la única que gasta es la evaluación de RFC-0009 (ADR-0012, RFC-0014 P-11) | `rg -n "api.openai.com" tests/` sin resultados + lectura de las pruebas de `OpenAIEmbedder` | Bloqueante |
+| A-18 | La respuesta del proveedor se valida en cardinalidad y se reordena por `index`. Asociar el vector equivocado a un fragmento no produce ningún error: produce una recuperación incorrecta con plena confianza, que es el peor modo de fallo de un RAG | CA-13 | Bloqueante |

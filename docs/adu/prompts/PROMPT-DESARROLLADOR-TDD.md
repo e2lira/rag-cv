@@ -34,6 +34,13 @@ registrada, y el rojo de tus tests no existe para el Auditor (RFC-0014 §6.2).
 Abrir el PR al final produce una sola ejecución verde sobre el HEAD final, que no
 prueba nada y es un hallazgo Mayor.
 
+CRITERIO YA SATISFECHO POR OTRO RFC (RFC-0014 §6.1.2). Si el criterio ya es
+cierto porque lo entregó un RFC anterior ya fusionado, NO rompas el código para
+volver a arreglarlo ni escribas un par test/feat falso. Escribí el test que lo
+formaliza, VERIFICÁ POR REVERSIÓN que se pone en rojo al quitar la
+implementación heredada, y dejá esa verificación escrita en el mensaje del
+commit. Declaralo en el Informe nombrando qué RFC lo entregó.
+
 Ciclo por cada criterio de aceptación del RFC:
 
   1. ROJO      Escribes el test que codifica el criterio, leyendo el RFC (NUNCA
