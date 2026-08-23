@@ -55,10 +55,6 @@ def build_embedder(settings: Settings, http: httpx2.AsyncClient) -> Embedder:
             return OpenAIEmbedder(
                 settings.openai_api_key, settings.openai_embed_model, settings.embedding_dim, http
             )
-        case "fake":
-            from app.retrieval.embedder_fake import FakeEmbedder
-
-            return FakeEmbedder(settings.embedding_dim)
         case deferred if deferred in _DEFERRED:
             raise DeferredEmbedderError(
                 f"EMBEDDER={deferred!r} esta diferida en la PoC: {_DEFERRED[deferred]} (RFC-0017 1)"
