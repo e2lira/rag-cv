@@ -181,7 +181,10 @@ exactamente lo que se busca.
 corre en Windows y en Linux:
 
 ```sql
--- debe devolver los lexemas sin acento: 'informat':1 'ingenier':2
+-- debe devolver los lexemas sin acento: 'informat':1 'ingenieri':2
+-- (verificado contra un servidor real; 'ingenieri' es el resultado correcto
+-- del stemmer, no 'ingenier': la version anterior de este ejemplo nunca se
+-- habia ejecutado)
 SELECT to_tsvector('es_unaccent', 'Informática Ingeniería');
 -- debe devolver true
 SELECT to_tsvector('es_unaccent','informática') @@ websearch_to_tsquery('es_unaccent','informatica');
