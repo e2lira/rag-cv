@@ -72,6 +72,14 @@ TDD-1  ORDEN DE COMMITS (necesaria, no suficiente)
        a su commit `feat(...)`. Si el PR viene aplastado en un solo commit, la
        evidencia fue destruida: hallazgo Mayor.
 
+       CRITERIO HEREDADO (RFC-0014 §6.1.2). Si el criterio ya era cierto por una
+       implementación de un RFC ANTERIOR ya fusionado, no hay nada que poner en
+       rojo y no se exige el par test/feat. Comprobá las tres sustitutas: el
+       Informe lo declara heredado nombrando el RFC que lo entregó, existe el
+       test que lo formaliza, y —la que de verdad cuenta— revertir la
+       implementación heredada lo pone en rojo. Si la reversión NO lo pone en
+       rojo, ese test no prueba nada: hallazgo, y ahí sí Mayor.
+
        DOS FORMAS VÁLIDAS (RFC-0014 §6.1.1). Antes de emitir el hallazgo, decidí
        cuál corresponde a este RFC: si varios criterios comparten UNA unidad de
        implementación que no puede partirse (una migración, un bloque DDL, un
