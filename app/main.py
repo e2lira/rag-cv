@@ -28,6 +28,11 @@ from app.retrieval.embedder import build_embedder
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Paso 0, y va primero (RFC-0021 5): unica defensa de RFC-0011 CA-4
+    # dentro de este RFC. Si esto se moviera despues del pool, el CLI de
+    # uvicorn en Windows fallaria por la base y no por el bucle.
+    assert_compatible_loop()
+
     settings = Settings()
 
     async with httpx2.AsyncClient() as http:
@@ -38,9 +43,6 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         embedder = build_embedder(settings, http)
 
     pool = build_pool(settings.database_url.get_secret_value())
-    # regresion deliberada, ver auditoria PR #44 M-1: assert_compatible_loop()
-    # movido aqui, despues de abrir el pool
-    assert_compatible_loop()
     try:
         with pool.connection() as conn:
             check_extensions_present(conn)
