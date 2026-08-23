@@ -23,6 +23,39 @@ comprobaciones de arranque, retención y respaldo lógico.
 
 **No entra:** infraestructura de la instancia (RFC-0007), consultas de recuperación (RFC-0003).
 
+### 2.2 Relación con `infra/sql/001_initialize_rag_cv.sql` — y por qué había dos esquemas
+
+Antes de este RFC, el esquema vivía en un script SQL aplicado con `psql`
+(`infra/sql/001_initialize_rag_cv.sql`), verificado por el *workflow*
+`verify-database-bootstrap.yml`. Este RFC lo sustituye por **Alembic** (§5) como mecanismo
+único. Mantener los dos no es redundancia inofensiva: son **dos definiciones distintas de las
+mismas tablas**, y divergen con cada cambio.
+
+La divergencia ya se materializó, y en la dirección peligrosa. El §4.4 original de este RFC
+declaraba un `ingestion_jobs` **más pobre** que el desplegado: sin `idempotency_key`, sin
+`attempt_count`, sin `job_state` con `dead_lettered`, sin `lease_token`/`lease_expires_at`.
+RFC-0019 §1 declara esas columnas **fuera de su alcance porque «están en el esquema
+desplegado»** — es decir, RFC-0019 no las construye, las asume. Migrar a Alembic el §4.4
+original habría hecho desaparecer, sin que nadie lo notara, exactamente la maquinaria de
+reintentos, exclusión mutua y *dead lettering* de la que depende el sondeo del corpus.
+
+Lo mismo con el **ledger**: `source_documents` no aparecía en ningún §4 de este RFC, aunque el
+plan de ejecución asigna su semántica sin S3 a esta posición y RFC-0019 lo usa hasta en su CA-8.
+
+Por eso §4.4 se reescribe y §4.5 se añade: **este RFC absorbe el contrato completo del esquema
+desplegado**, sin pérdida. El orden es innegociable:
+
+1. Las migraciones de §4 —incluidos §4.4 corregido y §4.5— crean el esquema completo en Alembic.
+2. **Solo entonces** se retiran `infra/sql/001_initialize_rag_cv.sql`, su verificador y el
+   *workflow* que los ejecuta.
+
+Retirar el script antes del paso 1 borra la única definición de `source_documents` y de la
+maquinaria de trabajos que RFC-0019 da por existente. Retirarlo después es lo que cierra la
+comprobación A-1 del contrato de auditoría: el `vector(1024)` desaparece **con el archivo**, no
+por editarlo. Esto **sustituye** la fila de RFC-0017 §4 que pedía cambiar ese `vector(1024)` a
+`vector(1536)` in situ; el valor 1536 queda en la migración de Alembic, que es donde vive el
+esquema a partir de aquí.
+
 ### 2.1 Contrato de embeddings vigente para la PoC
 
 La PoC usa `EMBEDDER=openai` con `text-embedding-3-small`, a sus **1536 dimensiones
@@ -220,19 +253,91 @@ CREATE TABLE rate_buckets (
 );
 
 CREATE TABLE ingestion_jobs (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    status      TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
-    force       BOOLEAN NOT NULL DEFAULT false,
-    report      JSONB,
-    error       TEXT,
-    started_at  TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key TEXT        NOT NULL,
+    object_key      TEXT        NOT NULL,
+    source_version_id TEXT      NOT NULL,
+    source_document_id UUID     NOT NULL,
+    job_state       TEXT        NOT NULL DEFAULT 'pending',
+    attempt_count   INT         NOT NULL DEFAULT 0,
+    lease_token     UUID,
+    lease_expires_at TIMESTAMPTZ,
+    error_code      TEXT,
+    error_detail    TEXT,
+    job_metadata    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_job_state
+        CHECK (job_state IN ('pending','processing','succeeded','failed','dead_lettered')),
+    CONSTRAINT ck_attempt_count CHECK (attempt_count >= 0),
+    CONSTRAINT ck_lease CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL)),
+    CONSTRAINT uq_job_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_job_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT fk_job_source_version
+        FOREIGN KEY (source_document_id, object_key, source_version_id)
+        REFERENCES source_documents (id, object_key, source_version_id)
+        ON DELETE RESTRICT
 );
 ```
 
 El incremento de cuota es `INSERT ... ON CONFLICT (key_id, window_kind, window_start) DO UPDATE
 SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y vuelta.
+
+**`ingestion_jobs` no es una tabla de bitácora, es una máquina de estados.** `idempotency_key`
+único es lo que hace que dos detecciones del mismo cambio produzcan un solo trabajo;
+`lease_token`/`lease_expires_at` es la exclusión mutua entre ejecuciones solapadas del sondeo; y
+`dead_lettered` distingue "falló y se reintentará" de "falló definitivamente y alguien tiene que
+mirarlo". RFC-0019 §1 declara las tres cosas fuera de su alcance **porque las da por existentes
+aquí**: entregarlas incompletas no es una simplificación, es dejar sin base a la Fase 1.
+
+La restricción de pares en `lease_token`/`lease_expires_at` —o ambos nulos, o ninguno— evita el
+estado que más daño hace en un *lease*: un token sin vencimiento, que bloquea el trabajo para
+siempre porque nada puede decidir que caducó.
+
+### 4.5 `source_documents` — el ledger de versiones del corpus
+
+```sql
+CREATE TABLE source_documents (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    object_key      TEXT        NOT NULL,
+    source_version_id TEXT      NOT NULL,   -- ULID de la detección (RFC-0016 §3.3)
+    source_fingerprint TEXT     NOT NULL,   -- huella mtime+size (RFC-0016 §3.3)
+    content_sha256  CHAR(64)    NOT NULL,
+    ingestion_status TEXT       NOT NULL DEFAULT 'discovered',
+    is_current      BOOLEAN     NOT NULL DEFAULT false,
+    source_metadata JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    observed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    indexed_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_source_status
+        CHECK (ingestion_status IN ('discovered','processing','indexed','failed','superseded')),
+    CONSTRAINT ck_source_sha256 CHECK (content_sha256 ~ '^[0-9A-Fa-f]{64}$'),
+    CONSTRAINT ck_source_current CHECK (NOT is_current OR ingestion_status = 'indexed'),
+    CONSTRAINT uq_source_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT uq_source_id_object_version UNIQUE (id, object_key, source_version_id)
+);
+
+CREATE INDEX idx_source_object_hash ON source_documents (object_key, content_sha256);
+CREATE UNIQUE INDEX idx_source_one_current
+    ON source_documents (object_key) WHERE is_current;
+CREATE INDEX idx_source_status_observed ON source_documents (ingestion_status, observed_at DESC);
+```
+
+**Renombrado respecto al esquema desplegado.** Las columnas eran `s3_version_id` y `s3_etag`
+cuando la fuente era S3. ADR-0009 y RFC-0016 §3.3 quitaron S3 y les cambiaron el significado:
+`s3_version_id` pasó a ser un ULID generado en la detección y `s3_etag` una huella
+`mtime+size`. Un nombre que miente sobre lo que guarda es deuda que se paga cada vez que alguien
+lee la tabla, así que aquí pasan a llamarse `source_version_id` y `source_fingerprint`. El
+contenido y las restricciones son los mismos; RFC-0019 §5 se lee con esta equivalencia.
+
+**`idx_source_one_current` es el invariante entero del ledger:** un índice único **parcial**
+—solo sobre las filas con `is_current`— garantiza que exista a lo sumo una versión vigente por
+`object_key`, sin impedir que convivan todas las versiones históricas. Es lo que permite que la
+promoción de una versión nueva y la degradación de la anterior ocurran en la misma transacción
+sin ventana en la que el corpus tenga dos versiones vigentes, o ninguna.
 
 ## 5. Migraciones
 
@@ -277,6 +382,11 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | 5 | Versión de Alembic == `head` esperada | No arranca |
 | 6 | `count(cv_chunks) > 0` | Arranca, pero `/readyz` en rojo hasta indexar |
 
+Las comprobaciones 1 a 5 abortan el proceso y se auditan aquí (A-6). **La 6 no**: no aborta nada,
+describe el estado que `/readyz` debe reportar, y `/readyz` con su contrato real es de RFC-0005.
+Por eso no tiene criterio de aceptación en este RFC — es un requisito que RFC-0005 hereda, no una
+brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé por olvidado.
+
 ## 8. Retención y respaldo
 
 - `messages` y `conversations` con más de **30 días** se eliminan por trabajo programado diario
@@ -305,6 +415,13 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | CA-10 | Eliminar un `cv_chunk` referenciado en `source_chunk_ids` no falla | `test_schema.py::test_no_fk_on_sources` |
 | CA-11 | La búsqueda léxica encuentra "informática" buscando "informatica" | `test_schema.py::test_unaccent_config`, ejecutado en Windows y en Linux |
 | CA-12 | La base creada por el bootstrap de DEV y la creada por el CI dan el mismo `to_tsvector` | Comparación de la salida de CA-11 en ambos sistemas |
+| CA-13 | Dos filas de `source_documents` con `is_current` sobre el mismo `object_key` violan el índice único parcial | `test_ledger.py::test_one_current_per_object` |
+| CA-14 | `is_current = true` con `ingestion_status <> 'indexed'` falla | `test_ledger.py::test_current_requires_indexed` |
+| CA-15 | Dos `ingestion_jobs` con el mismo `idempotency_key` violan la restricción única | `test_ingestion_jobs.py::test_idempotency_key_unique` |
+| CA-16 | `lease_token` sin `lease_expires_at` (o al revés) falla | `test_ingestion_jobs.py::test_lease_pair` |
+| CA-17 | `job_state` admite `dead_lettered` y rechaza un estado inventado | `test_ingestion_jobs.py::test_job_state_check` |
+| CA-18 | Borrar una versión de `source_documents` referenciada por un trabajo falla (`ON DELETE RESTRICT`) | `test_ingestion_jobs.py::test_source_delete_restricted` |
+| CA-19 | Tras aplicar las migraciones, `infra/sql/001_initialize_rag_cv.sql`, su verificador y `verify-database-bootstrap.yml` ya no existen en el repositorio | `test_legacy_bootstrap_retired.py` |
 
 ## 10. Riesgos
 
@@ -321,7 +438,7 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
-| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
+| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado. Se satisface **retirando** `infra/sql/001_initialize_rag_cv.sql` una vez migrado su contenido (§2.2), no editándolo | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
 | A-2 | Existen los cinco índices de §4.2 con los parámetros indicados | `\d cv_chunks` sobre base migrada | Mayor |
 | A-3 | La configuración de texto es `es_unaccent` y se usa en trigger y consulta | CA-11 | Mayor |
 | A-3b | La base se crea con proveedor ICU `es-MX` en DEV, QA y el `conftest` de pruebas | Lectura del bootstrap, del aprovisionamiento nativo y del `conftest` | Mayor |
@@ -331,4 +448,6 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | A-7 | `source_chunk_ids` no es clave foránea | Lectura del DDL | Menor |
 | A-8 | El incremento de cuota es atómico (una sola sentencia) | Lectura del SQL + CA-8 | Mayor |
 | A-9 | Los `statement_timeout` de §6 están configurados | Lectura de `engine.py` | Menor |
-| A-10 | Existe el trabajo de retención de 30 días y está programado en QA y PROD | Revisión de cron/EventBridge | Mayor |
+| A-10 | Existe la **lógica** de retención de 30 días, con prueba. Su *programación* pertenece a RFC-0020 y no se audita aquí | Lectura de `app/core/retention.py` + su prueba | Mayor |
+| A-11 | `source_documents` e `ingestion_jobs` migrados con el contrato completo de §4.4 y §4.5, sin perder `idempotency_key`, el par de *lease*, `dead_lettered` ni el índice único parcial `is_current` | CA-13 a CA-18 | Bloqueante |
+| A-12 | `infra/sql/` y `verify-database-bootstrap.yml` retirados, y ninguna referencia viva a ellos en `README.md` ni en el resto de `docs/` | CA-19 + `rg -n "infra/sql\|verify-database-bootstrap"` | Mayor |
