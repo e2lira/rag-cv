@@ -292,10 +292,23 @@ CREATE TABLE watcher_heartbeat (
     last_outcome    TEXT        NOT NULL,
     detail          JSONB       NOT NULL DEFAULT '{}'::jsonb,
     CONSTRAINT ck_watcher_outcome CHECK (
-        last_outcome IN ('no_change','indexed','unstable','missing_corpus','failed')
+        last_outcome IN ('no_change','indexed','unstable',
+                         'missing_corpus','failed','dead_lettered')
     )
 );
 ```
+
+**`dead_lettered` no es un sexto sinónimo de `failed`.** Un fallo transitorio se reintenta solo en
+el ciclo siguiente; un contenido que agotó `WATCHER_MAX_ATTEMPTS` espera intervención humana y no
+se va a arreglar esperando. Son **dos acciones distintas del runbook**, y la regla de alerta de
+§7.2 no puede separarlas si el latido las escribe con la misma palabra. Ninguno de los dos marca
+`last_success_at`.
+
+> **Por qué se añadió.** La versión anterior cerraba el vocabulario en cinco valores, y el ciclo
+> que reconoce un contenido agotado solo podía reportar `failed`. Salió al implementar CA-12 (PR
+> #58): el corte funcionaba —un solo trabajo, `attempt_count` al tope, sin trabajo nuevo— pero el
+> latido no sabía decirlo. Es el segundo hueco que la implementación destapa en este RFC, tras la
+> contradicción de CA-3 (#59), y los dos por la misma causa: escribí el contrato sin ejecutarlo.
 
 `last_run_at` se escribe **siempre**; `last_success_at` solo cuando el ciclo termina bien. La
 alerta de §7.2 mira `last_success_at`, no `last_run_at`: un sondeo que se dispara puntualmente y
@@ -372,7 +385,7 @@ la usa; las cinco `WATCHER_*` sí son nuevas y van a los dos sitios (ADU-PROCESO
 | CA-8 | Revertir el CV no viola ninguna restricción de unicidad del ledger | CA-4 + consulta a `source_documents` |
 | CA-9 | Un corpus ausente no modifica el índice vigente y emite incidente | `test_watcher.py::test_missing_corpus_is_incident` |
 | CA-10 | Toda ejecución, incluidas las que no hallan cambios, actualiza el latido | `test_watcher.py::test_heartbeat_always_updated` |
-| CA-12 | Superar `WATCHER_MAX_ATTEMPTS` deja el trabajo `dead_lettered` y no reintenta | `test_watcher.py::test_dead_letter` |
+| CA-12 | Superar `WATCHER_MAX_ATTEMPTS` deja el trabajo `dead_lettered` y no reintenta: ni el mismo trabajo ni uno nuevo por la misma detección, y el latido lo dice con su propio valor | `test_watcher.py::test_dead_letter` |
 | CA-13 | El fallo del embedder deja el índice intacto, nunca a medias | `test_watcher.py::test_rollback_on_failure` |
 | CA-16 | La promoción deja exactamente una versión `is_current` con `ingestion_status='indexed'`, y la anterior `superseded` | `test_watcher.py::test_promotion_single_current` |
 | CA-17 | Un `touch` sin cambio de contenido actualiza `source_fingerprint` de la fila vigente y **no** registra versión nueva ni llama al embebedor | `test_watcher.py::test_touch_updates_fingerprint_only` |
