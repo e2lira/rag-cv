@@ -124,15 +124,23 @@ async def index_corpus(
 
         stale_keys = set(existing) - seen_keys
 
-        embed_calls = 0
-        if to_embed:
-            vectors = await embedder.embed_documents([chunk.content for chunk in to_embed])
-            embed_calls = 1
-            for chunk, vector in zip(to_embed, vectors, strict=True):
-                _upsert_chunk(cur, doc_id, chunk, vector, embedder.model_id)
+        # CA-7 / A-3: un fallo aqui adentro no debe dejar cambios. Sin este
+        # rollback explicito, una insercion ya ejecutada queda pendiente en
+        # la transaccion abierta -- visible en la misma sesion aunque nunca
+        # se confirmo, hasta que algo la revierta.
+        try:
+            embed_calls = 0
+            if to_embed:
+                vectors = await embedder.embed_documents([chunk.content for chunk in to_embed])
+                embed_calls = 1
+                for chunk, vector in zip(to_embed, vectors, strict=True):
+                    _upsert_chunk(cur, doc_id, chunk, vector, embedder.model_id)
 
-        if stale_keys:
-            _delete_stale_chunks(cur, doc_id, stale_keys)
+            if stale_keys:
+                _delete_stale_chunks(cur, doc_id, stale_keys)
+        except Exception:
+            conn.rollback()
+            raise
 
         conn.commit()
 
