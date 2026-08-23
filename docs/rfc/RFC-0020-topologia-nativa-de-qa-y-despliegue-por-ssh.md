@@ -202,9 +202,13 @@ igual. Por eso la comprobación es explícita (CA-4) y Bloqueante.
 
 ### 7.1 El proxy inverso: nginx, y el detalle que rompe RNF-1 en silencio
 
-El VPS **ya tiene nginx** sirviendo, con raíz de documentos en
-`/home/qrimapp-reto/htdocs/reto.qrimapp.com`. Eso sustituye a Caddy: instalar un segundo
-terminador TLS competiría por los puertos 80 y 443 y el segundo simplemente no arrancaría.
+El VPS **ya tiene nginx** sirviendo, gestionado por el **panel de Hostinger**, con raíz de
+documentos en `/home/qrimapp-reto/htdocs/reto.qrimapp.com` y **TLS ya emitido** para ese dominio,
+que está **dedicado a esta PoC**. Eso sustituye a Caddy: instalar un segundo terminador TLS
+competiría por los puertos 80 y 443 y el segundo simplemente no arrancaría.
+
+Consecuencia para el aprovisionamiento: **no hay paso de emisión de certificado**. La renovación
+la gestiona el panel; lo único que hay que verificar es que siga renovando (CA-14).
 
 **La aplicación no es un sitio estático.** La raíz de documentos no sirve para publicarla: nginx
 tiene que hacer `proxy_pass` a `127.0.0.1:8080`. El directorio queda para el desafío ACME o sin
@@ -249,6 +253,22 @@ verifica tras cada actualización (CA-14).
 
 ## 8. Configuración que cambia
 
+**Dónde vive el secreto y cómo se crea.** `$RAG_CV_HOME/.env`, propiedad de `qrimapp-reto`,
+permisos `600`, leído por la unidad con `EnvironmentFile=`. Tres reglas que no son obvias:
+
+1. **Se crea ya con permisos restrictivos**, no se corrigen después. `touch` seguido de
+   `chmod 600` deja una ventana —corta, pero real— en la que el fichero es legible por todo el
+   host. Se usa `install -m 600 /dev/null` o `umask 077` antes de escribirlo.
+2. **No se guarda en el panel de control.** Si el panel ofrece variables de entorno por sitio,
+   suelen materializarse en un fichero legible por el usuario del servidor web o en la base de
+   datos del panel, y quedan fuera del `600` que sí controlamos. El secreto pertenece a la unidad
+   de la aplicación, no al *vhost*.
+3. **No se exporta en `.bashrc` ni en el perfil del usuario.** Ahí entra en el entorno de cualquier
+   proceso que arranque esa cuenta, incluidas las sesiones SSH y todo lo que lancen desde ellas.
+
+`.env` está excluido del `rsync` (§6) y de git. Si alguna vez se filtra, **se rota en el
+proveedor**: cambiar el fichero del host no invalida la clave.
+
 | Variable | Con contenedores | Nativo |
 | :--- | :--- | :--- |
 | `EMBEDDER` | rama local en la red del compose | `openai` por API (RFC-0017) |
@@ -287,7 +307,8 @@ de la existencia del compose.
 | CA-11 | La unidad declara las directivas de §5.1 y el servicio **no puede leer `/home`** | `systemd-analyze security rag-cv-api` + intento de lectura de `~/.ssh` desde el proceso |
 | CA-12 | `pip-audit` sobre `requirements.lock` corre en CI y bloquea severidad alta | Ejecución del workflow |
 | CA-13 | El primer evento SSE llega al cliente **antes** de que termine la respuesta, a través de nginx | `curl -N https://reto.qrimapp.com/v1/chat/stream` midiendo el tiempo hasta el primer byte de datos |
-| CA-14 | La configuración de nginx sobrevive a una actualización del panel, o está documentado el fichero y su verificación | Revisión tras actualizar |
+| CA-14 | La configuración de nginx sobrevive a una actualización del panel, y el certificado sigue renovando | Revisión tras actualizar + fecha de expiración |
+| CA-15 | El `.env` tiene permisos `600` desde su creación y el secreto no está en el panel ni en el perfil del usuario | `ls -l`, `stat`, revisión del panel y de `~/.bashrc` |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
 
 ## 11. Riesgos
@@ -297,6 +318,7 @@ de la existencia del compose.
 | **La API expuesta en `0.0.0.0`**, saltándose nginx y el TLS | §7 + CA-4, severidad Bloqueante |
 | **nginx bufferea el SSE y RNF-1 se cae sin error visible** | §7.1: `proxy_buffering off` **y** `X-Accel-Buffering: no` desde la aplicación, verificado por CA-13 |
 | Un panel de control sobrescribe el *vhost* editado a mano | §7.1 + CA-14 |
+| El secreto acaba en las variables de entorno del panel, fuera del `600` que controlamos | §8 lo prohíbe explícitamente; A-15 lo verifica |
 | Instalar Caddy sobre un nginx que ya sirve, y que no arranque | §4 lo advierte; A-14 lo verifica |
 | Sin `enable-linger`, un reinicio deja el VPS sin servicio y sin error | §4 paso 5 + CA-2 |
 | Alguien instala un motor de inferencia local en un host que no da para ello | §4 lo declara; revertirlo exige reabrir ADR-0007 |
@@ -330,4 +352,5 @@ de la existencia del compose.
 | A-12 | El SSE llega sin *buffering* a través de nginx, y la aplicación emite `X-Accel-Buffering: no` | CA-13 | **Bloqueante** |
 | A-13 | `uvicorn` corre con `--proxy-headers` y la aplicación no registra `127.0.0.1` como cliente | Lectura de la unidad + registros | Mayor |
 | A-14 | No se instaló Caddy ni ningún segundo terminador TLS | `ss -ltnp` sobre 80 y 443 | Mayor |
+| A-15 | El secreto vive solo en `$RAG_CV_HOME/.env` con `600`: no en el panel, no en el perfil del usuario, no en el repositorio | CA-15 | **Bloqueante** |
 | A-12 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |
