@@ -20,6 +20,7 @@ import pytest
 import app.ingestion.watcher as watcher_module
 from app.core.settings import Settings
 from app.ingestion.watcher import (
+    OUTCOME_INDEXED,
     OUTCOME_MISSING_CORPUS,
     OUTCOME_NO_CHANGE,
     OUTCOME_UNSTABLE,
