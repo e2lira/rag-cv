@@ -12,12 +12,11 @@ Reglas del corpus (validadas aqui, fallan la ingesta si se incumplen):
 
 import re
 
-import yaml
+from app.ingestion.corpus_parser import iter_units, parse_front_matter
 
 _REQUIRED_FRONT_MATTER_KEYS = ("persona", "titular", "actualizado")
 
 _FRONT_MATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 _DATE_RANGE_RE = re.compile(r"<!--\s*\d{4}-\d{2}\s*\.\.\s*(?:\d{4}-\d{2}|actual)\s*-->")
 
 # Formato CURP (18 caracteres) y RFC persona (13) mexicanos -- los unicos con
@@ -42,11 +41,10 @@ def validate_corpus(text: str) -> None:
 
 
 def _validate_front_matter(text: str) -> None:
-    match = _FRONT_MATTER_RE.match(text)
-    if match is None:
+    if _FRONT_MATTER_RE.match(text) is None:
         raise CorpusValidationError("falta el front-matter YAML obligatorio (RFC-0002 3 regla 1)")
 
-    data = yaml.safe_load(match.group(1)) or {}
+    data = parse_front_matter(text)
     missing = [key for key in _REQUIRED_FRONT_MATTER_KEYS if key not in data]
     if missing:
         raise CorpusValidationError(
@@ -63,40 +61,22 @@ def _validate_no_triple_hash(text: str) -> None:
             )
 
 
-def _iter_units(text: str) -> list[tuple[str, str, str]]:
-    """Devuelve (seccion, titulo_de_unit, cuerpo) para cada ## del corpus."""
-    headings = list(_HEADING_RE.finditer(text))
-    units: list[tuple[str, str, str]] = []
-    current_section = ""
-    for i, heading in enumerate(headings):
-        level, title = heading.group(1), heading.group(2)
-        if level == "#":
-            current_section = title.strip()
-            continue
-        if level != "##":
-            continue
-        body_start = heading.end()
-        body_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
-        units.append((current_section, title, text[body_start:body_end]))
-    return units
-
-
 def _validate_experience_date_ranges(text: str) -> None:
-    for section, title, _body in _iter_units(text):
-        if section != "Experiencia":
+    for unit in iter_units(text):
+        if unit.section != "Experiencia":
             continue
-        if not _DATE_RANGE_RE.search(title):
+        if not _DATE_RANGE_RE.search(unit.raw_title):
             raise CorpusValidationError(
-                f"la unidad {title.split('<!--')[0].strip()!r} bajo Experiencia no trae "
+                f"la unidad {unit.raw_title.split('<!--')[0].strip()!r} bajo Experiencia no trae "
                 "rango de fecha <!-- AAAA-MM .. AAAA-MM o actual --> (RFC-0002 3 regla 3)"
             )
 
 
 def _validate_unit_word_counts(text: str) -> None:
-    for _section, title, body in _iter_units(text):
-        word_count = len(body.split())
+    for unit in iter_units(text):
+        word_count = len(unit.body.split())
         if word_count > 400:
-            clean_title = title.split("<!--")[0].strip()
+            clean_title = unit.raw_title.split("<!--")[0].strip()
             raise CorpusValidationError(
                 f"la unidad {clean_title!r} tiene {word_count} palabras, supera las 400 "
                 "(RFC-0002 3 regla 4)"
