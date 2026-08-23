@@ -116,6 +116,26 @@ def test_cascade(database_url: str) -> None:
     assert row[0] == 0
 
 
+def test_unaccent_config(database_url: str) -> None:
+    """RFC-0006 CA-11/CA-12: buscar 'informatica' (sin tilde) encuentra
+    'Informatica' (con tilde) -- RFC-0006 3.1.
+
+    Se ejecuta contra la base efimera local (DEV, Windows nativo) en cada
+    corrida de este archivo, y contra la base del servicio de CI (Linux) via
+    integration-linux en 'python-tests.yml' -- mismo test, misma migracion,
+    los dos sistemas operativos que exige CA-12.
+    """
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT to_tsvector('es_unaccent', %s) @@ websearch_to_tsquery('es_unaccent', %s)",
+            ("Informática Ingeniería", "informatica"),
+        )
+        row = cur.fetchone()
+
+    assert row is not None
+    assert row[0] is True
+
+
 def test_no_fk_on_sources(database_url: str) -> None:
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
         chunk_id = _insert_chunk(cur)
