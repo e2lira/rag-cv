@@ -482,3 +482,132 @@ async def test_touch_restores_the_short_circuit(
         tercero = await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
 
     assert tercero.outcome == OUTCOME_NO_CHANGE
+
+
+def _jobs(conn: psycopg.Connection, object_key: str) -> list[Any]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT job_state, lease_token, lease_expires_at, attempt_count "
+            "FROM ingestion_jobs WHERE object_key = %s ORDER BY created_at",
+            (object_key,),
+        )
+        return list(cur.fetchall())
+
+
+def _seed_inflight_job(conn: psycopg.Connection, object_key: str, *, lease_seconds: int) -> None:
+    """Un trabajo que otra ejecucion ya reclamo. `lease_seconds` negativo lo
+    deja caducado, que es como se ve una ejecucion que murio a mitad."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO source_documents (object_key, source_version_id, "
+            "source_fingerprint, content_sha256, ingestion_status) "
+            "VALUES (%s, %s, %s, %s, 'discovered') RETURNING id",
+            (object_key, "01JOTRAEJECUCION000000000A", "0-0", "b" * 64),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        cur.execute(
+            "INSERT INTO ingestion_jobs (idempotency_key, object_key, source_version_id, "
+            "source_document_id, job_state, lease_token, lease_expires_at) "
+            "VALUES (%s, %s, %s, %s, 'processing', gen_random_uuid(), "
+            "        now() + make_interval(secs => %s))",
+            (
+                f"{object_key}@01JOTRAEJECUCION000000000A",
+                object_key,
+                "01JOTRAEJECUCION000000000A",
+                row[0],
+                lease_seconds,
+            ),
+        )
+    conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runs_single_ingestion(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-6: dos ejecuciones solapadas producen una sola ingesta.
+
+    Se simula el solapamiento de forma determinista -- un trabajo ya
+    reclamado con lease vivo -- en vez de lanzar una carrera real: P-6 prohibe
+    pruebas que dependan del orden de ejecucion, y una carrera con
+    asyncio.gather es exactamente eso. Lo que se prueba es la propiedad que
+    RFC-0019 9 declara: "la segunda no encuentra trabajo reclamable y sale".
+    """
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("CONCURRENTE"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        _seed_inflight_job(conn, object_key, lease_seconds=600)
+
+        report = await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM cv_chunks")
+            chunks = cur.fetchone()
+
+    assert report.outcome != OUTCOME_INDEXED, (
+        "la segunda ejecucion indexo pese al lease vivo de la primera"
+    )
+    assert report.embed_calls == 0
+    assert chunks is not None
+    assert chunks[0] == 0, "hubo dos ingestas simultaneas sobre el mismo corpus"
+
+
+@pytest.mark.asyncio
+async def test_expired_lease_reclaimed(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-7: el lease caducado de una ejecucion muerta se reclama y el trabajo
+    se completa.
+
+    Es lo que permite recuperarse de un proceso que murio a mitad -- por eso
+    WATCHER_LEASE_SECONDS debe superar una reindexacion completa (RFC-0019 5):
+    si se queda corto, un segundo proceso reclama trabajo que sigue en curso.
+    """
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("RECLAMADO"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        _seed_inflight_job(conn, object_key, lease_seconds=-600)
+
+        report = await run_once(conn, FakeEmbedder(1536), settings)
+
+        jobs = _jobs(conn, object_key)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM cv_chunks")
+            chunks = cur.fetchone()
+
+    assert report.outcome == OUTCOME_INDEXED, "no se reclamo el lease caducado"
+    assert chunks is not None
+    assert chunks[0] > 0, "el trabajo reclamado no llego a indexar"
+    assert any(job[0] == "succeeded" for job in jobs), (
+        "ningun trabajo quedo en 'succeeded' tras completarse"
+    )
+
+
+@pytest.mark.asyncio
+async def test_claim_marks_the_job_and_releases_it(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-6/CA-7, A-3: la ingesta se reclama ANTES de mutar estado, y el lease
+    se suelta al terminar -- si no, el trabajo siguiente lo veria ocupado."""
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("LIBERADO"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        jobs = _jobs(conn, object_key)
+
+    assert len(jobs) == 1
+    state, lease_token, lease_expires_at, attempts = jobs[0]
+    assert state == "succeeded"
+    assert lease_token is None, "el lease no se solto al completarse el trabajo"
+    assert lease_expires_at is None, "ck_lease exige que las dos se anulen juntas"
+    assert attempts == 1, "el intento no quedo contado"
