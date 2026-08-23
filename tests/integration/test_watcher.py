@@ -17,6 +17,7 @@ from typing import Any
 import psycopg
 import pytest
 
+import app.ingestion.indexer as indexer_module
 import app.ingestion.watcher as watcher_module
 from app.core.settings import Settings
 from app.ingestion.watcher import (
@@ -545,13 +546,23 @@ async def test_concurrent_runs_single_ingestion(
 
         report = await run_once(conn, _ExplodingEmbedder(), settings)  # type: ignore[arg-type]
 
+        beat = _heartbeat(conn, object_key)
         with conn.cursor() as cur:
             cur.execute("SELECT count(*) FROM cv_chunks")
             chunks = cur.fetchone()
 
-    assert report.outcome != OUTCOME_INDEXED, (
-        "la segunda ejecucion indexo pese al lease vivo de la primera"
+    # El outcome tiene que ser EXACTAMENTE el del ciclo perdido por lease
+    # ocupado, no cualquiera distinto de 'indexed'. Con `!= OUTCOME_INDEXED`
+    # este test pasaba aunque el lease no bloqueara nada: el ciclo intentaba
+    # indexar, el _ExplodingEmbedder lanzaba AssertionError, el manejador de
+    # fallos de run_once la capturaba y devolvia 'failed' -- que tambien es
+    # distinto de 'indexed'. Lo detecto la autocomprobacion por reversion
+    # (RFC-0014 A-6): invertir el guardia del lease dejaba el test en VERDE.
+    assert report.outcome == OUTCOME_UNSTABLE, (
+        f"se esperaba ciclo perdido por lease ocupado, llego '{report.outcome}'"
     )
+    assert beat is not None
+    assert beat[2] == OUTCOME_UNSTABLE
     assert report.embed_calls == 0
     assert chunks is not None
     assert chunks[0] == 0, "hubo dos ingestas simultaneas sobre el mismo corpus"
@@ -646,8 +657,34 @@ async def test_rollback_on_failure(
         await run_once(conn, FakeEmbedder(1536), settings)
         antes = _chunk_contents(conn)
 
-        corpus_path.write_text(_corpus_variant("LA QUE FALLA AL EMBEBER"), encoding="utf-8")
-        report = await run_once(conn, _FailingEmbedder(), settings)  # type: ignore[arg-type]
+        # El fallo se inyecta A MITAD DE LA ESCRITURA, no en el embebedor.
+        # Un _FailingEmbedder no prueba el rollback: index_corpus embebe TODO
+        # antes de escribir NADA, asi que su fallo ocurre antes de la primera
+        # escritura y no hay nada que revertir. Lo detecto la autocomprobacion
+        # por reversion (RFC-0014 A-6): quitando los DOS rollbacks el test
+        # seguia en verde. Con la escritura ya a medias, el rollback es lo
+        # unico que impide que el indice quede mezclado.
+        llamadas = {"n": 0}
+        original = indexer_module._upsert_chunk
+
+        def _falla_a_mitad(*args: object, **kwargs: object) -> object:
+            llamadas["n"] += 1
+            if llamadas["n"] >= 2:
+                raise RuntimeError("la base corto la conexion a mitad de la escritura")
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(indexer_module, "_upsert_chunk", _falla_a_mitad)
+
+        # Tiene que cambiar MAS DE UNA unidad: index_corpus solo reescribe los
+        # fragmentos cuyo content_hash difiere, y con uno solo la escritura
+        # nunca llega a estar "a medias".
+        corpus_path.write_text(
+            _corpus_variant("LA QUE FALLA A MEDIAS").replace(
+                "**Contexto:**", "**Contexto:** [revision dos]"
+            ),
+            encoding="utf-8",
+        )
+        report = await run_once(conn, FakeEmbedder(1536), settings)
 
         despues = _chunk_contents(conn)
         rows = _ledger(conn, object_key)
@@ -655,6 +692,7 @@ async def test_rollback_on_failure(
         beat = _heartbeat(conn, object_key)
 
     assert report.outcome == OUTCOME_FAILED
+    assert llamadas["n"] >= 2, "la escritura no llego a empezar: no se probo el rollback"
     assert despues == antes, "el fallo dejo el indice a medias"
     assert "BUENA" in despues
     assert "LA QUE FALLA" not in despues
