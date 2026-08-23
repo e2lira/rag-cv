@@ -13,6 +13,12 @@ _DATE_COMMENT_RE = re.compile(
 )
 _STACK_LINE_RE = re.compile(r"^\*\*Stack:\*\*\s*(.+)$", re.MULTILINE)
 
+# RFC-0002 4.2: >1200 caracteres tras el enriquecimiento -> sub-fragmentos de
+# ~800 con solapamiento de 120, solo dentro de la unidad.
+_SPLIT_THRESHOLD = 1200
+_SPLIT_TARGET_LEN = 800
+_SPLIT_OVERLAP = 120
+
 _SECTION_TO_CHUNK_TYPE = {
     "Experiencia": "experiencia",
     "Proyectos": "proyecto",
@@ -81,16 +87,39 @@ def _build_context_header(
     date_start: date | None,
     date_end: date | None,
     tech_tags: tuple[str, ...],
+    *,
+    part: int,
+    parts: int,
 ) -> str:
     # A-1: el mismo texto que se embebe se devuelve al agente -- por eso la
     # cabecera se antepone al content, no se maneja aparte.
-    parts = [f"Sección: {section} > {unit}"]
+    segments = [f"Sección: {section} > {unit}"]
     date_range = _format_date_range(date_start, date_end)
     if date_range is not None:
-        parts.append(date_range)
+        segments.append(date_range)
     if tech_tags:
-        parts.append(f"Stack: {', '.join(tech_tags)}")
-    return f"[{' | '.join(parts)}]"
+        segments.append(f"Stack: {', '.join(tech_tags)}")
+    if parts > 1:
+        segments.append(f"parte {part}/{parts}")
+    return f"[{' | '.join(segments)}]"
+
+
+def _split_body(body: str) -> list[str]:
+    """RFC-0002 4.2: sub-fragmentos de ~800 caracteres con solapamiento de
+    120, solo si la unidad supera el umbral de enriquecimiento."""
+    if len(body) <= _SPLIT_TARGET_LEN:
+        return [body]
+
+    step = _SPLIT_TARGET_LEN - _SPLIT_OVERLAP
+    pieces: list[str] = []
+    start = 0
+    while start < len(body):
+        end = min(start + _SPLIT_TARGET_LEN, len(body))
+        pieces.append(body[start:end])
+        if end == len(body):
+            break
+        start += step
+    return pieces
 
 
 def chunk_corpus(text: str, *, doc_id: str = "cv") -> list[Chunk]:
@@ -99,22 +128,40 @@ def chunk_corpus(text: str, *, doc_id: str = "cv") -> list[Chunk]:
         title = _clean_title(unit.raw_title)
         date_start, date_end = _parse_date_range(unit.raw_title)
         tech_tags = _extract_tech_tags(unit.body)
-        header = _build_context_header(unit.section, title, date_start, date_end, tech_tags)
-        content = f"{header}\n{unit.body.strip()}"
-        chunks.append(
-            Chunk(
-                doc_id=doc_id,
-                section=unit.section,
-                unit=title,
-                chunk_type=_SECTION_TO_CHUNK_TYPE.get(unit.section, "faq"),
-                date_start=date_start,
-                date_end=date_end,
-                tech_tags=tech_tags,
-                part=1,
-                parts=1,
-                content=content,
-                content_hash=_content_hash(content),
-                token_count=len(content.split()),
-            )
+        body = unit.body.strip()
+
+        header_probe = _build_context_header(
+            unit.section, title, date_start, date_end, tech_tags, part=1, parts=1
         )
+        needs_split = len(header_probe) + 1 + len(body) > _SPLIT_THRESHOLD
+        body_pieces = _split_body(body) if needs_split else [body]
+        parts_total = len(body_pieces)
+
+        for idx, piece in enumerate(body_pieces, start=1):
+            header = _build_context_header(
+                unit.section,
+                title,
+                date_start,
+                date_end,
+                tech_tags,
+                part=idx,
+                parts=parts_total,
+            )
+            content = f"{header}\n{piece}"
+            chunks.append(
+                Chunk(
+                    doc_id=doc_id,
+                    section=unit.section,
+                    unit=title,
+                    chunk_type=_SECTION_TO_CHUNK_TYPE.get(unit.section, "faq"),
+                    date_start=date_start,
+                    date_end=date_end,
+                    tech_tags=tech_tags,
+                    part=idx,
+                    parts=parts_total,
+                    content=content,
+                    content_hash=_content_hash(content),
+                    token_count=len(content.split()),
+                )
+            )
     return chunks

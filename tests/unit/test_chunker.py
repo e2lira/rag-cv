@@ -66,7 +66,7 @@ def test_long_unit_split() -> None:
     for c in matching:
         assert "Sección: Experiencia > Empresa Uno -- Ingeniera de Datos Senior" in c.content
 
-    for prev, nxt in zip(matching, matching[1:], strict=True):
+    for prev, nxt in zip(matching, matching[1:]):
         prev_body = prev.content.split("\n", 1)[1]
         next_body = nxt.content.split("\n", 1)[1]
         assert prev_body[-120:] == next_body[:120]
