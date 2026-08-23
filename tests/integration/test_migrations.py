@@ -1,13 +1,18 @@
 """RFC-0006 CA-1/CA-2: `alembic upgrade head` crea el esquema completo de 4, y
 el ciclo upgrade -> downgrade -> upgrade lo deja identico.
 
-"Identico" se comprueba sobre el contrato entero -- columnas con su tipo,
-nulabilidad y valor por defecto, indices, restricciones, disparadores,
-funciones, extensiones y la configuracion de texto -- y no sobre los nombres de
-las tablas. Comparar solo nombres deja pasar una regresion que pierda
-`idx_source_one_current`, el disparador de `tsv` o la clave foranea con
-RESTRICT, que es justamente lo que estas pruebas existen para impedir
-(auditoria PR #28).
+"Completo" significa: TODAS las columnas de las seis tablas de 4 (tipo,
+nulabilidad y DEFAULT literal), TODAS las restricciones con su definicion
+completa (incluida la accion ON DELETE de las FK, y la FK sin nombre explicito
+de `messages.conversation_id`), los indices, el disparador, su funcion, las
+extensiones y `es_unaccent`. Verificar solo que los nombres existan deja pasar
+que `messages.source_chunk_ids` pierda su `DEFAULT '{}'` o que
+`ON DELETE CASCADE` se convierta en `NO ACTION` sin que ninguna prueba lo note
+(auditoria PR #28, tercera ronda).
+
+`test_roundtrip` compara la migracion CONSIGO MISMA: prueba que el ciclo es
+reversible, nunca que el estado inicial sea el correcto -- por eso ninguna de
+las dos pruebas puede sustituir a la otra.
 """
 
 from pathlib import Path
@@ -46,54 +51,136 @@ _EXPECTED_INDEXES = {
     "idx_source_status_observed",
 }
 
-_EXPECTED_CONSTRAINTS = {
-    "uq_chunk",
-    "ck_parts",
-    "ck_dates",
-    "ck_source_status",
-    "ck_source_sha256",
-    "ck_source_current",
-    "uq_source_object_version",
-    "uq_source_id_object_version",
-    "ck_job_state",
-    "ck_attempt_count",
-    "ck_lease",
-    "uq_job_idempotency",
-    "uq_job_object_version",
-    "fk_job_source_version",
-}
-
 _EXPECTED_EXTENSIONS = {"vector", "unaccent", "pg_trgm"}
 
-# Contrato de columna, como "tabla | columna | tipo | admite NULL".
-#
-# Sin esto, `test_roundtrip` da un falso verde: compara la migracion consigo
-# misma, asi que degradar CHAR(64) a TEXT deja los dos lados igual de
-# degradados y la prueba pasa. Comprobar que los objetos EXISTEN no es
-# comprobar que cumplen el contrato -- se eligen las columnas donde el tipo
-# es una decision del RFC, no un detalle.
-_EXPECTED_COLUMN_CONTRACTS = {
-    "cv_chunks | embedding | vector | NO",
-    "cv_chunks | tsv | tsvector | NO",
-    "cv_chunks | content_hash | bpchar | NO",
-    "cv_chunks | tech_tags | _text | NO",
-    "cv_chunks | date_end | date | YES",
-    "source_documents | content_sha256 | bpchar | NO",
-    "source_documents | is_current | bool | NO",
-    "source_documents | source_version_id | text | NO",
-    "source_documents | source_fingerprint | text | NO",
-    "ingestion_jobs | idempotency_key | text | NO",
-    "ingestion_jobs | lease_token | uuid | YES",
-    "ingestion_jobs | lease_expires_at | timestamptz | YES",
-    "ingestion_jobs | attempt_count | int4 | NO",
-    "messages | source_chunk_ids | _int8 | NO",
-    "rate_buckets | window_start | timestamptz | NO",
+_EXPECTED_EMBEDDING_DIM = 1536
+
+# Columna completa de cada tabla de 4: "tabla | columna | tipo | NULL? | default".
+# Un `-` en el default significa "sin DEFAULT" (columna obligatoria de la
+# aplicacion, no un olvido). El texto del default es el que devuelve
+# PostgreSQL, no el literal del CREATE TABLE -- por eso `1` sale como texto
+# plano pero `'cv'` sale como `'cv'::text` y `now()` no cambia.
+_EXPECTED_COLUMNS = {
+    "cv_chunks | id | int8 | NO | nextval('cv_chunks_id_seq'::regclass)",
+    "cv_chunks | doc_id | text | NO | 'cv'::text",
+    "cv_chunks | section | text | NO | -",
+    "cv_chunks | unit | text | NO | -",
+    "cv_chunks | chunk_type | text | NO | -",
+    "cv_chunks | part | int4 | NO | 1",
+    "cv_chunks | parts | int4 | NO | 1",
+    "cv_chunks | content | text | NO | -",
+    "cv_chunks | content_hash | bpchar | NO | -",
+    "cv_chunks | token_count | int4 | NO | -",
+    "cv_chunks | date_start | date | YES | -",
+    "cv_chunks | date_end | date | YES | -",
+    "cv_chunks | tech_tags | _text | NO | '{}'::text[]",
+    "cv_chunks | embedding | vector | NO | -",
+    "cv_chunks | embed_model_id | text | NO | -",
+    "cv_chunks | tsv | tsvector | NO | -",
+    "cv_chunks | created_at | timestamptz | NO | now()",
+    "cv_chunks | updated_at | timestamptz | NO | now()",
+    "conversations | id | uuid | NO | gen_random_uuid()",
+    "conversations | key_id | text | NO | -",
+    "conversations | locale | text | YES | -",
+    "conversations | created_at | timestamptz | NO | now()",
+    "conversations | last_seen_at | timestamptz | NO | now()",
+    "conversations | turns | int4 | NO | 0",
+    "messages | id | uuid | NO | gen_random_uuid()",
+    "messages | conversation_id | uuid | NO | -",
+    "messages | role | text | NO | -",
+    "messages | content | text | NO | -",
+    "messages | grounded | bool | YES | -",
+    "messages | source_chunk_ids | _int8 | NO | '{}'::bigint[]",
+    "messages | model_id | text | YES | -",
+    "messages | prompt_version | int4 | YES | -",
+    "messages | input_tokens | int4 | YES | -",
+    "messages | output_tokens | int4 | YES | -",
+    "messages | tool_calls | int4 | YES | -",
+    "messages | cost_usd | numeric | YES | -",
+    "messages | latency_ms | int4 | YES | -",
+    "messages | status | text | NO | 'ok'::text",
+    "messages | request_id | text | YES | -",
+    "messages | created_at | timestamptz | NO | now()",
+    "rate_buckets | key_id | text | NO | -",
+    "rate_buckets | window_kind | text | NO | -",
+    "rate_buckets | window_start | timestamptz | NO | -",
+    "rate_buckets | count | int4 | NO | 0",
+    "source_documents | id | uuid | NO | gen_random_uuid()",
+    "source_documents | object_key | text | NO | -",
+    "source_documents | source_version_id | text | NO | -",
+    "source_documents | source_fingerprint | text | NO | -",
+    "source_documents | content_sha256 | bpchar | NO | -",
+    "source_documents | ingestion_status | text | NO | 'discovered'::text",
+    "source_documents | is_current | bool | NO | false",
+    "source_documents | source_metadata | jsonb | NO | '{}'::jsonb",
+    "source_documents | observed_at | timestamptz | NO | now()",
+    "source_documents | indexed_at | timestamptz | YES | -",
+    "source_documents | created_at | timestamptz | NO | now()",
+    "source_documents | updated_at | timestamptz | NO | now()",
+    "ingestion_jobs | id | uuid | NO | gen_random_uuid()",
+    "ingestion_jobs | idempotency_key | text | NO | -",
+    "ingestion_jobs | object_key | text | NO | -",
+    "ingestion_jobs | source_version_id | text | NO | -",
+    "ingestion_jobs | source_document_id | uuid | NO | -",
+    "ingestion_jobs | job_state | text | NO | 'pending'::text",
+    "ingestion_jobs | attempt_count | int4 | NO | 0",
+    "ingestion_jobs | lease_token | uuid | YES | -",
+    "ingestion_jobs | lease_expires_at | timestamptz | YES | -",
+    "ingestion_jobs | error_code | text | YES | -",
+    "ingestion_jobs | error_detail | text | YES | -",
+    "ingestion_jobs | job_metadata | jsonb | NO | '{}'::jsonb",
+    "ingestion_jobs | started_at | timestamptz | YES | -",
+    "ingestion_jobs | completed_at | timestamptz | YES | -",
+    "ingestion_jobs | created_at | timestamptz | NO | now()",
+    "ingestion_jobs | updated_at | timestamptz | NO | now()",
 }
 
-# RFC-0006 4.1 y A-1: la dimension es Bloqueante y ninguna otra prueba de esta
-# suite la lee del esquema -- `check_embedding_dimension` compara contra lo que
-# haya, no contra lo que el RFC exige.
-_EXPECTED_EMBEDDING_DIM = 1536
+# Toda restriccion con contype p/f/u/c (primary key, foreign key, unique,
+# check), con su definicion completa via pg_get_constraintdef -- incluida
+# `messages_conversation_id_fkey`, que no tiene CONSTRAINT con nombre propio
+# en el DDL y por eso quedaba fuera de la version anterior de esta prueba.
+# Se excluyen las restricciones NOT NULL que PostgreSQL cataloga aparte
+# (contype 'n'): son redundantes con la columna `is_nullable` de arriba y
+# distinto motor segun version de PostgreSQL las expone distinto.
+_EXPECTED_CONSTRAINT_DEFS = {
+    "cv_chunks_pkey | p | PRIMARY KEY (id)",
+    "uq_chunk | u | UNIQUE (doc_id, unit, part)",
+    "ck_parts | c | CHECK (((part >= 1) AND (part <= parts)))",
+    "ck_dates | c | CHECK (((date_end IS NULL) OR (date_start IS NULL) OR "
+    "(date_end >= date_start)))",
+    "cv_chunks_chunk_type_check | c | CHECK ((chunk_type = ANY (ARRAY["
+    "'perfil'::text, 'experiencia'::text, 'proyecto'::text, 'habilidad'::text, "
+    "'educacion'::text, 'faq'::text])))",
+    "conversations_pkey | p | PRIMARY KEY (id)",
+    "messages_pkey | p | PRIMARY KEY (id)",
+    "messages_conversation_id_fkey | f | FOREIGN KEY (conversation_id) "
+    "REFERENCES conversations(id) ON DELETE CASCADE",
+    "messages_role_check | c | CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))",
+    "messages_status_check | c | CHECK ((status = ANY (ARRAY["
+    "'ok'::text, 'failed'::text, 'cancelled'::text, 'degraded'::text])))",
+    "rate_buckets_pkey | p | PRIMARY KEY (key_id, window_kind, window_start)",
+    "rate_buckets_window_kind_check | c | CHECK ((window_kind = ANY "
+    "(ARRAY['minute'::text, 'day'::text])))",
+    "source_documents_pkey | p | PRIMARY KEY (id)",
+    "ck_source_status | c | CHECK ((ingestion_status = ANY (ARRAY["
+    "'discovered'::text, 'processing'::text, 'indexed'::text, 'failed'::text, "
+    "'superseded'::text])))",
+    "ck_source_sha256 | c | CHECK ((content_sha256 ~ '^[0-9A-Fa-f]{64}$'::text))",
+    "ck_source_current | c | CHECK (((NOT is_current) OR (ingestion_status = 'indexed'::text)))",
+    "uq_source_object_version | u | UNIQUE (object_key, source_version_id)",
+    "uq_source_id_object_version | u | UNIQUE (id, object_key, source_version_id)",
+    "ingestion_jobs_pkey | p | PRIMARY KEY (id)",
+    "ck_job_state | c | CHECK ((job_state = ANY (ARRAY["
+    "'pending'::text, 'processing'::text, 'succeeded'::text, 'failed'::text, "
+    "'dead_lettered'::text])))",
+    "ck_attempt_count | c | CHECK ((attempt_count >= 0))",
+    "ck_lease | c | CHECK (((lease_token IS NULL) = (lease_expires_at IS NULL)))",
+    "uq_job_idempotency | u | UNIQUE (idempotency_key)",
+    "uq_job_object_version | u | UNIQUE (object_key, source_version_id)",
+    "fk_job_source_version | f | FOREIGN KEY (source_document_id, object_key, "
+    "source_version_id) REFERENCES source_documents(id, object_key, "
+    "source_version_id) ON DELETE RESTRICT",
+}
 
 
 def _query(cur: psycopg.Cursor, sql: str) -> set[str]:
@@ -106,6 +193,8 @@ def _schema_snapshot(database_url: str) -> dict[str, set[str]]:
 
     Las funciones se filtran por `pg_depend`: `vector`, `unaccent` y `pg_trgm`
     instalan cientos de funciones en `public`, y solo interesan las nuestras.
+    Las restricciones se filtran a p/f/u/c: las de tipo 'n' (NOT NULL como
+    fila de catalogo) son version-dependientes y redundantes con `columns`.
     """
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
         return {
@@ -119,18 +208,13 @@ def _schema_snapshot(database_url: str) -> dict[str, set[str]]:
                 "coalesce(column_default, '-') "
                 "FROM information_schema.columns WHERE table_schema = 'public'",
             ),
-            "column_contracts": _query(
-                cur,
-                "SELECT table_name, column_name, udt_name, is_nullable "
-                "FROM information_schema.columns WHERE table_schema = 'public'",
-            ),
             "indexes": _query(
                 cur, "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = 'public'"
             ),
             "constraints": _query(
                 cur,
                 "SELECT conname, contype, pg_get_constraintdef(oid) FROM pg_constraint "
-                "WHERE connamespace = 'public'::regnamespace",
+                "WHERE connamespace = 'public'::regnamespace AND contype IN ('p','f','u','c')",
             ),
             "triggers": _query(
                 cur,
@@ -163,19 +247,22 @@ def test_upgrade(database_url: str) -> None:
 
     missing_tables = _EXPECTED_TABLES - snapshot["tables"]
     missing_indexes = _EXPECTED_INDEXES - _names(snapshot["indexes"])
-    missing_constraints = _EXPECTED_CONSTRAINTS - _names(snapshot["constraints"])
     missing_extensions = _EXPECTED_EXTENSIONS - snapshot["extensions"]
+    violated_columns = _EXPECTED_COLUMNS - snapshot["columns"]
+    violated_constraints = _EXPECTED_CONSTRAINT_DEFS - snapshot["constraints"]
 
     assert not missing_tables, f"faltan tablas: {sorted(missing_tables)}"
     assert not missing_indexes, f"faltan indices: {sorted(missing_indexes)}"
-    assert not missing_constraints, f"faltan restricciones: {sorted(missing_constraints)}"
     assert not missing_extensions, f"faltan extensiones: {sorted(missing_extensions)}"
+    assert not violated_columns, (
+        f"columnas que no cumplen el contrato de 4: {sorted(violated_columns)}"
+    )
+    assert not violated_constraints, (
+        f"restricciones que no cumplen el contrato de 4: {sorted(violated_constraints)}"
+    )
     assert "trg_cv_chunks_tsv" in _names(snapshot["triggers"]), "falta el disparador de tsv"
     assert "cv_chunks_tsv_update" in _names(snapshot["functions"]), "falta la funcion del tsv"
     assert "es_unaccent" in snapshot["text_search"], "falta la configuracion es_unaccent"
-
-    violated = _EXPECTED_COLUMN_CONTRACTS - snapshot["column_contracts"]
-    assert not violated, f"columnas que no cumplen el contrato de 4: {sorted(violated)}"
 
 
 def test_embedding_dimension(database_url: str) -> None:
