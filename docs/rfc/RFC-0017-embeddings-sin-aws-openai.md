@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0012, RFC-0006, RFC-0016, RFC-0009 |
-| **Supersede** | RFC-0012 §1, §4.1 (como implementación por defecto), §5 (valores por defecto y ramas), §6, §7, §8; RFC-0006 §DDL (dimensión de la columna) |
+| **Supersede** | RFC-0012 §1, §4.1 (como implementación por defecto), §5 (valores por defecto y ramas), §6, §7, §8, **§10 y su contrato de auditoría completo**; RFC-0006 §DDL (dimensión de la columna) |
 | **ADRs** | ADR-0007 |
 | **Fecha** | 2026-08-22 |
 
@@ -131,13 +131,39 @@ PostgreSQL 16 real. Sustituye a `verify-database-bootstrap.yml`, retirado junto 
 | Verificar que la respuesta tiene 1536 componentes | Un vector de otra dimensión corrompe el índice: se rechaza en vez de almacenarse |
 | Normalización L2 en nuestro lado | El contrato es nuestro, no del proveedor (RFC-0012 invariante 1). pgvector compara con `<=>` y RRF asume rangos comparables |
 | **Lote real**: el endpoint acepta un array de entradas | A diferencia de Titan, que exigía una llamada por texto. `embed_documents` hace **una** llamada por lote, no N |
-| Cliente asíncrono (`httpx`), no bloqueante | La fábrica ya recibe un `httpx.AsyncClient` (RFC-0012 §5). No se repite el error de bloquear el bucle de eventos |
+| Cliente asíncrono **`httpx2`**, no bloqueante — ver §5.1 | La fábrica recibe un `httpx2.AsyncClient`. No se repite el error de bloquear el bucle de eventos |
 | `model_id` = `text-embedding-3-small@openai` | Modelo **más camino** (RFC-0012 invariante 5): detecta que se indexó con una implementación y se consulta con otra |
 
 **El lote cambia el perfil operativo.** `EMBEDDER_MAX_CONCURRENCY` existía para no chocar contra la
 cuota de Bedrock con 60 llamadas sueltas. Con lote, la indexación completa es una o dos llamadas y
 esa variable deja de ser la palanca relevante; lo que importa pasa a ser el tamaño de lote y el
 tope de tokens por petición.
+
+### 5.1 El cliente HTTP es `httpx2`, y hay que decirlo
+
+RFC-0012 §5 fijó `httpx.AsyncClient`. **Ese contrato no es implementable tal como está escrito:**
+
+```
+$ .venv/Scripts/python -c "import httpx"
+ModuleNotFoundError: No module named 'httpx'
+```
+
+Ni `httpx` ni `httpx2` están en `dependencies` de `pyproject.toml`; `httpx2` está solo en el grupo
+`dev`, donde llegó porque `TestClient` de Starlette lo necesita. Un embedder que llama a una API
+por HTTP **necesita un cliente en tiempo de ejecución**, no en el grupo de desarrollo.
+
+**Decisión: `httpx2`, y pasa a `dependencies`.** Es el sucesor mantenido por Pydantic Services del
+mismo autor que `httpx` (Tom Christie), ya está en el árbol, y Starlette lo prefiere
+explícitamente: `starlette/testclient.py` hace `import httpx2 as httpx` con recurso a `httpx` solo
+si falla. Añadir `httpx` al lado significaría dos clientes HTTP haciendo el mismo trabajo.
+
+Verificado que cubre lo que este contrato necesita: `AsyncClient` con `headers`, `timeout`,
+`limits` y `base_url`; `post` como corrutina; `Timeout` y `HTTPStatusError`.
+
+Que el nombre del módulo sea `httpx2` y no `httpx` no es cosmético: sin fijarlo aquí, el
+Desarrollador se topa con el `ModuleNotFoundError` en la primera línea y tiene que decidir entre
+contradecir el RFC o contradecir el entorno. Eso es una decisión de diseño no documentada, y el
+proceso obliga a devolverla al Arquitecto en vez de resolverla sobre la marcha.
 
 ## 6. Homologación entre entornos
 
@@ -209,20 +235,29 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 
 ## 10. Criterios de aceptación
 
-| # | Criterio | Verificación |
-| :--- | :--- | :--- |
-| CA-1 | La fábrica acepta `EMBEDDER=openai` y devuelve `OpenAIEmbedder`; un valor desconocido aborta con la lista de válidos | `test_embedder_factory.py` parametrizado sobre las cinco ramas |
-| CA-2 | El retrieval con `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` |
-| CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | *job* `integration-linux` de `python-tests.yml` + `test_startup_checks.py::test_dim_mismatch` |
-| CA-4 | `embed_documents` de N textos hace **una** llamada con los N en el cuerpo | `test_embedder_openai.py::test_batches_in_one_call` |
-| CA-5 | Latencia p95 del embedding de consulta medida y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA |
-| CA-6 | Una respuesta con dimensión distinta de 1536 se rechaza en vez de almacenarse | `test_embedder_openai.py::test_rejects_wrong_dimension` |
-| CA-7 | `model_id` es `text-embedding-3-small@openai` y se persiste por fragmento | `test_embedder_contract.py::test_model_id_includes_path` + consulta a la tabla |
-| CA-8 | `EMBEDDER=openai` sin `OPENAI_API_KEY` impide el arranque | `test_config.py::test_embedder_required_vars` |
-| CA-9 | Con la API caída, la consulta devuelve resultados léxicos y marca `degraded` | `test_retrieval.py::test_embedding_failure_degrades` |
-| CA-10 | La indexación hace `rollback` completo ante fallo del proveedor | `test_indexer.py::test_rollback_on_embedder_failure` |
-| CA-11 | `FakeEmbedder` y `OpenAIEmbedder` pasan la **misma** suite de contrato, parametrizada. Cualquier implementación que se añada después entra por esa suite | `test_embedder_contract.py` parametrizado |
-| CA-12 | La clave nunca aparece en logs ni en trazas | `SecretStr` + inspección de la salida en una corrida completa |
+**Esta lista sustituye a la de RFC-0012 §10 para el alcance de la PoC.**
+
+La columna **Entrega** dice quién puede satisfacer cada criterio. Este RFC es el punto 3 del plan
+de ejecución: la ingesta (RFC-0002) es el 4, la recuperación (RFC-0003) el 6 y la evaluación
+(RFC-0009) el 10. Cuatro de estos criterios **no son verificables aquí** porque necesitan un
+indexador, un recuperador o un conjunto dorado que todavía no existen. Marcarlos —en vez de
+exigirlos o de borrarlos— es lo que evita las dos formas de que se pierdan: un `FAIL` mecánico
+contra una entrega correcta, o un requisito que se olvida porque nadie lo hereda.
+
+| # | Criterio | Verificación | Entrega |
+| :--- | :--- | :--- | :--- |
+| CA-1 | La fábrica acepta `EMBEDDER=openai` y devuelve `OpenAIEmbedder`; un valor desconocido aborta con la lista de válidos. Las tres ramas diferidas (`titan`, `nomic_api`, `ollama`) abortan con un mensaje que dice que están diferidas, **no** con un `NotImplementedError` desnudo | `test_embedder_factory.py` parametrizado sobre las cinco ramas | **Este RFC** |
+| CA-2 | El retrieval con `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` | **RFC-0009** (punto 10): necesita conjunto dorado, ingesta y recuperación |
+| CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | *job* `integration-linux` de `python-tests.yml` + `test_startup_checks.py::test_dim_mismatch` | **Este RFC** (el DDL ya está en `main`; falta `EMBEDDING_DIM`) |
+| CA-4 | `embed_documents` de N textos hace **una** llamada con los N en el cuerpo | `test_embedder_openai.py::test_batches_in_one_call` | **Este RFC** |
+| CA-5 | Latencia p95 del embedding de consulta medida y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA | **RFC-0020** (punto 11): QA no existe hasta la Fase 4 |
+| CA-6 | Una respuesta con dimensión distinta de 1536 se rechaza en vez de almacenarse | `test_embedder_openai.py::test_rejects_wrong_dimension` | **Este RFC** |
+| CA-7 | `model_id` es `text-embedding-3-small@openai`; que se **persista** por fragmento lo verifica la ingesta | `test_embedder_contract.py::test_model_id_includes_path` | **Este RFC** el identificador; **RFC-0002** la persistencia |
+| CA-8 | `EMBEDDER=openai` sin `OPENAI_API_KEY` impide el arranque | `test_config.py::test_embedder_required_vars` | **Este RFC** |
+| CA-9 | Con la API caída, la consulta devuelve resultados léxicos y marca `degraded` | `test_retrieval.py::test_embedding_failure_degrades` | **RFC-0003** (punto 6): no hay recuperación que degradar |
+| CA-10 | La indexación hace `rollback` completo ante fallo del proveedor | `test_indexer.py::test_rollback_on_embedder_failure` | **RFC-0002** (punto 4): no hay indexador |
+| CA-11 | `FakeEmbedder` y `OpenAIEmbedder` pasan la **misma** suite de contrato, parametrizada. Cualquier implementación que se añada después entra por esa suite | `test_embedder_contract.py` parametrizado | **Este RFC** |
+| CA-12 | La clave nunca aparece en logs ni en trazas | `SecretStr` + inspección de la salida en una corrida completa | **Este RFC** |
 
 ## 11. Riesgos
 
@@ -246,11 +281,13 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | A-4 | El identificador del modelo es explícito y `embed_model_id` incluye el camino | CA-7 | Bloqueante |
 | A-5 | Una respuesta con dimensión inesperada se rechaza en vez de almacenarse | CA-6 | Bloqueante |
 | A-6 | La indexación hace `rollback` completo ante fallo del proveedor | CA-10 | Bloqueante |
-| A-7 | El retrieval alcanza el umbral de RFC-0009, y si no lo alcanza consta el hallazgo escalado en vez de un umbral rebajado | CA-2 | Bloqueante |
+| A-7 | El retrieval alcanza el umbral de RFC-0009, y si no lo alcanza consta el hallazgo escalado en vez de un umbral rebajado | CA-2 | Bloqueante **en RFC-0009** (punto 10). **No se audita en la entrega de este RFC**: sin ingesta ni recuperación no hay retrieval que medir |
 | A-8 | La clave es `SecretStr` y no aparece en logs | CA-12 | Bloqueante |
 | A-9 | `embed_documents` usa el lote del proveedor, no N llamadas sueltas | CA-4 | Mayor |
 | A-10 | Las implementaciones del alcance pasan la misma suite de contrato, y ninguna implementación diferida se exige como requisito de entrega | CA-11 | Mayor |
 | A-11 | La llamada no bloquea el bucle de eventos | Lectura + CA-6 de RFC-0012 | Mayor |
-| A-12 | La comprobación de `EMBED_MAX_TOKENS` sigue activa en la ingesta | CA-9 de RFC-0012 | Mayor |
-| A-13 | La latencia de embedding medida cabe en RNF-3 | CA-5 | Mayor |
-| A-14 | El procedimiento de reindexación quedó registrado en el runbook | RFC-0010 §9.6c | Menor |
+| A-12 | La comprobación de `EMBED_MAX_TOKENS` sigue activa en la ingesta | CA-9 de RFC-0012 | Mayor **en RFC-0002** (punto 4), que es quien entrega la ingesta |
+| A-13 | La latencia de embedding medida cabe en RNF-3 | CA-5 | Mayor **en RFC-0020** (punto 11): se mide contra QA |
+| A-14 | El procedimiento de reindexación quedó registrado en el runbook | RFC-0010 §9.6c | Menor **en RFC-0010** (punto 13) |
+| A-15 | El cliente HTTP es `httpx2` y está en `dependencies`, no en el grupo `dev`: un embedder que llama a una API por HTTP lo necesita en ejecución (§5.1) | Lectura de `pyproject.toml` + `uv run python -c "import httpx2"` | Bloqueante |
+| A-16 | Las tres ramas diferidas de la fábrica abortan diciendo que están diferidas, y **ninguna** implementación diferida se exige como requisito de entrega | CA-1, CA-11 | Mayor |

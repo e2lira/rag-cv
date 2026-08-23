@@ -3,7 +3,7 @@
 | Campo | Valor |
 | :--- | :--- |
 | **Estado** | Aprobado |
-| **Depende de** | RFC-0002, RFC-0003, RFC-0006, RFC-0011 |
+| **Depende de** | RFC-0006, RFC-0011 (ambos implementados) |
 | **Supersede** | RFC-0001 §6 (modelo de embeddings), RFC-0002 §6 |
 | **ADRs** | ADR-0004 |
 | **Fecha** | 2026-08-22 |
@@ -211,6 +211,12 @@ contingencia sea asimétrica es la razón por la que la interfaz conserva dos m�
 arranca. La fábrica en `app/retrieval/embedder.py` es el **único** módulo que conoce las
 implementaciones; ni el indexador ni el retriever saben cuál está activa.
 
+> **La firma de abajo está superada en dos puntos por RFC-0017.** Se conserva porque describe la
+> forma de la fábrica —un único módulo que conoce las implementaciones— que sigue siendo el
+> contrato. Lo que cambia: el cliente es **`httpx2.AsyncClient`**, no `httpx` (RFC-0017 §5.1:
+> `httpx` no está instalado ni declarado), y la rama **`openai` entra**, mientras `titan`,
+> `nomic_api` y `ollama` quedan diferidas y deben abortar diciendo que lo están (RFC-0017 CA-1).
+
 ```python
 def build_embedder(settings: Settings, http: httpx.AsyncClient) -> Embedder:
     match settings.embedder:
@@ -319,6 +325,20 @@ léxica ya acota, y porque la contingencia a Nomic existe y está probada.
 
 ## 10. Criterios de aceptación
 
+> **Sustituidos para la PoC por RFC-0017 §10.** Esta lista se escribió cuando Titan era la
+> implementación por defecto y las cuatro implementaciones entraban en el alcance. Hoy siete de
+> sus criterios (CA-4 a CA-7, CA-13, CA-14, CA-16) verifican con `test_embedder_titan.py`, CA-17
+> con Nomic y Ollama, y CA-2/CA-3/CA-18 dicen «las cuatro implementaciones» — las tres
+> implementaciones diferidas (ADR-0007) no se construyen, así que esos criterios **no son
+> satisfacibles** y exigirlos produciría un `FAIL` mecánico contra una entrega correcta.
+>
+> **Los criterios vigentes para el alcance de la PoC son los de RFC-0017 §10.** De esta lista
+> sobreviven, citados desde allí, CA-1 (los dos métodos), CA-2 (normalización L2), CA-8
+> (`model_id` con camino) y CA-9 (`EMBED_MAX_TOKENS`, que verifica RFC-0002).
+>
+> Se conserva sin editar porque el día que se cierre ADR-0006 y vuelva el camino AWS, esta es la
+> lista que aplica a `TitanEmbedder`.
+
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
 | CA-1 | La interfaz expone `embed_documents` y `embed_query`, y **ningún** `embed()` genérico | `test_embedder_contract.py::test_no_generic_embed` |
@@ -357,6 +377,21 @@ de los prefijos aparecería como una degradación silenciosa de la calidad.
 | Sin red no se puede desarrollar | Contingencia `EMBEDDER=ollama`, a cambio de recrear la columna y reindexar la base local |
 
 ## Contrato de auditoría (gate ADU)
+
+> **NO SE AUDITA CONTRA ESTA LISTA EN LA PoC. Usá el contrato de RFC-0017.**
+>
+> **A-6 de esta tabla exige `VECTOR(1024)` y prohíbe `1536`.** `main` declara hoy `VECTOR(1536)`
+> (RFC-0006 §4.1), que es el valor **correcto** bajo RFC-0017 §4: la prohibición heredada
+> correspondía a Titan G1, un modelo distinto. Un Auditor que aplique A-6 literalmente emitiría un
+> Bloqueante contra código correcto y ya fusionado. A-2 de RFC-0017 la sustituye.
+>
+> Lo mismo con A-4 y A-9 (boto3 y cadena de credenciales de AWS: no hay AWS), A-12 y A-13 (exigen
+> las cuatro implementaciones y las contingencias diferidas) y A-3 (`dimensions`/`normalize` de
+> Titan).
+>
+> Que la advertencia viviera solo en RFC-0017 §4 no bastaba: el Auditor audita contra la lista
+> **cerrada** del RFC que tiene delante, y esta la contradecía. Por eso la corrección se escribe
+> aquí, donde alguien la va a leer.
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
