@@ -6,15 +6,23 @@ la inmensa mayoria termina en un `stat` y una consulta indexada.
 """
 
 import asyncio
+import hashlib
 import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import psycopg
+from ulid import ULID
 
 from app.core.settings import Settings
+from app.ingestion.indexer import index_corpus
 from app.retrieval.embedder import Embedder
+
+# Viaja en source_metadata: si el algoritmo de deteccion cambia, el ledger
+# dice con cual se observo cada version (RFC-0019 3 paso 5).
+_DETECTOR_VERSION = 1
 
 # RFC-0019 7.1: los cinco valores que admite ck_watcher_outcome.
 OUTCOME_NO_CHANGE = "no_change"
@@ -138,7 +146,122 @@ async def run_once(
         conn.commit()
         return WatcherReport(outcome=OUTCOME_UNSTABLE)
 
-    raise NotImplementedError
+    # Paso 4: es aqui, y solo aqui, donde se lee y se hashea el corpus.
+    raw = corpus_path.read_bytes()
+    content_sha256 = hashlib.sha256(raw).hexdigest()
+
+    # Pasos 5 y 6: la version y su trabajo se confirman ANTES de indexar, para
+    # que una ejecucion que muera durante la ingesta deje traza de que la
+    # deteccion ocurrio. El UNIQUE sobre idempotency_key absorbe el reintento.
+    stat = corpus_path.stat()
+    version_id = str(ULID())
+    source_document_id = _register_version(
+        conn,
+        object_key,
+        version_id,
+        observed,
+        content_sha256,
+        {
+            "inode": stat.st_ino,
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+            "detector_version": _DETECTOR_VERSION,
+        },
+    )
+    _create_job(conn, object_key, version_id, source_document_id)
+    conn.commit()
+
+    # Paso 7: la decision de re-embeber es de index_corpus, no de aqui
+    # (RFC-0019 6, A-1b). Compara el content_hash de cada fragmento contra lo
+    # que hay en cv_chunks: identico -> no embebe; reversion -> difiere y
+    # re-embebe. Duplicar esa logica aqui podria contradecirla.
+    report = await index_corpus(conn, embedder, corpus_path)
+
+    # Paso 8: promocion y degradacion, una sola transaccion (RFC-0019 6.1).
+    _promote(conn, object_key, version_id)
+
+    # Paso 9.
+    _record_heartbeat(
+        conn,
+        object_key,
+        OUTCOME_INDEXED,
+        success=True,
+        detail={"source_version_id": version_id, "embed_calls": report.embed_calls},
+    )
+    conn.commit()
+    return WatcherReport(
+        outcome=OUTCOME_INDEXED,
+        source_version_id=version_id,
+        embed_calls=report.embed_calls,
+    )
+
+
+def _register_version(
+    conn: psycopg.Connection,
+    object_key: str,
+    version_id: str,
+    observed_fingerprint: str,
+    content_sha256: str,
+    metadata: dict[str, Any],
+) -> str:
+    """Paso 5 -- RFC-0019 3. Entra como 'discovered'; solo la promocion la
+    marca 'indexed', que es lo que ck_source_current exige para is_current."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO source_documents "
+            "(object_key, source_version_id, source_fingerprint, content_sha256, "
+            " source_metadata, ingestion_status) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, 'discovered') RETURNING id",
+            (object_key, version_id, observed_fingerprint, content_sha256, json.dumps(metadata)),
+        )
+        row = cur.fetchone()
+
+    if row is None:  # pragma: no cover -- INSERT ... RETURNING siempre devuelve
+        raise RuntimeError("el registro de la version no devolvio id")
+    return str(row[0])
+
+
+def _create_job(
+    conn: psycopg.Connection, object_key: str, version_id: str, source_document_id: str
+) -> None:
+    """Paso 6 -- RFC-0019 3. El ON CONFLICT es el que absorbe una ejecucion
+    que muriera despues del paso 5: el idempotency_key es determinista a
+    partir de object_key y del token de version (A-10)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingestion_jobs "
+            "(idempotency_key, object_key, source_version_id, source_document_id) "
+            "VALUES (%s, %s, %s, %s) ON CONFLICT (idempotency_key) DO NOTHING",
+            (f"{object_key}@{version_id}", object_key, version_id, source_document_id),
+        )
+
+
+def _promote(conn: psycopg.Connection, object_key: str, version_id: str) -> None:
+    """Paso 8 -- RFC-0019 6.1, en UNA transaccion y en este orden.
+
+    ck_source_current prohibe marcar vigente una version que no este
+    'indexed'; idx_source_one_current prohibe dos vigentes a la vez. Hacerlo
+    en dos transacciones abriria un instante sin version vigente, y el paso 2
+    del ciclo siguiente no encontraria contra que comparar.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE source_documents SET ingestion_status = 'superseded', "
+            "is_current = false, updated_at = now() "
+            "WHERE object_key = %s AND is_current",
+            (object_key,),
+        )
+        cur.execute(
+            "UPDATE source_documents SET ingestion_status = 'indexed', "
+            "indexed_at = now(), updated_at = now() "
+            "WHERE object_key = %s AND source_version_id = %s",
+            (object_key, version_id),
+        )
+        cur.execute(
+            "UPDATE source_documents SET is_current = true, updated_at = now() "
+            "WHERE object_key = %s AND source_version_id = %s",
+            (object_key, version_id),
+        )
 
 
 async def _run_cli(argv: list[str] | None = None) -> int:
