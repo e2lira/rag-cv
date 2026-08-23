@@ -244,6 +244,7 @@ recursos internos (invariante I-6).
 | CA-10 | `/docs` devuelve 404 con `APP_ENV=prod` | `test_docs_disabled.py` |
 | CA-11 | El flujo SSE emite `start`, ≥1 `token`, `sources`, `done` en orden | `test_stream.py::test_event_order` |
 | CA-12 | `X-Request-ID` aparece en la respuesta y en todas las líneas de log del turno | `test_observability.py` |
+| CA-13 | El `lifespan` invoca **las cinco** comprobaciones de arranque de RFC-0006 §7, y una que falle impide que la aplicación quede lista | `test_startup_wiring.py`: con cada comprobación falsificada para fallar, arrancar la app aborta |
 
 ## 12. Ejemplos de uso
 
@@ -277,4 +278,5 @@ curl -sS -X POST https://api.ejemplo.com/v1/admin/reindex \
 | A-8 | CORS no está en `*` | Lectura de la configuración del middleware | Bloqueante |
 | A-9 | El aislamiento de conversaciones por `key_id` está probado | CA-8 | Bloqueante |
 | A-10 | El proceso no arranca si no puede cargar las API Keys en QA/PROD | Prueba de arranque con secreto inaccesible | Mayor |
+| A-11 | Las cinco comprobaciones de RFC-0006 §7 están **invocadas** en el `lifespan`, no solo importadas. Una comprobación que existe y nadie llama no protege ningún arranque | CA-13 + lectura del `lifespan` | Bloqueante |
 | A-11 | El esquema OpenAPI generado coincide con §4 y §5 | Comparación con el contrato | Menor |
