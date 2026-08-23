@@ -114,10 +114,16 @@ cierra ADR-0006.
 
 ## 6. Bloqueos que dependen del dueño del producto
 
-| Bloqueo | Bloquea a |
-| :--- | :--- |
-| Mergear el PR de los contratos | Todo: sin gate G1 no hay RFC aprobado que tomar |
-| `OPENAI_API_KEY` | Verificar CA-0' de RFC-0011 y toda la fase 1 |
-| `ANTHROPIC_API_KEY` | Fase 2, punto 7 |
-| ~~Dominio~~ **resuelto**: `reto.qrimapp.com`, servido por el nginx que ya corre en el VPS | — |
-| Respuestas de las preguntas frecuentes del corpus | No bloquea, pero el agente se abstendrá en disponibilidad, modalidad y expectativas de rol |
+| Estado | Elemento | Efecto |
+| :--- | :--- | :--- |
+| **Pendiente** | Mergear el PR de los contratos | **Es el único bloqueo real.** Sin gate G1 no hay RFC aprobado que el Desarrollador pueda tomar |
+| Resuelto | `OPENAI_API_KEY` | Desbloquea CA-0' de RFC-0011 y toda la fase 1 |
+| Resuelto | `ANTHROPIC_API_KEY` | Desbloquea la fase 2, punto 7 |
+| Resuelto | Dominio `reto.qrimapp.com`, dedicado a la PoC | Servido por el nginx que ya corre en el VPS (RFC-0020 §7.1) |
+| Resuelto | TLS emitido y renovado por el panel de Hostinger | El aprovisionamiento **no** tiene paso de emisión de certificado |
+| Abierto, no bloquea | Respuestas de las preguntas frecuentes del corpus | El agente se abstendrá en disponibilidad, modalidad y expectativas de rol. Es la abstención correcta, pero evitable |
+| Abierto, no bloquea | Erratas del CV en PDF: `STDS`/`STBS`, «ebedding», «LLM local nomic-embed-text» | `corpus/cv.md` ya está corregido; el PDF no |
+
+**Las claves no se cargan todavía en el VPS.** El primer uso real de `OPENAI_API_KEY` es CA-0' de
+RFC-0011, que corre en **DEV sobre Windows**. El `.env` de `$RAG_CV_HOME` recién importa en la
+fase 4, y sus reglas de creación están en RFC-0020 §8.
