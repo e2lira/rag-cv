@@ -68,7 +68,7 @@ mantiene verificable la comprobación TDD-1 del Auditor.
 | `.github/workflows/ci.yml` | Jobs 0–7 |
 | `.github/workflows/deploy-qa.yml` | Despliegue automático al fusionar en `main` |
 | `.github/workflows/promote-prod.yml` | Promoción manual con entorno protegido |
-| `.github/workflows/nightly.yml` | Suite `full` + mutación (RFC-0014 §6.3) + deriva de Terraform |
+| `.github/workflows/nightly.yml` | Suite `full` + mutación (RFC-0014 §6.4) + deriva de Terraform |
 
 ### Etiquetas y trazabilidad
 

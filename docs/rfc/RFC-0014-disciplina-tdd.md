@@ -167,7 +167,7 @@ código que funciona para volver a arreglarlo, o escribir un test que no prueba 
 | :--- | :--- |
 | El criterio se declara en el Informe como heredado, nombrando **qué RFC lo entregó** | Lectura del Informe de Implementación |
 | Existe un test que lo formaliza bajo el nombre que pide el criterio | El archivo y la prueba existen |
-| **La reversión lo pone en rojo** (TDD-3), verificada y documentada en el mensaje del commit del test | Revertir la implementación heredada y ejecutar esa prueba |
+| **La reversión lo pone en rojo** (TDD-3, §6.3), verificada y documentada en el mensaje del commit del test | Revertir la implementación heredada y ejecutar esa prueba |
 
 La tercera es la que hace el trabajo. Un test escrito sobre comportamiento heredado es
 exactamente donde más barato resulta escribir uno que pase sin probar nada: por eso aquí la
@@ -231,7 +231,7 @@ tres:
 | Evidencia sustituta | Cómo la comprueba el Auditor |
 | :--- | :--- |
 | Orden de commits íntegro (§6.1), sin *squash* | `git log --reverse --oneline` sobre el rango del PR |
-| Reversión pone el test en rojo (TDD-3) | Revertir la implementación de una muestra de criterios y ejecutar la suite |
+| Reversión pone el test en rojo (TDD-3, §6.3) | Revertir la implementación de una muestra de criterios y ejecutar la suite |
 | CI verde sobre el `HEAD` final, con la suite real | Ejecución registrada del *workflow* que el propio PR introduce |
 
 Fuera del PR que introduce el CI, esta excepción **no existe**: a partir del PR siguiente, la
@@ -279,7 +279,45 @@ después, y la reparación no lo redime — hallazgo **Mayor** sobre el PR compl
 > —tras §6.2.1, §6.1.1 y §6.1.2—; ADU-PROCESO ya dice que una decisión del Arquitecto se
 > materializa en el RFC o en un ADR, nunca en un acuerdo verbal dentro del PR.
 
-### 6.3 Prueba de mutación (la definitiva)
+### 6.3 Reversión: qué evidencia la satisface (normativo)
+
+**TDD-3 —la comprobación central del proceso— no estaba en este RFC.** Vivía solo en
+`PROMPT-AUDITOR.md`, y este documento se limitaba a referenciarla (§6.1.2, §6.2.1) como si
+estuviera definida en algún sitio. Lo está ahora.
+
+La comprobación es esta: el Auditor elige **tres criterios al azar**, revierte la implementación
+de cada uno y ejecuta su test. Si alguno sigue en verde, ese test no probaba nada, y el veredicto
+es FAIL por muy alta que sea la cobertura.
+
+**La elección al azar es del Auditor y no se negocia.** Es lo único que impide que se compruebe
+solo lo que alguien preparó para ser comprobado. Todo lo que sigue es sobre *cómo* se obtiene la
+evidencia de un criterio ya elegido, nunca sobre *qué* criterios se eligen.
+
+Para el criterio elegido, cualquiera de estas tres vale, en orden de fuerza:
+
+| Vía | Qué es | Fuerza |
+| :--- | :--- | :--- |
+| **Reversión ya registrada en CI** | Existe un commit del propio PR cuyo **rojo aislado por `SHA`** demuestra que ese test detecta la ausencia de ese código (§6.2.2) | **La más fuerte.** No la produce el Auditor ni el Desarrollador: la registra el CI. Es no repudiable y cualquiera la vuelve a comprobar con `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` |
+| **Reversión ejecutada** | El Auditor revierte con `git` —*worktree* aparte o `git stash`— y corre el test | Fuerte. Requiere un entorno que lo permita |
+| **Reversión mental** | El Auditor lee el *diff* y razona qué test se rompería al quitar esa implementación | Suficiente cuando las otras dos no están disponibles. **Se declara como tal en el informe** |
+
+La primera existe porque §6.2.2 la produce por diseño: una reparación por regresión deliberada
+**es** una reversión ejecutada y registrada. Exigir que el Auditor la repita localmente para darla
+por buena es pedir una copia más débil de una prueba que ya está en el historial.
+
+**`NO VERIFICABLE` se reserva para cuando ninguna de las tres es posible**, y entonces sí impide
+aprobar. Declararlo teniendo la reversión mental disponible confunde «no pude usar mi herramienta
+preferida» con «no hay evidencia».
+
+> **Por qué está escrito.** La auditoría de PR #44 declaró TDD-3 `NO VERIFICABLE` porque el
+> entorno no permitió crear un *worktree*, teniendo delante tres pares rojo→verde en CI —
+> producidos por §6.2.2, que se escribió dos rondas antes— y teniendo autorizada la reversión
+> mental desde siempre. No fue un error de criterio del Auditor: negarse a aprobar lo que no
+> comprobó es exactamente su trabajo. Fue que este RFC nunca le dijo qué hacer con la evidencia
+> que ya tenía delante. Cuando escribí §6.2.2 no conecté que generaba, por diseño, la evidencia
+> que TDD-3 pide.
+
+### 6.4 Prueba de mutación
 
 La evidencia más fuerte no es el orden: es que **el test detecte la ausencia del código**. Sobre
 los módulos críticos se ejecuta mutación:
@@ -343,7 +381,7 @@ note, y es lo que ADR-0012 existe para impedir.
 
 La cobertura es una condición **necesaria y notoriamente insuficiente**: un módulo al 100 %
 puede no probar nada (P-8). Por eso los tres módulos críticos llevan además umbral de mutación
-(§6.3). Cuando las dos métricas discrepan, manda la de mutación.
+(§6.4). Cuando las dos métricas discrepan, manda la de mutación.
 
 ## 9. Fixtures y dobles compartidos
 
@@ -369,20 +407,22 @@ texto generado, que no lo es.
 | CA-1 | `pytest -m unit` termina en menos de 2 minutos y no abre sockets | Medición + `pytest-socket` en modo bloqueo para el marcador `unit` |
 | CA-2 | Ningún test unitario llama a un LLM o embedder real | `pytest-socket` + revisión de fixtures |
 | CA-3 | La cobertura cumple los mínimos de §8 por ámbito | `pytest --cov` con `fail_under` por paquete |
-| CA-4 | `mutmut` alcanza los umbrales de §6.3 en los tres módulos críticos | Job nocturno |
+| CA-4 | `mutmut` alcanza los umbrales de §6.4 en los tres módulos críticos | Job nocturno |
 | CA-5 | Existen los seis dobles de §9 y están usados | Inspección + uso en la suite |
 | CA-6 | Toda la suite pasa dos veces seguidas y en orden aleatorio | `pytest -p no:randomly` vs `pytest --randomly-seed=…` |
 | CA-7 | No hay `skip`/`xfail` sin enlace a incidencia | `grep` + revisión |
 | CA-8 | El historial del PR muestra commit de test antes que el de implementación en cada criterio | `git log --reverse` |
 | CA-9 | El CI registra una ejecución roja en el commit de tests de cada criterio, **adjunta a ese `SHA`** | `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` por commit del par — no la vista de *checks* del PR, que informa del `HEAD` (§6.2, condición operativa 1) |
 | CA-10 | Toda reparación por regresión deliberada está declarada como tal, y no son la vía de la mayoría de los criterios del PR | Informe de Implementación + recuento contra los criterios llevados por ciclo directo (§6.2.2) |
+| CA-11 | El informe de auditoría resuelve TDD-3 por alguna de las tres vías de §6.3, o justifica que ninguna era posible. Si usó la reversión mental, lo declara | Lectura del informe: `NO VERIFICABLE` solo es admisible si las tres vías estaban cerradas |
 
 ## 11. Riesgos
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| TDD ceremonial: tests escritos después y ordenados a posteriori | Rojo registrado en CI (§6.2) + mutación (§6.3) |
+| TDD ceremonial: tests escritos después y ordenados a posteriori | Rojo registrado en CI (§6.2) + mutación (§6.4) |
 | La reparación de §6.2.2 se vuelve la vía normal: implementar primero y fabricar el par rojo → verde al final | Se declara en el Informe y **se cuenta**: si es la vía de la mayoría de los criterios, es Mayor sobre el PR completo (§6.2.2) |
+| La vía 1 de §6.3 se lee como «el Desarrollador elige qué se comprueba» y TDD-3 se vuelve decorativo | La elección de los tres criterios sigue siendo del Auditor y al azar. La vía 1 solo aplica al criterio **ya elegido**; si no tiene reversión registrada, se usa la 2 o la 3 (§6.3) |
 | Intentar hacer TDD del LLM ⇒ tests intermitentes que se desactivan | Frontera de §4 + prohibición P-4 + suite de evaluación como el sitio correcto |
 | La suite se vuelve lenta y se deja de ejecutar en local | Presupuesto por nivel (§5) + prohibición de IO en unitarias |
 | Cobertura alta y calidad baja | Mutación en los módulos críticos; manda la mutación |
