@@ -150,6 +150,40 @@ forma de suite completa.
 > lecturas eran defendibles y el contrato no decía cuál correspondía a cada caso. Elegir la forma
 > equivocada no era indisciplina del Desarrollador: era una ambigüedad del contrato.
 
+#### 6.1.2 Criterio ya satisfecho por un RFC anterior (normativo)
+
+Un RFC puede declarar como criterio una invariante que **otro RFC ya entregó**. No es duplicación
+descuidada: es lo que hace que el contrato de cada componente sea legible sin abrir los cinco
+documentos anteriores. RFC-0017 CA-8 exige que falte `OPENAI_API_KEY` impida el arranque, y eso ya
+era cierto desde RFC-0011 CA-0'.
+
+Ahí **no hay nada que poner en rojo**, porque el código correcto ya está fusionado. Exigir el par
+`test`/`feat` obligaría a una de dos cosas, las dos peores que la brecha: romper deliberadamente
+código que funciona para volver a arreglarlo, o escribir un test que no prueba lo que dice.
+
+**Evidencia sustituta, y son las tres juntas:**
+
+| Evidencia | Cómo la comprueba el Auditor |
+| :--- | :--- |
+| El criterio se declara en el Informe como heredado, nombrando **qué RFC lo entregó** | Lectura del Informe de Implementación |
+| Existe un test que lo formaliza bajo el nombre que pide el criterio | El archivo y la prueba existen |
+| **La reversión lo pone en rojo** (TDD-3), verificada y documentada en el mensaje del commit del test | Revertir la implementación heredada y ejecutar esa prueba |
+
+La tercera es la que hace el trabajo. Un test escrito sobre comportamiento heredado es
+exactamente donde más barato resulta escribir uno que pase sin probar nada: por eso aquí la
+reversión no es la comprobación más fuerte de las tres, es **la única que cuenta**, y no se da por
+buena porque el Informe la afirme.
+
+Fuera de este caso la excepción no existe: si el criterio exige código nuevo, va con su par
+`test`/`feat` como cualquier otro.
+
+> **Por qué es una regla y no una excepción firmada.** Es la tercera vez que aparece esta forma
+> —tras §6.2.1 (el CI no existía aún) y §6.1.1 (una implementación satisface varios criterios)— y
+> volverá a aparecer cada vez que un RFC reafirme una invariante de otro, que es algo que este
+> proyecto hace a propósito. ADR-0011 lo dice sin rodeos: un hallazgo cuya causa es una
+> contradicción del contrato se arregla corrigiendo el contrato, no firmando excepciones, porque
+> lo contrario convierte la excepción en el mecanismo por defecto.
+
 ### 6.2 Rojo registrado en CI (fuerte)
 
 El CI se ejecuta en **cada push**, no solo al abrir el PR. El commit que solo añade tests debe
