@@ -35,6 +35,9 @@ _EXPECTED_TABLES = {
     "rate_buckets",
     "source_documents",
     "ingestion_jobs",
+    # RFC-0019 7.1: unica tabla que anade el sondeo. A-11 la admite como
+    # excepcion nombrada -- lo que sigue prohibido es un ledger paralelo.
+    "watcher_heartbeat",
 }
 
 # Los 11 indices que declara 4.2, con su `indexdef` completo -- metodo de
@@ -64,6 +67,11 @@ _EXPECTED_INDEX_DEFS = {
     "public.source_documents USING btree (object_key) WHERE is_current",
     "idx_source_status_observed | CREATE INDEX idx_source_status_observed ON "
     "public.source_documents USING btree (ingestion_status, observed_at DESC)",
+    # RFC-0019 5, A-15: el indice de reclamacion del lease. RFC-0019 lo daba
+    # por existente y no existia -- sobre ingestion_jobs no habia mas indices
+    # que los implicitos de la PK y las dos UNIQUE (DoR, PR #56, M-1).
+    "ingestion_jobs_claim_idx | CREATE INDEX ingestion_jobs_claim_idx ON "
+    "public.ingestion_jobs USING btree (job_state, lease_expires_at, created_at)",
 }
 
 _EXPECTED_EXTENSIONS = {"vector", "unaccent", "pg_trgm"}
@@ -169,6 +177,11 @@ _EXPECTED_COLUMNS = {
     "ingestion_jobs | completed_at | timestamptz | YES | -",
     "ingestion_jobs | created_at | timestamptz | NO | now()",
     "ingestion_jobs | updated_at | timestamptz | NO | now()",
+    "watcher_heartbeat | object_key | text | NO | -",
+    "watcher_heartbeat | last_run_at | timestamptz | NO | -",
+    "watcher_heartbeat | last_success_at | timestamptz | YES | -",
+    "watcher_heartbeat | last_outcome | text | NO | -",
+    "watcher_heartbeat | detail | jsonb | NO | '{}'::jsonb",
 }
 
 # Toda restriccion con contype p/f/u/c (primary key, foreign key, unique,
@@ -216,6 +229,10 @@ _EXPECTED_CONSTRAINT_DEFS = {
     "fk_job_source_version | f | FOREIGN KEY (source_document_id, object_key, "
     "source_version_id) REFERENCES source_documents(id, object_key, "
     "source_version_id) ON DELETE RESTRICT",
+    "watcher_heartbeat_pkey | p | PRIMARY KEY (object_key)",
+    "ck_watcher_outcome | c | CHECK ((last_outcome = ANY (ARRAY["
+    "'no_change'::text, 'indexed'::text, 'unstable'::text, "
+    "'missing_corpus'::text, 'failed'::text])))",
 }
 
 
