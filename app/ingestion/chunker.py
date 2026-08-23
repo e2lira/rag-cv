@@ -69,7 +69,7 @@ def _format_date_range(date_start: date | None, date_end: date | None) -> str | 
         return None
     start_str = f"{date_start:%Y-%m}"
     if date_end is None:
-        return start_str  # regresion deliberada, ver RFC-0002 CA-2
+        return f"{start_str} a la actualidad"
     return f"{start_str} a {date_end:%Y-%m}"
 
 
