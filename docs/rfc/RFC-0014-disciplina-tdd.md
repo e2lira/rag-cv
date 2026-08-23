@@ -365,6 +365,34 @@ preferida» con «no hay evidencia».
 > que ya tenía delante. Cuando escribí §6.2.2 no conecté que generaba, por diseño, la evidencia
 > que TDD-3 pide.
 
+#### 6.3.1 La comprobación también es del Desarrollador, antes de abrir el PR (normativo)
+
+§6.3 describe TDD-3 como algo que hace el Auditor. Lo es. Pero **el Desarrollador la corre sobre
+sí mismo antes de abrir el PR**, y eso hasta ahora vivía solo en su prompt.
+
+No es una repetición de trabajo: el Auditor elige tres criterios **al azar** —esa elección no se
+negocia, §6.3— mientras que el Desarrollador la pasa sobre **todos** los que entrega. Encontrar
+ahí un test que no prueba nada es barato; encontrarlo en la auditoría cuesta una ronda entera.
+
+**El resultado se declara en el Informe de Implementación**, con los criterios comprobados y lo
+que salió. Un Informe que no la menciona es un Informe que no la corrió.
+
+**Cómo se lee una reversión que vuelve verde.** No significa «el test está bien». Significa que
+hay que averiguar por qué, y hay dos causas recurrentes que no son obvias:
+
+| Trampa | Qué pasa | Cómo se sale |
+| :--- | :--- | :--- |
+| **El `except` amplio se traga la señal del doble** | Un doble que avisa lanzando queda neutralizado si el código bajo prueba captura `Exception`: el fallo de la aserción se convierte en un resultado que pasa | Afirmar el estado **exacto** que el criterio exige, nunca `!= X` |
+| **Dos mecanismos redundantes** | Revertir uno deja el otro cubriendo el hueco, y el test no se entera | Revertirlos **juntos**; si entonces enrojece, el test vale y la redundancia se declara |
+
+> **Por qué está escrito.** Es el mismo defecto que motivó §6.3, en espejo: entonces TDD-3 vivía
+> solo en `PROMPT-AUDITOR.md` y este RFC la referenciaba como si estuviera definida en algún
+> sitio; ahora la mitad del Desarrollador vivía solo en `PROMPT-DESARROLLADOR-TDD.md`. Y esta vez
+> hay evidencia de que importa: en PR #58 esa autocomprobación encontró **dos** criterios cuyos
+> tests seguían verdes con la implementación revertida —uno por cada trampa de la tabla—, y los
+> dos se corrigieron sin tocar producción antes de que la auditoría los viera. Un prompt puede
+> cambiarse sin que nadie lo note; un RFC no.
+
 ### 6.4 Prueba de mutación
 
 La evidencia más fuerte no es el orden: es que **el test detecte la ausencia del código**. Sobre
@@ -463,6 +491,7 @@ texto generado, que no lo es.
 | CA-9 | El CI registra una ejecución roja en el commit de tests de cada criterio, **adjunta a ese `SHA`** | `gh api repos/<owner>/<repo>/commits/<sha>/check-runs` por commit del par — no la vista de *checks* del PR, que informa del `HEAD` (§6.2, condición operativa 1) |
 | CA-10 | Toda reparación por regresión deliberada está declarada como tal, y no son la vía de la mayoría de los criterios del PR | Informe de Implementación + recuento contra los criterios llevados por ciclo directo (§6.2.2) |
 | CA-11 | El informe de auditoría resuelve TDD-3 por alguna de las tres vías de §6.3, o justifica que ninguna era posible. Si usó la reversión mental, lo declara | Lectura del informe: `NO VERIFICABLE` solo es admisible si las tres vías estaban cerradas |
+| CA-12 | El Informe de Implementación declara el resultado de la autocomprobación por reversión sobre los criterios que entrega (§6.3.1) | Lectura del Informe: si no la menciona, no la corrió |
 
 ## 11. Riesgos
 
@@ -491,6 +520,7 @@ texto generado, que no lo es.
 | A-9 | Los umbrales de mutación se cumplen en los tres módulos críticos | CA-4 | Mayor |
 | A-10 | No hay `skip`/`xfail` sin incidencia enlazada | CA-7 | Menor |
 | A-11 | La suite es estable: dos ejecuciones seguidas dan el mismo resultado | CA-6 | Mayor |
+| A-12 | El Desarrollador corrió la reversión sobre sus propios criterios y lo declara en el Informe | CA-12 | Mayor |
 
 **A-6 es la comprobación central de este RFC.** El Auditor elige tres criterios al azar, revierte
 la implementación correspondiente y ejecuta su test. Si alguno sigue en verde, ese test no estaba
