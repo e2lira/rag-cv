@@ -3,7 +3,7 @@
 | Campo | Valor |
 | :--- | :--- |
 | **Estado** | Aprobado |
-| **Depende de** | RFC-0006, RFC-0007 |
+| **Depende de** | RFC-0007 (decisión de diseño, ya aprobada; no exige implementación previa) |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -29,7 +29,15 @@ configuración regional correcta, incompatibilidades concretas de Python/psycopg
 Windows, scripts de tarea multiplataforma, estrategia de pruebas sin Docker, contrato de
 paridad con Linux.
 
-**No entra:** QA y PROD (RFC-0007), el pipeline (RFC-0008), el esquema (RFC-0006).
+**No entra:** QA y PROD (RFC-0007), el pipeline (RFC-0008), el esquema (RFC-0006), la ingesta
+(RFC-0002), la API de negocio (RFC-0005).
+
+**Y sin embargo entra un `app/dev_server.py` mínimo.** El §7 exige probar que `uvicorn` arranca
+en Windows sin el error de bucle de eventos (CA-4, CA-5), y eso no se puede verificar sin *algún*
+punto de entrada `uvicorn` real. Este RFC construye el **esqueleto**: `app/core/platform.py`
+—detección de plataforma y política de bucle de eventos— y `app/dev_server.py` con una única ruta
+`/readyz` que responde `200` sin tocar base de datos ni lógica de negocio. Es la prueba de que el
+mecanismo funciona, no la API. RFC-0005 lo amplía con el contrato real.
 
 ## 3. Requisitos de la estación de trabajo
 
@@ -402,13 +410,25 @@ Solo hay dos scripts de shell en el repositorio, y ninguno se ejecuta en Windows
 # 5. Ejecuta la prueba de configuración de texto de §4.3 y falla si no pasa
 # 6. Crea el venv, instala dependencias con uv sync
 # 7. Copia .env.example a .env si no existe y aplica la ACL
-# 8. alembic upgrade head
-# 9. python -m app.ingestion.indexer --corpus corpus/cv.md
+# 8. Si existe alembic.ini: alembic upgrade head. Si no (RFC-0006 aun no
+#    implementado), lo omite con un aviso -- no es un fallo del bootstrap.
+# 9. Si existe app/ingestion/indexer.py: reindexa. Si no (RFC-0002 aun no
+#    implementado), lo omite con un aviso.
 # 10. Imprime el resumen y el comando para arrancar
 ```
 
 El paso 5 es el que evita el fallo silencioso de §4.3: el entorno no se declara listo si la
 búsqueda léxica en español no se comporta como en Linux.
+
+**Por qué los pasos 8 y 9 son condicionales, y no un error de este documento.** El §2 excluye
+explícitamente el esquema (RFC-0006) y la ingesta (RFC-0002) del alcance de este RFC. Si el
+bootstrap exigiera esos pasos sin condición, este RFC sería literalmente imposible de implementar
+en aislamiento — contradiría su propio Definition of Ready (ADU-PROCESO §4, punto 6:
+"Dependencias — RFCs previos que deben estar Implementado"), porque ninguno de los dos está
+implementado todavía. La condicionalidad es lo que permite que **este RFC sea el primero de la
+cadena** sin mentir sobre lo que hace: en su primera ejecución dice "no hay migraciones ni corpus
+que indexar todavía" y se detiene ahí; cuando RFC-0006 y RFC-0002 aterricen, los mismos pasos
+empiezan a ejecutarse sin tocar el script.
 
 ## 8. Estrategia de pruebas sin Docker
 
@@ -465,11 +485,11 @@ unitarias en `windows-latest`: para proteger también el camino inverso).
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
 | CA-0 | El bootstrap comprueba el acceso a los modelos de Bedrock y no declara el entorno listo si falta | Ejecutar sin acceso habilitado al modelo |
-| CA-1 | `scripts/bootstrap-dev.ps1` deja el entorno listo desde cero y es idempotente | Ejecutarlo dos veces en una máquina limpia |
+| CA-1 | `scripts/bootstrap-dev.ps1` completa los pasos 1-7 y 10 desde cero, es idempotente, y los pasos 8-9 se omiten con aviso si sus RFCs no están implementados todavía | Ejecutarlo dos veces en una máquina limpia, sin `alembic.ini` ni `app/ingestion/` presentes |
 | CA-2 | El bootstrap falla con instrucciones claras si `vector` no está disponible | Ejecutar sin pgvector instalado |
 | CA-3 | La prueba de configuración de texto (§4.3) pasa en Windows y en Ubuntu con el mismo resultado | `pytest tests/integration/test_text_search.py` en ambos |
 | CA-4 | Arrancar con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
-| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows | Manual + humo |
+| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows, con el esqueleto mínimo de §2 (sin base de datos ni lógica de negocio) | Manual + humo |
 | CA-6 | `uvloop` no se instala en Windows y sí en Linux | `uv sync` en ambos + inspección |
 | CA-7 | Existe `.gitattributes` y `git status` está limpio tras `--renormalize` | `git status --short` vacío |
 | CA-8 | Ningún `.sh` ni el `Dockerfile` tienen CRLF | `file infra/**/*.sh Dockerfile` en el CI |
