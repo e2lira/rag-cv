@@ -203,3 +203,167 @@ async def test_heartbeat_success_vs_run(
     assert row[0] is not None, "last_run_at no se escribio"
     assert row[1] is None, "un corpus ausente no puede contar como comprobacion con exito"
     assert row[2] == OUTCOME_MISSING_CORPUS
+
+
+def _corpus_variant(marker: str) -> str:
+    """Una variante del corpus que cambia contenido Y longitud, para que la
+    huella `mtime_ns-size` difiera sin depender de la resolucion del reloj."""
+    return VALID_CORPUS.replace(
+        "Redujo el tiempo de ingesta en 40%.",
+        f"Redujo el tiempo de ingesta en 40%. {marker}",
+    )
+
+
+def _ledger(conn: psycopg.Connection, object_key: str) -> list[Any]:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT source_version_id, ingestion_status, is_current, content_sha256 "
+            "FROM source_documents WHERE object_key = %s ORDER BY observed_at",
+            (object_key,),
+        )
+        return list(cur.fetchall())
+
+
+def _chunk_contents(conn: psycopg.Connection) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT string_agg(content, '||' ORDER BY unit, part) FROM cv_chunks")
+        row = cur.fetchone()
+    return str(row[0]) if row and row[0] else ""
+
+
+@pytest.mark.asyncio
+async def test_change_is_indexed_end_to_end(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-2: un cambio de contenido produce version nueva, su trabajo, y un
+    indice que refleja el contenido nuevo."""
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("PRIMERA"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        first = await run_once(conn, FakeEmbedder(1536), settings)
+
+        corpus_path.write_text(_corpus_variant("SEGUNDA VERSION MAS LARGA"), encoding="utf-8")
+        second = await run_once(conn, FakeEmbedder(1536), settings)
+
+        rows = _ledger(conn, object_key)
+        contents = _chunk_contents(conn)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM ingestion_jobs WHERE object_key = %s", (object_key,))
+            jobs = cur.fetchone()
+
+    assert first.outcome == OUTCOME_INDEXED
+    assert second.outcome == OUTCOME_INDEXED
+    assert len(rows) == 2, "un cambio de contenido no registro version nueva"
+    assert jobs is not None
+    assert jobs[0] == 2, "cada version debe tener su trabajo (paso 6)"
+    assert "SEGUNDA VERSION MAS LARGA" in contents
+    assert "PRIMERA" not in contents, "el indice conserva contenido de la version anterior"
+
+
+@pytest.mark.asyncio
+async def test_promotion_single_current(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-16: la promocion deja exactamente una version vigente, con
+    ingestion_status='indexed', y degrada la anterior a 'superseded'.
+
+    Las dos restricciones del esquema imponen el orden (RFC-0019 6.1):
+    ck_source_current exige 'indexed' antes de is_current, e
+    idx_source_one_current prohibe dos vigentes a la vez.
+    """
+    corpus_path = tmp_path / "cv.md"
+    corpus_path.write_text(_corpus_variant("UNO"), encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        corpus_path.write_text(_corpus_variant("DOS CON MAS TEXTO"), encoding="utf-8")
+        await run_once(conn, FakeEmbedder(1536), settings)
+
+        rows = _ledger(conn, object_key)
+
+    current = [r for r in rows if r[2]]
+    superseded = [r for r in rows if r[1] == "superseded"]
+
+    assert len(current) == 1, f"deberia haber exactamente una vigente, hay {len(current)}"
+    assert current[0][1] == "indexed", "la vigente no quedo en 'indexed'"
+    assert len(superseded) == 1, "la version anterior no se degrado a 'superseded'"
+    assert not superseded[0][2], "una version 'superseded' sigue marcada vigente"
+
+
+@pytest.mark.asyncio
+async def test_revert_reindexes(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-4: volver a un CV anterior SI regenera embeddings y deja el indice
+    consultable.
+
+    Es la trampa de RFC-0019 6: saltarse este caso dejaria el indice sin los
+    fragmentos de la version promovida, y el sistema responderia "no encuentro
+    nada en el CV" con total seguridad.
+    """
+    corpus_path = tmp_path / "cv.md"
+    original = _corpus_variant("ORIGINAL")
+    corpus_path.write_text(original, encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+
+        corpus_path.write_text(_corpus_variant("INTERMEDIA MUCHO MAS LARGA"), encoding="utf-8")
+        await run_once(conn, FakeEmbedder(1536), settings)
+
+        # La reversion: mismo contenido que la primera, mtime nuevo.
+        corpus_path.write_text(original, encoding="utf-8")
+        reverted = await run_once(conn, FakeEmbedder(1536), settings)
+
+        contents = _chunk_contents(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM cv_chunks")
+            chunk_count = cur.fetchone()
+
+    assert reverted.outcome == OUTCOME_INDEXED
+    assert reverted.embed_calls > 0, "la reversion no regenero embeddings"
+    assert "ORIGINAL" in contents
+    assert "INTERMEDIA" not in contents
+    assert chunk_count is not None
+    assert chunk_count[0] > 0, "la reversion dejo el indice vacio"
+
+
+@pytest.mark.asyncio
+async def test_revert_respects_ledger_uniqueness(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-8: revertir no viola ninguna restriccion de unicidad del ledger.
+
+    Es donde mas facil seria romperlo: la version revertida repite
+    content_sha256 con una 'superseded', y `idx_source_object_hash` NO es
+    unico justamente para permitirlo -- pero `uq_source_object_version` si lo
+    es, y por eso cada deteccion necesita su propio ULID.
+    """
+    corpus_path = tmp_path / "cv.md"
+    original = _corpus_variant("VUELVE")
+    corpus_path.write_text(original, encoding="utf-8")
+    settings = _settings(monkeypatch, corpus_path)
+    object_key = str(corpus_path.resolve())
+
+    with psycopg.connect(database_url) as conn:
+        await run_once(conn, FakeEmbedder(1536), settings)
+        corpus_path.write_text(_corpus_variant("OTRA COSA DISTINTA Y LARGA"), encoding="utf-8")
+        await run_once(conn, FakeEmbedder(1536), settings)
+        corpus_path.write_text(original, encoding="utf-8")
+        await run_once(conn, FakeEmbedder(1536), settings)
+
+        rows = _ledger(conn, object_key)
+
+    assert len(rows) == 3, "las tres detecciones deben constar en el ledger"
+    assert len({r[0] for r in rows}) == 3, "los ULID de version se repitieron"
+    assert len([r for r in rows if r[2]]) == 1, "mas de una version vigente tras revertir"
+
+    hashes = [r[3] for r in rows]
+    assert hashes[0] == hashes[2], "la reversion deberia repetir el content_sha256 original"
