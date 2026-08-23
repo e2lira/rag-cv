@@ -1,0 +1,53 @@
+[project]
+name = "rag-cv"
+version = "0.1.0"
+description = "Agente conversacional sobre un CV, con recuperacion aumentada por generacion (RAG)."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "psycopg[binary]>=3.2",
+    "uvloop>=0.19; sys_platform != 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx2>=2.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "invoke>=2.2",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: pruebas unitarias, sin dependencias externas",
+    "integration: pruebas de integracion, usan TEST_DB_MODE",
+]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Los .md contienen RFCs y notas con bloques de codigo ilustrativos: son
+# contrato normativo o documentacion, no codigo a formatear, y no se tocan
+# fuera del proceso ADU. "docs/" cubre subcarpetas; "*.md" cubre la raiz.
+extend-exclude = ["docs/", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "PTH"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]

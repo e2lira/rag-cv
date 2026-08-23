@@ -49,7 +49,6 @@ mecanismo funciona, no la API. RFC-0005 lo amplía con el contrato real.
 | Visual Studio Build Tools | 2022, carga «Desarrollo para el escritorio con C++» | Requisito **solo** para compilar pgvector |
 | Python | 3.12 x64 | python.org o `winget install Python.Python.3.12` |
 | Git | ≥ 2.40 | `winget install Git.Git` |
-| AWS CLI | v2 | Para `aws sso login` |
 
 No se requiere Docker Desktop. Sus consecuencias están en §8.
 
@@ -142,6 +141,37 @@ CREATE EXTENSION unaccent;
 CREATE EXTENSION pg_trgm;
 ```
 
+**La verificación de abajo usa `es_unaccent`, y esa configuración no la crea ninguna de las tres
+extensiones anteriores.** Vive en `infra/sql/001_initialize_rag_cv.sql`, que es artefacto de
+RFC-0006 (fuera del alcance de este RFC, §2). Sin este bloque, las consultas de verificación
+fallan con `text search configuration "es_unaccent" does not exist` — un error que no dice nada
+sobre el problema real (la configuración regional), y por eso hay que evitarlo aquí:
+
+```sql
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_ts_config AS config
+        JOIN pg_namespace AS namespace ON namespace.oid = config.cfgnamespace
+        WHERE namespace.nspname = 'public'
+          AND config.cfgname = 'es_unaccent'
+    ) THEN
+        CREATE TEXT SEARCH CONFIGURATION public.es_unaccent (COPY = spanish);
+    END IF;
+END;
+$$;
+
+ALTER TEXT SEARCH CONFIGURATION public.es_unaccent
+    ALTER MAPPING FOR hword, hword_part, word WITH unaccent, spanish_stem;
+```
+
+**Es el mismo texto, palabra por palabra, que usa `infra/sql/001_initialize_rag_cv.sql`.** No es
+una duplicación accidental: es deliberada, para que cuando RFC-0006 lo vuelva a aplicar sea un
+no-op idempotente (`IF NOT EXISTS`), no una segunda fuente de verdad que pueda divergir. Si algún
+día cambia la definición de `es_unaccent`, cambia en los dos sitios a la vez o queda documentada
+la deriva.
+
 Se usa el proveedor **ICU** (disponible desde PostgreSQL 16) en lugar de la configuración
 regional de Windows, porque `Spanish_Mexico.1252` no es compatible con `UTF8` y `C` clasifica
 mal los acentos. ICU da el mismo comportamiento que el `es_MX.UTF-8` de Ubuntu, que es
@@ -170,35 +200,33 @@ uv sync                      # instala desde uv.lock, incluidas las de desarroll
 
 ### 4.5 Variables de entorno de DEV (`.env`)
 
+> **Este bloque estaba escrito para el diseño con AWS (Bedrock, Titan) y quedó desactualizado
+> tras ADR-0006/ADR-0007/ADR-0008.** RFC-0016 §7 es la fuente de la configuración vigente; lo que
+> sigue es su traducción literal a `.env` de DEV, sin abrir un segundo documento.
+
 ```dotenv
 APP_ENV=dev
 LOG_LEVEL=DEBUG
 DATABASE_URL=postgresql://postgres:<password>@localhost:5432/ragcv
 
-# Un solo proveedor para generación y embeddings: Bedrock (ADR-0004, ADR-0005)
-AWS_REGION=us-east-2
-AWS_PROFILE=ragcv-dev
+# Generación: API de Anthropic, no Bedrock (ADR-0008, RFC-0018)
+PROVEEDOR=anthropic
+ANTHROPIC_MODEL_ID=claude-haiku-4-5
+ANTHROPIC_API_KEY=<clave>
 
-PROVEEDOR=bedrock
-BEDROCK_MODEL_ID=us.anthropic.claude-haiku-4-5-20251001-v1:0
-
-EMBEDDER=titan
-TITAN_MODEL_ID=amazon.titan-embed-text-v2:0
-EMBEDDING_DIM=1024
+# Embeddings: API de OpenAI, no Titan (ADR-0007, RFC-0017)
+EMBEDDER=openai
+OPENAI_EMBED_MODEL=text-embedding-3-small
+OPENAI_API_KEY=<clave>
+EMBEDDING_DIM=1536
 
 CORPUS_PATH=corpus/cv.md
 PYTHONUTF8=1
 ```
 
-Con esto, la única credencial que necesita el entorno es la de AWS: `aws sso login --profile
-ragcv-dev`. **No existe una versión local de Titan** — se invoca por la API de Bedrock, y la
-llamada desde Windows es idéntica a la de producción; lo único que cambia es de dónde salen las
-credenciales.
-
-**Paso obligatorio de una sola vez:** habilitar el acceso a `amazon.titan-embed-text-v2:0` y a
-Claude Haiku 4.5 en la consola de Bedrock, en `us-east-2`. Sin ese paso, la primera llamada
-devuelve `AccessDeniedException`, que parece un problema de política IAM y no lo es. El bootstrap
-lo comprueba y lo dice con ese texto.
+**Sin ninguna variable `AWS_*`, y a propósito** (RFC-0016 §7): la aplicación no depende de AWS.
+Las dos credenciales del entorno son `ANTHROPIC_API_KEY` y `OPENAI_API_KEY`. No hay paso de consola
+de Bedrock que habilitar.
 
 **Sobre Ollama en el equipo.** Está instalado y sirve `nomic-embed-text`, pero **no es el camino
 por defecto** (ADR-0004). Queda como contingencia para trabajar sin red:
@@ -484,7 +512,7 @@ unitarias en `windows-latest`: para proteger también el camino inverso).
 
 | # | Criterio | Verificación |
 | :--- | :--- | :--- |
-| CA-0 | El bootstrap comprueba el acceso a los modelos de Bedrock y no declara el entorno listo si falta | Ejecutar sin acceso habilitado al modelo |
+| CA-0' | El bootstrap comprueba que existe `OPENAI_API_KEY` y no declara el entorno listo si falta. *(Sustituye al CA-0 original —acceso a Bedrock— derogado por ADR-0006: RFC-0016 §3.1)* | Ejecutar sin la variable definida |
 | CA-1 | `scripts/bootstrap-dev.ps1` completa los pasos 1-7 y 10 desde cero, es idempotente, y los pasos 8-9 se omiten con aviso si sus RFCs no están implementados todavía | Ejecutarlo dos veces en una máquina limpia, sin `alembic.ini` ni `app/ingestion/` presentes |
 | CA-2 | El bootstrap falla con instrucciones claras si `vector` no está disponible | Ejecutar sin pgvector instalado |
 | CA-3 | La prueba de configuración de texto (§4.3) pasa en Windows y en Ubuntu con el mismo resultado | `pytest tests/integration/test_text_search.py` en ambos |
