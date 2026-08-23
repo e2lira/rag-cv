@@ -44,6 +44,34 @@ def test_context_header() -> None:
     assert "postgresql" in empresa_uno.tech_tags
 
 
+def test_long_unit_split() -> None:
+    """CA-3: una unidad de ~3000 caracteres produce sub-fragmentos con
+    solapamiento de 120 y cabecera repetida en cada uno."""
+    long_paragraph = "Detalle relevante del logro numero uno con contexto adicional. " * 50
+    corpus = VALID_CORPUS.replace(
+        "**Logros:**\n- Redujo el tiempo de ingesta en 40%.",
+        f"**Logros:**\n- {long_paragraph}",
+    )
+
+    chunks = chunk_corpus(corpus)
+    matching = sorted(
+        (c for c in chunks if c.unit == "Empresa Uno -- Ingeniera de Datos Senior"),
+        key=lambda c: c.part,
+    )
+
+    assert len(matching) > 1
+    assert [c.parts for c in matching] == [len(matching)] * len(matching)
+    assert [c.part for c in matching] == list(range(1, len(matching) + 1))
+
+    for c in matching:
+        assert "Sección: Experiencia > Empresa Uno -- Ingeniera de Datos Senior" in c.content
+
+    for prev, nxt in zip(matching, matching[1:], strict=True):
+        prev_body = prev.content.split("\n", 1)[1]
+        next_body = nxt.content.split("\n", 1)[1]
+        assert prev_body[-120:] == next_body[:120]
+
+
 def test_context_header_omits_dates_when_absent() -> None:
     """CA-2: "cuando existen" -- una unidad sin fechas (fuera de
     Experiencia) no inventa un rango."""
