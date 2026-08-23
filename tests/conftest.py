@@ -6,7 +6,6 @@ seleccionadas por TEST_DB_MODE. Las pruebas reciben database_url y punto.
 """
 
 import os
-import sys
 from collections.abc import Generator
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -20,6 +19,7 @@ from app.core.db_bootstrap import (
     create_database_with_spanish_locale,
     drop_database_force,
 )
+from app.core.platform import default_test_db_mode
 
 load_dotenv()
 
@@ -74,7 +74,7 @@ def _testcontainer_database() -> Generator[str, None, None]:
 
 @pytest.fixture
 def database_url() -> Generator[str, None, None]:
-    mode = os.getenv("TEST_DB_MODE", "container" if sys.platform != "win32" else "local")
+    mode = os.getenv("TEST_DB_MODE", default_test_db_mode())
     if mode == "local":
         yield from _ephemeral_local_database()
     else:

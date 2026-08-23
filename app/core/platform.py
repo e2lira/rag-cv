@@ -26,4 +26,8 @@ def assert_compatible_loop() -> None:
 
 
 def default_test_db_mode() -> str:
-    raise NotImplementedError
+    """TEST_DB_MODE por defecto si no se fija explicito -- RFC-0011 #8.
+
+    Unica funcion que consulta sys.platform para esta decision: quien la
+    necesite (tests/conftest.py) la importa, no repite la comprobacion."""
+    return "local" if sys.platform == "win32" else "container"
