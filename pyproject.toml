@@ -47,6 +47,7 @@ select = ["E", "F", "I", "UP", "PTH"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
+plugins = ["pydantic.mypy"]
 
 [build-system]
 requires = ["hatchling"]
