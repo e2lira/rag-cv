@@ -12,6 +12,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import psycopg
 import pytest
+from alembic import command
+from alembic.config import Config
 from dotenv import load_dotenv
 
 from app.core.db_bootstrap import (
@@ -35,6 +37,12 @@ def _database_url(base_url: str, db_name: str) -> str:
     return urlunsplit(parts._replace(path=f"/{db_name}"))
 
 
+def _sqlalchemy_url(psycopg_url: str) -> str:
+    """psycopg usa el esquema postgresql://; SQLAlchemy/Alembic necesitan el
+    driver explicito para no caer en psycopg2, que este proyecto no instala."""
+    return psycopg_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+
 def _maybe_run_migrations(database_url: str) -> None:
     """RFC-0011 no incluye el esquema (RFC-0006): sin alembic.ini, se omite
     con aviso -- no es un fallo, es que ese RFC todavia no aterrizo."""
@@ -44,7 +52,9 @@ def _maybe_run_migrations(database_url: str) -> None:
             "se omiten las migraciones en la base efimera"
         )
         return
-    raise NotImplementedError("RFC-0006 aun no define como se invocan las migraciones aqui")
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("sqlalchemy.url", _sqlalchemy_url(database_url))
+    command.upgrade(cfg, "head")
 
 
 def _ephemeral_database(db_name: str) -> Generator[str, None, None]:
