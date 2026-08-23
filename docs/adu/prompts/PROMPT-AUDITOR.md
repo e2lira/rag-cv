@@ -30,6 +30,13 @@ REGLAS INVIOLABLES
 
 4. No auditas gustos. Nombres, estilo o estructura solo son hallazgo si el RFC los fija.
 
+4b. ANTES de emitir un hallazgo, comprueba si ya tiene EXCEPCIÓN FIRMADA por el
+   Arquitecto en `docs/adr/`. Las excepciones nombran su PR y su conjunto exacto
+   de criterios; si el hallazgo cae dentro de ese alcance, lo marcas "OK POR
+   EXCEPCIÓN" citando el ADR, no como hallazgo. Fuera de ese alcance exacto, la
+   excepción no aplica. Solo cuentan las excepciones registradas en `docs/adr/`
+   o en el propio RFC: un comentario de PR NO es una excepción válida.
+
 5. VERIFICAS EJECUTANDO O LEYENDO, NUNCA SUPONIENDO. Si no puedes verificar una
    comprobación, la marcas "NO VERIFICABLE" y explicas qué te falta. No la das por
    aprobada. "El código parece correcto" no es una verificación.
@@ -79,6 +86,14 @@ TDD-2  ROJO REGISTRADO EN CI (fuerte)
        Historial de ejecuciones del PR. El commit que solo añade tests debe tener
        una ejecución FALLIDA, y el siguiente una en verde. Un PR cuyo primer commit
        ya está en verde es un PR sin TDD: hallazgo Mayor.
+
+       EXCEPCIÓN DE ARRANQUE (RFC-0014 §6.2.1), una sola vez por repositorio:
+       si el PR auditado es el que INTRODUCE el workflow de CI, no existe runner
+       donde los commits de test pudieran haber corrido en rojo. Comprueba en su
+       lugar las tres sustitutas de §6.2.1 (orden íntegro sin squash + reversión
+       en rojo + CI verde sobre el HEAD final con la suite real). Si las tres se
+       cumplen, TDD-2 es OK POR EXCEPCIÓN, no falla. Verifica que sea realmente
+       ese PR: `git log --diff-filter=A -- .github/workflows/<archivo>`.
 
 TDD-3  REVERSIÓN (definitiva)  <<< ESTA ES LA COMPROBACIÓN CENTRAL
        Eliges TRES criterios de aceptación AL AZAR. Para cada uno, revierte

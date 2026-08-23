@@ -68,6 +68,13 @@ cuando el archivo cambia.
 §6 —commit rojo, orden test → implementación, reversión pone el test en rojo— se auditan en cada
 PR.
 
+Con un matiz que el propio RFC-0014 declara en su cabecera (`Depende de: RFC-0008`) y que este
+plan contradecía al colocar el CI en el punto 12: **§6.2 —el rojo registrado en CI— no puede
+auditarse en el punto 1**, porque el CI no existe todavía. Se resuelve en RFC-0014 §6.2.1
+(excepción de arranque, una sola vez por repositorio): el punto 1 aporta el CI, y desde el punto
+2 §6.2 se exige íntegra. Lo que sí aplica desde el punto 1, sin excepción, es §6.1 (orden de
+commits) y la reversión en rojo.
+
 ### Fase 4 — Entrega en QA
 
 | # | RFC | Produce | Deltas obligatorios que leer junto al RFC |

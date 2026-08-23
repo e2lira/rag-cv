@@ -52,9 +52,15 @@ un fallo de proceso, no una iniciativa.*
 **Responsable de:** implementar exactamente el alcance de un RFC aprobado **mediante TDD
 estricto** (RFC-0014), con sus migraciones y documentación operativa mínima.
 
-**Primera tarea de todo handoff, sin excepción:** producir la **suite de tests en rojo**, en su
-propio commit, antes de escribir una sola línea de implementación. Ese commit rojo registrado en
-CI es la evidencia de que hubo TDD; sin él, el Auditor emite un hallazgo Mayor.
+**Primera tarea de todo handoff, sin excepción:** publicar la rama y **abrir el PR en borrador**
+—sin PR abierto el CI no registra los *pushes*, y el rojo no existe para el Auditor— y luego
+producir la **suite de tests en rojo**, en su propio commit, antes de escribir una sola línea de
+implementación. Ese commit rojo registrado en CI es la evidencia de que hubo TDD; sin él, el
+Auditor emite un hallazgo Mayor, salvo la excepción de arranque de RFC-0014 §6.2.1.
+
+Ese ciclo tiene **dos formas** —suite completa en un commit, o pares `test`/`feat` por criterio— y
+cuál corresponde no lo elige el Desarrollador por gusto: lo determina si la implementación de un
+criterio puede separarse de la de los demás (RFC-0014 §6.1.1).
 
 Ese ciclo tiene **dos formas** —suite completa en un commit, o pares `test`/`feat` por criterio— y
 cuál corresponde no lo elige el Desarrollador por gusto: lo determina si la implementación de un

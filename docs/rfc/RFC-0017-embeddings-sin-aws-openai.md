@@ -85,7 +85,7 @@ de ser comparables y además cambia el ancho.
 
 | Punto | Valor actual | Valor requerido |
 | :--- | :--- | :--- |
-| `infra/sql/001_initialize_rag_cv.sql` — columna `embedding` y su comentario | `vector(1024)` | `vector(1536)` |
+| ~~`infra/sql/001_initialize_rag_cv.sql` — columna `embedding` y su comentario~~ · **Sustituido por RFC-0006 §2.2:** ese script quedó retirado y el esquema vive en Alembic, así que el `1536` se declara en `migrations/versions/0001_rfc0006_initial_schema.py` | `vector(1024)` | `vector(1536)` |
 | RFC-0006 §DDL | `VECTOR(1024)` | Se lee junto a este RFC |
 | `EMBEDDING_DIM` | `1024` | `1536` |
 
@@ -117,9 +117,10 @@ proteger.
 
 La comprobación vigente es **A-2 de este RFC**, y sustituye a A-6 de RFC-0012.
 
-La verificación de *bootstrap* que ya corre en CI
-(`.github/workflows/verify-database-bootstrap.yml`) es la que debe fallar si el DDL y
-`EMBEDDING_DIM` se desincronizan.
+La verificación que debe fallar si el DDL y `EMBEDDING_DIM` se desincronizan es el *job*
+`integration-linux` de `.github/workflows/python-tests.yml`, que corre la suite completa contra
+PostgreSQL 16 real. Sustituye a `verify-database-bootstrap.yml`, retirado junto con el script de
+*bootstrap* por RFC-0006 §2.2.
 
 ## 5. `OpenAIEmbedder` — contrato de la implementación
 
@@ -212,7 +213,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | :--- | :--- | :--- |
 | CA-1 | La fábrica acepta `EMBEDDER=openai` y devuelve `OpenAIEmbedder`; un valor desconocido aborta con la lista de válidos | `test_embedder_factory.py` parametrizado sobre las cinco ramas |
 | CA-2 | El retrieval con `text-embedding-3-small` alcanza Context recall ≥ 0.85 sobre el conjunto dorado | `invoke evals --suite full`, resultado en `evals/baselines/` |
-| CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | `verify-database-bootstrap.yml` + `test_startup_checks.py::test_dim_mismatch` |
+| CA-3 | El DDL declara `VECTOR(1536)` y `EMBEDDING_DIM=1536`; arrancar con uno de los dos desincronizado aborta | *job* `integration-linux` de `python-tests.yml` + `test_startup_checks.py::test_dim_mismatch` |
 | CA-4 | `embed_documents` de N textos hace **una** llamada con los N en el cuerpo | `test_embedder_openai.py::test_batches_in_one_call` |
 | CA-5 | Latencia p95 del embedding de consulta medida y dentro del presupuesto de RNF-3 | Ejecución de la evaluación en QA |
 | CA-6 | Una respuesta con dimensión distinta de 1536 se rechaza en vez de almacenarse | `test_embedder_openai.py::test_rejects_wrong_dimension` |
@@ -240,7 +241,7 @@ al índice. Es una mejora real frente al diseño original, donde Bedrock era amb
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
 | A-1 | La interfaz conserva `embed_documents` y `embed_query`; no existe `embed()` genérico **aunque este modelo sea simétrico** | CA-1 de RFC-0012 | Bloqueante |
-| A-2 | El DDL declara `VECTOR(1536)` y no queda ningún `1024` fuera de las secciones del camino AWS diferido. **Sustituye a A-6 de RFC-0012**, cuya prohibición de `1536` correspondía a otro modelo | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
+| A-2 | El DDL declara `VECTOR(1536)` y no queda ningún `1024` fuera de las secciones del camino AWS diferido. **Sustituye a A-6 de RFC-0012**, cuya prohibición de `1536` correspondía a otro modelo | `rg -n "1024" app/ migrations/` | Bloqueante |
 | A-3 | La normalización L2 se hace en nuestro lado | CA-2 de RFC-0012 | Bloqueante |
 | A-4 | El identificador del modelo es explícito y `embed_model_id` incluye el camino | CA-7 | Bloqueante |
 | A-5 | Una respuesta con dimensión inesperada se rechaza en vez de almacenarse | CA-6 | Bloqueante |
