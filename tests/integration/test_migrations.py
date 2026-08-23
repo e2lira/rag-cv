@@ -232,7 +232,7 @@ _EXPECTED_CONSTRAINT_DEFS = {
     "watcher_heartbeat_pkey | p | PRIMARY KEY (object_key)",
     "ck_watcher_outcome | c | CHECK ((last_outcome = ANY (ARRAY["
     "'no_change'::text, 'indexed'::text, 'unstable'::text, "
-    "'missing_corpus'::text, 'failed'::text])))",
+    "'missing_corpus'::text, 'failed'::text, 'dead_lettered'::text])))",
 }
 
 

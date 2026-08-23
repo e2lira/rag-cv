@@ -24,11 +24,17 @@ def test_outcome_check_rejects_unknown_value(database_url: str) -> None:
             )
 
 
-def test_outcome_check_accepts_the_five(database_url: str) -> None:
-    """Los cinco valores del contrato entran sin excepcion."""
+def test_outcome_check_accepts_the_six(database_url: str) -> None:
+    """Los seis valores del contrato entran sin excepcion.
+
+    `dead_lettered` no es un sinonimo de `failed` (RFC-0019 7.1): un fallo
+    transitorio se reintenta solo en el ciclo siguiente, un contenido agotado
+    espera intervencion humana. Son dos acciones distintas del runbook, y la
+    alerta de RFC-0010 las separa leyendo este valor.
+    """
     with psycopg.connect(database_url) as conn, conn.cursor() as cur:
         for idx, outcome in enumerate(
-            ("no_change", "indexed", "unstable", "missing_corpus", "failed")
+            ("no_change", "indexed", "unstable", "missing_corpus", "failed", "dead_lettered")
         ):
             cur.execute(
                 "INSERT INTO watcher_heartbeat (object_key, last_run_at, last_outcome) "
@@ -40,7 +46,7 @@ def test_outcome_check_accepts_the_five(database_url: str) -> None:
         row = cur.fetchone()
 
     assert row is not None
-    assert row[0] == 5
+    assert row[0] == 6
 
 
 def test_heartbeat_is_one_row_per_object_key(database_url: str) -> None:

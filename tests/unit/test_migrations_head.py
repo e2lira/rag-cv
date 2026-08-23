@@ -32,7 +32,7 @@ def test_resolves_current_repo_head() -> None:
     hace que anadir una revision sin querer -- o anadirla mal encadenada --
     rompa una prueba en vez de pasar inadvertida. La prueba de abajo cubre la
     propiedad de RFC-0021 CA-4; esta cubre el arbol real."""
-    assert resolve_expected_head() == "0002_rfc0019_watcher"
+    assert resolve_expected_head() == "0003_rfc0019_dead_lettered"
 
 
 def test_reflects_a_new_migration_without_code_changes(tmp_path: Path) -> None:
