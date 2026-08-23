@@ -3,7 +3,8 @@
 Contrato normativo: docs/rfc/RFC-0011-entorno-dev-windows-nativo.md #4.5,
 docs/rfc/RFC-0017-embeddings-sin-aws-openai.md #5,
 docs/rfc/RFC-0021-arranque-validado-de-la-aplicacion.md #4,
-docs/rfc/RFC-0002-ingesta-y-chunking.md #6.
+docs/rfc/RFC-0002-ingesta-y-chunking.md #6,
+docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md #8.
 """
 
 from pathlib import Path
@@ -33,3 +34,15 @@ class Settings(BaseSettings):
     # Tope por fragmento antes de embeber (RFC-0002 6, RFC-0012 6): un
     # fragmento que lo supera no se trunca en silencio, la indexacion falla.
     embed_max_tokens: int = Field(alias="EMBED_MAX_TOKENS", default=1800)
+
+    # Sondeo del corpus (RFC-0019 8). WATCHER_CADENCE no esta aqui a
+    # proposito: la cadencia la ejecuta el cron, la aplicacion no la lee.
+    watcher_stability_delay_seconds: int = Field(alias="WATCHER_STABILITY_DELAY_SECONDS", default=5)
+    # Debe superar una reindexacion completa (RFC-0019 5): si se queda corto,
+    # un segundo proceso reclama un trabajo que sigue en curso.
+    watcher_lease_seconds: int = Field(alias="WATCHER_LEASE_SECONDS", default=600)
+    watcher_max_attempts: int = Field(alias="WATCHER_MAX_ATTEMPTS", default=5)
+    # La declara este RFC, la consume la regla de alerta de RFC-0010 (7.2).
+    watcher_heartbeat_max_age_seconds: int = Field(
+        alias="WATCHER_HEARTBEAT_MAX_AGE_SECONDS", default=900
+    )
