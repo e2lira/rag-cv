@@ -83,16 +83,21 @@ redacción original, palabra por palabra.
 
 ### 3.3 Fuente del corpus — la consecuencia menos evidente
 
-Sin AWS no hay bucket. `README.md` describe **S3 como fuente autoritativa del CV** con eventos de
-EventBridge, worker dedicado, DLQ y job de reconciliación, y el DDL vigente lo materializa:
+Sin AWS no hay bucket. `README.md` describía **S3 como fuente autoritativa del CV** con eventos de
+EventBridge, worker dedicado, DLQ y job de reconciliación, y el DDL de entonces lo materializaba
+así (`infra/sql/001_initialize_rag_cv.sql`, **retirado** por RFC-0006 §2.2; se cita como el estado
+del que parte esta decisión):
 
 ```sql
--- infra/sql/001_initialize_rag_cv.sql
 object_key      text NOT NULL,
 s3_version_id   text NOT NULL,
 s3_etag         text NOT NULL,
 CONSTRAINT source_documents_object_version_key UNIQUE (object_key, s3_version_id),
 ```
+
+En el esquema vigente esas columnas se llaman `source_version_id` y `source_fingerprint`
+(RFC-0006 §4.5): el renombrado es la consecuencia directa del cambio de semántica que decide
+esta misma sección.
 
 `s3_version_id` es `NOT NULL` y participa en dos claves únicas y en claves foráneas compuestas
 hacia `ingestion_jobs`. **Es la dependencia de AWS más profunda del proyecto**, porque no está en

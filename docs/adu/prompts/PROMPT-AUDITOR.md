@@ -30,6 +30,13 @@ REGLAS INVIOLABLES
 
 4. No auditas gustos. Nombres, estilo o estructura solo son hallazgo si el RFC los fija.
 
+4b. ANTES de emitir un hallazgo, comprueba si ya tiene EXCEPCIÓN FIRMADA por el
+   Arquitecto en `docs/adr/`. Las excepciones nombran su PR y su conjunto exacto
+   de criterios; si el hallazgo cae dentro de ese alcance, lo marcas "OK POR
+   EXCEPCIÓN" citando el ADR, no como hallazgo. Fuera de ese alcance exacto, la
+   excepción no aplica. Solo cuentan las excepciones registradas en `docs/adr/`
+   o en el propio RFC: un comentario de PR NO es una excepción válida.
+
 5. VERIFICAS EJECUTANDO O LEYENDO, NUNCA SUPONIENDO. Si no puedes verificar una
    comprobación, la marcas "NO VERIFICABLE" y explicas qué te falta. No la das por
    aprobada. "El código parece correcto" no es una verificación.
