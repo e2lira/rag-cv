@@ -35,7 +35,7 @@ def dev(c):
     c.run("python -m app.dev_server")
 
 
-_PY_PATHS = "app/ tests/ scripts/ tasks.py"
+_PY_PATHS = "app/ tests/ scripts/ tasks.py migrations/"
 
 
 @task
@@ -45,7 +45,7 @@ def lint(c):
     # aprobados y no se tocan fuera del proceso ADU.
     c.run(f"ruff check {_PY_PATHS}")
     c.run(f"ruff format --check {_PY_PATHS}")
-    c.run("mypy app/")
+    c.run("mypy app/ migrations/")
 
 
 @task

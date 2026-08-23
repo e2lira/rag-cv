@@ -254,6 +254,6 @@ de RFC-0010, igual que el resto.
 | A-8 | La regla de reemplazo atómico está en el runbook de RFC-0010 | Lectura | Mayor |
 | A-9 | `WATCHER_MAX_ATTEMPTS` termina en `dead_lettered` con alerta | CA-12 | Mayor |
 | A-10 | El `idempotency_key` es determinista a partir de `object_key` y del token de versión | Lectura + CA-6 | Mayor |
-| A-11 | No se introdujo ninguna tabla ni columna nueva para el sondeo | `git diff` sobre `migrations/` — el esquema vive en Alembic desde RFC-0006 §2.2, no en `infra/sql/` | Menor |
+| A-11 | No se introdujo ninguna tabla ni columna nueva para el sondeo | `git diff` sobre `migrations/` — el esquema vive en Alembic desde RFC-0006 §2.2, que **retiró** `infra/sql/` | Menor |
 | A-12 | El sondeo se instala y se ejecuta sin `sudo`, y no existe ninguna regla `NOPASSWD` para sostenerlo | CA-14 | Mayor |
 | A-13 | La bitácora del sondeo tiene rotación configurada | CA-15 | Mayor |

@@ -62,6 +62,10 @@ Ese ciclo tiene **dos formas** —suite completa en un commit, o pares `test`/`f
 cuál corresponde no lo elige el Desarrollador por gusto: lo determina si la implementación de un
 criterio puede separarse de la de los demás (RFC-0014 §6.1.1).
 
+Ese ciclo tiene **dos formas** —suite completa en un commit, o pares `test`/`feat` por criterio— y
+cuál corresponde no lo elige el Desarrollador por gusto: lo determina si la implementación de un
+criterio puede separarse de la de los demás (RFC-0014 §6.1.1).
+
 **Produce:** ramas `feat/rfc-000N-<slug>`, PRs con la plantilla de PR, cobertura de pruebas
 según el DoD, y un **Informe de Implementación** que enumera desviaciones respecto al RFC.
 
