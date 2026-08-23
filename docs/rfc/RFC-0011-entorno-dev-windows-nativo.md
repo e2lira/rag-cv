@@ -227,7 +227,7 @@ DATABASE_URL=postgresql://postgres:<password>@localhost:5432/ragcv
 
 # Generación: API de Anthropic, no Bedrock (ADR-0008, RFC-0018)
 PROVEEDOR=anthropic
-ANTHROPIC_MODEL_ID=claude-haiku-4-5
+ANTHROPIC_MODEL_ID=claude-haiku-4-5-20251001
 ANTHROPIC_API_KEY=<clave>
 
 # Embeddings: API de OpenAI, no Titan (ADR-0007, RFC-0017)

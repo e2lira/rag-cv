@@ -58,11 +58,16 @@ eso queda escrito aquí y con comprobación de auditoría propia.
 
 **El identificador del modelo se fija a una versión, no a un alias.** `RFC-0017 §5` ya lo exige
 para el *embedder* y da la razón: si el proveedor mueve el modelo detrás del nombre, la salida es
-otro modelo y **nada falla**. El mismo argumento aplica a la generación, donde `RFC-0018` designa
-hoy `claude-haiku-4-5` —un alias— y publica su línea base en
+otro modelo y **nada falla**. El mismo argumento aplica a la generación, donde `RFC-0018` designaba
+hasta esta decisión `claude-haiku-4-5` —un alias— y publicaba su línea base en
 `evals/baselines/anthropic-claude-haiku-4-5.json`. Si el alias avanza, la línea base deja de
 corresponder al modelo que responde. Se fija la versión con fecha; el alias queda como
 documentación de a qué familia pertenece.
+
+**El nombre del archivo de línea base también lleva la versión**, no solo la variable:
+`evals/baselines/anthropic-claude-haiku-4-5-20251001.json`. Un archivo nombrado por el alias
+no distingue versiones, así que la línea base de una sobrescribiría a la de la otra — el mismo
+fallo silencioso, movido del identificador al nombre del fichero.
 
 ## Alternativas consideradas
 

@@ -249,7 +249,7 @@ para no obligar a reconstruir la configuración leyendo cinco documentos.
 | `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | RFC-0017 §5 |
 | `OPENAI_API_KEY` | secreto, `.env` con permisos `600` | RFC-0017 §6 |
 | `PROVEEDOR` | `anthropic` | RFC-0018 |
-| `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | RFC-0018 |
+| `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5-20251001` | RFC-0018 |
 | `ANTHROPIC_API_KEY` | secreto, `.env` con permisos `600` | RFC-0018 |
 | `CORPUS_PATH` | ruta absoluta del CV en el VPS | RFC-0016 §3.3, RFC-0019 |
 | `WATCHER_*` | cadencia, estabilidad, *lease*, intentos y latido | RFC-0019 §8 |

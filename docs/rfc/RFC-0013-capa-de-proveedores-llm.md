@@ -65,7 +65,7 @@ def build_model(settings: Settings) -> Model:
         from strands.models.anthropic import AnthropicModel
         return AnthropicModel(
             client_args={"api_key": settings.anthropic_api_key.get_secret_value()},
-            model_id=settings.anthropic_model_id,     # claude-haiku-4-5
+            model_id=settings.anthropic_model_id,     # claude-haiku-4-5-20251001
             max_tokens=settings.llm_max_tokens,
             params={"temperature": settings.llm_temperature},
         )
@@ -111,7 +111,7 @@ Notas de implementación que el Desarrollador debe respetar:
 | `AWS_REGION` | `PROVEEDOR=bedrock` | `us-east-2` | Región de Bedrock |
 | `BEDROCK_MODEL_ID` | `PROVEEDOR=bedrock` | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Perfil de inferencia |
 | `ANTHROPIC_API_KEY` | `PROVEEDOR=anthropic` | `sk-ant-…` | Desde Secrets Manager en QA/PROD |
-| `ANTHROPIC_MODEL_ID` | `PROVEEDOR=anthropic` | `claude-haiku-4-5` | — |
+| `ANTHROPIC_MODEL_ID` | `PROVEEDOR=anthropic` | `claude-haiku-4-5-20251001` | — |
 | `OPENAI_COMPATIBLE_API_KEY` | `PROVEEDOR=openai_compatible` | `sk-…` | Clave del proveedor |
 | `OPENAI_COMPATIBLE_BASE_URL` | `PROVEEDOR=openai_compatible` | `https://api.deepseek.com` | Endpoint |
 | `OPENAI_COMPATIBLE_MODEL_ID` | `PROVEEDOR=openai_compatible` | `deepseek-chat` | Identificador del modelo |

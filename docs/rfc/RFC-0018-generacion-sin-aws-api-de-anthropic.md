@@ -133,7 +133,7 @@ léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cos
 | :--- | :--- | :--- |
 | CA-1 | `PROVEEDOR=anthropic` construye el modelo correcto y arranca sin ninguna variable `AWS_*` | `test_llm_factory.py` parametrizado + CA-2 de RFC-0016 |
 | CA-2 | `PROVEEDOR=anthropic` sin `ANTHROPIC_API_KEY` impide el arranque | `test_config.py::test_provider_required_vars` |
-| CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5.json` | `invoke evals --suite full` |
+| CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5-20251001.json` — **el nombre lleva la versión**, no el alias: dos versiones distintas no pueden compartir línea base sin que una sobrescriba a la otra, que es el fallo que ADR-0012 evita | `invoke evals --suite full` |
 | CA-4 | La calibración del juez sobre los 15 casos de veredicto humano se ejecutó y publicó **antes** de usarlo como gate | Informe de calibración (RFC-0009 §4.1) |
 | CA-5 | El costo medio por caso y por conversación queda dentro de RNF-5 y del umbral de RFC-0009 | `usage.cost_usd` agregado en la corrida |
 | CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM |
@@ -158,7 +158,7 @@ léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cos
 | A-1 | La aplicación arranca y genera sin ninguna credencial de AWS | CA-1, CA-6 | Bloqueante |
 | A-2 | `app/providers/llm.py` sigue siendo el único módulo que menciona proveedores concretos | Lectura + `rg -n "anthropic\|bedrock" app/` | Bloqueante |
 | A-3 | `Settings` valida por rama y la clave es `SecretStr` | CA-2 + lectura | Bloqueante |
-| A-4 | El modelo designado es `claude-haiku-4-5`; cualquier otro exige la comparativa de RFC-0013 §8 adjunta | Lectura del `.env` + PR | Bloqueante |
+| A-4 | El modelo designado es `claude-haiku-4-5-20251001` —la **versión con fecha**, no el alias (§5, ADR-0012)—; cualquier otro exige la comparativa de RFC-0013 §8 adjunta | Lectura del `.env` + PR | Bloqueante |
 | A-5 | Existe la línea base publicada en `evals/baselines/` | CA-3 | Bloqueante |
 | A-6 | La calibración del juez se ejecutó antes de usarlo como gate | CA-4 | Mayor |
 | A-7 | El *fallback* está apagado por defecto | CA-8 | Mayor |
