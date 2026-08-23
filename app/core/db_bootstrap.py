@@ -14,4 +14,14 @@ class ExtensionUnavailableError(RuntimeError):
 
 
 def ensure_extension_available(conn: psycopg.Connection, extension_name: str) -> None:
-    raise NotImplementedError
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM pg_available_extensions WHERE name = %s",
+            (extension_name,),
+        )
+        if cur.fetchone() is None:
+            raise ExtensionUnavailableError(
+                f"La extension '{extension_name}' no esta disponible en este servidor "
+                f"de PostgreSQL. Sigue las instrucciones de compilacion de "
+                f"RFC-0011 #4.2 (docs/rfc/RFC-0011-entorno-dev-windows-nativo.md)."
+            )
