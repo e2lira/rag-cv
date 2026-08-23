@@ -438,7 +438,7 @@ brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
-| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado. Se satisface **retirando** `infra/sql/001_initialize_rag_cv.sql` una vez migrado su contenido (§2.2), no editándolo | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
+| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado. Se satisface **retirando** `infra/sql/001_initialize_rag_cv.sql` una vez migrado su contenido (§2.2), no editándolo | `rg -n "1024" app/ migrations/` | Bloqueante |
 | A-2 | Existen los cinco índices de §4.2 con los parámetros indicados | `\d cv_chunks` sobre base migrada | Mayor |
 | A-3 | La configuración de texto es `es_unaccent` y se usa en trigger y consulta | CA-11 | Mayor |
 | A-3b | La base se crea con proveedor ICU `es-MX` en DEV, QA y el `conftest` de pruebas | Lectura del bootstrap, del aprovisionamiento nativo y del `conftest` | Mayor |
