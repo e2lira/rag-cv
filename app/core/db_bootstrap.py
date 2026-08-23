@@ -28,9 +28,7 @@ def ensure_extension_available(conn: psycopg.Connection, extension_name: str) ->
             )
 
 
-def create_database_with_spanish_locale(
-    maintenance_conn: psycopg.Connection, db_name: str
-) -> None:
+def create_database_with_spanish_locale(maintenance_conn: psycopg.Connection, db_name: str) -> None:
     """CREATE DATABASE con proveedor ICU es-MX -- RFC-0011 #4.3.
 
     Requiere una conexion en autocommit: CREATE DATABASE no puede correr

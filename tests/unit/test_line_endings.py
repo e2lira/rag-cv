@@ -28,8 +28,6 @@ def _tracked_shell_and_dockerfiles() -> list[str]:
 
 def test_no_tracked_sh_or_dockerfile_has_crlf() -> None:
     offenders = [
-        path
-        for path in _tracked_shell_and_dockerfiles()
-        if b"\r\n" in (_ROOT / path).read_bytes()
+        path for path in _tracked_shell_and_dockerfiles() if b"\r\n" in (_ROOT / path).read_bytes()
     ]
     assert not offenders, f"CRLF encontrado en: {offenders}"

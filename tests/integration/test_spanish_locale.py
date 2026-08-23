@@ -65,8 +65,7 @@ def test_spanish_search_finds_accented_word_without_accent(scratch_db_name: str)
             assert "'ingenieri':2" in lexemes
 
             cur.execute(
-                "SELECT to_tsvector('es_unaccent', %s) "
-                "@@ websearch_to_tsquery('es_unaccent', %s)",
+                "SELECT to_tsvector('es_unaccent', %s) @@ websearch_to_tsquery('es_unaccent', %s)",
                 ("informática", "informatica"),
             )
             (found,) = cur.fetchone()

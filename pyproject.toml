@@ -32,6 +32,10 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Los .md contienen RFCs y notas con bloques de codigo ilustrativos: son
+# contrato normativo o documentacion, no codigo a formatear, y no se tocan
+# fuera del proceso ADU. "docs/" cubre subcarpetas; "*.md" cubre la raiz.
+extend-exclude = ["docs/", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "PTH"]

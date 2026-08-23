@@ -6,20 +6,27 @@ marca, se recogeria a si mismo y se llamaria en un bucle infinito de
 subprocesos. Se ejecuta con `pytest tests/unit/test_tasks.py` directo.
 """
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
+_VENV_SCRIPTS = Path(sys.executable).parent
 
 
 def _run_invoke(*args: str) -> subprocess.CompletedProcess[str]:
-    invoke_bin = Path(sys.executable).parent / ("invoke.exe" if sys.platform == "win32" else "invoke")
+    invoke_bin = _VENV_SCRIPTS / ("invoke.exe" if sys.platform == "win32" else "invoke")
+    env = os.environ.copy()
+    env["PATH"] = f"{_VENV_SCRIPTS}{os.pathsep}{env.get('PATH', '')}"
     return subprocess.run(
         [str(invoke_bin), *args],
         cwd=_ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
     )
 
 
