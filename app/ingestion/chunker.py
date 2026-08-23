@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from app.ingestion.corpus_parser import iter_units
+from app.ingestion.corpus_parser import iter_sections_without_units, iter_units, parse_front_matter
 from app.ingestion.synonyms import normalize_tech_tag
 
 _DATE_COMMENT_RE = re.compile(
@@ -122,6 +122,52 @@ def _split_body(body: str) -> list[str]:
     return pieces
 
 
+def _build_perfil_global(text: str, *, doc_id: str) -> Chunk:
+    """RFC-0002 4.3: concatena front-matter, Perfil y los titulares de toda
+    la experiencia (empresa, puesto, fechas, stack). unit='perfil_global',
+    chunk_type='perfil' -- el DDL no admite 'perfil_global' como chunk_type."""
+    front_matter = parse_front_matter(text)
+    persona = str(front_matter.get("persona", ""))
+    titular = str(front_matter.get("titular", ""))
+
+    perfil_body = ""
+    for section in iter_sections_without_units(text):
+        if section.section == "Perfil":
+            perfil_body = section.body
+            break
+
+    lines = [line for line in (f"{persona} -- {titular}".strip(" -"), perfil_body) if line]
+
+    for unit in iter_units(text):
+        if unit.section != "Experiencia":
+            continue
+        title = _clean_title(unit.raw_title)
+        date_start, date_end = _parse_date_range(unit.raw_title)
+        tags = _extract_tech_tags(unit.body)
+        date_range = _format_date_range(date_start, date_end)
+        headline = title if date_range is None else f"{title} ({date_range})"
+        if tags:
+            headline = f"{headline} -- Stack: {', '.join(tags)}"
+        lines.append(headline)
+
+    header = "[Sección: Perfil > perfil_global]"
+    content = f"{header}\n" + "\n".join(lines)
+    return Chunk(
+        doc_id=doc_id,
+        section="Perfil",
+        unit="perfil_global",
+        chunk_type="perfil",
+        date_start=None,
+        date_end=None,
+        tech_tags=(),
+        part=1,
+        parts=1,
+        content=content,
+        content_hash=_content_hash(content),
+        token_count=len(content.split()),
+    )
+
+
 def chunk_corpus(text: str, *, doc_id: str = "cv") -> list[Chunk]:
     chunks: list[Chunk] = []
     for unit in iter_units(text):
@@ -164,4 +210,5 @@ def chunk_corpus(text: str, *, doc_id: str = "cv") -> list[Chunk]:
                     token_count=len(content.split()),
                 )
             )
+    chunks.append(_build_perfil_global(text, doc_id=doc_id))
     return chunks
