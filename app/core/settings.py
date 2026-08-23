@@ -1,6 +1,7 @@
 """Configuracion de la aplicacion, leida desde variables de entorno.
 
-Contrato normativo: docs/rfc/RFC-0011-entorno-dev-windows-nativo.md #4.5.
+Contrato normativo: docs/rfc/RFC-0011-entorno-dev-windows-nativo.md #4.5,
+docs/rfc/RFC-0017-embeddings-sin-aws-openai.md #5.
 """
 
 from pydantic import Field, SecretStr
@@ -12,3 +13,7 @@ class Settings(BaseSettings):
 
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
     anthropic_api_key: SecretStr = Field(alias="ANTHROPIC_API_KEY", min_length=1)
+
+    embedder: str = Field(alias="EMBEDDER", default="openai")
+    openai_embed_model: str = Field(alias="OPENAI_EMBED_MODEL", default="text-embedding-3-small")
+    embedding_dim: int = Field(alias="EMBEDDING_DIM", default=1536)
