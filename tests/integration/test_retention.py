@@ -45,7 +45,7 @@ def test_purges_old_conversations_and_messages(database_url: str) -> None:
         conn.commit()
 
         cur.execute("SELECT id FROM conversations")
-        remaining = {row[0] for row in cur.fetchall()}
+        remaining = {str(row[0]) for row in cur.fetchall()}
 
     assert report["conversations"] == 1
     assert old_id not in remaining
