@@ -4,6 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0001 |
+| **Vigencia en la PoC** | `text-embedding-3-small` de OpenAI, `VECTOR(1536)` y `EMBEDDING_DIM=1536` (RFC-0017 §4) |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -22,6 +23,51 @@ comprobaciones de arranque, retención y respaldo lógico.
 
 **No entra:** infraestructura de la instancia (RFC-0007), consultas de recuperación (RFC-0003).
 
+### 2.2 Relación con `infra/sql/001_initialize_rag_cv.sql` — y por qué había dos esquemas
+
+Antes de este RFC, el esquema vivía en un script SQL aplicado con `psql`
+(`infra/sql/001_initialize_rag_cv.sql`), verificado por el *workflow*
+`verify-database-bootstrap.yml`. Este RFC lo sustituye por **Alembic** (§5) como mecanismo
+único. Mantener los dos no es redundancia inofensiva: son **dos definiciones distintas de las
+mismas tablas**, y divergen con cada cambio.
+
+La divergencia ya se materializó, y en la dirección peligrosa. El §4.4 original de este RFC
+declaraba un `ingestion_jobs` **más pobre** que el desplegado: sin `idempotency_key`, sin
+`attempt_count`, sin `job_state` con `dead_lettered`, sin `lease_token`/`lease_expires_at`.
+RFC-0019 §1 declara esas columnas **fuera de su alcance porque «están en el esquema
+desplegado»** — es decir, RFC-0019 no las construye, las asume. Migrar a Alembic el §4.4
+original habría hecho desaparecer, sin que nadie lo notara, exactamente la maquinaria de
+reintentos, exclusión mutua y *dead lettering* de la que depende el sondeo del corpus.
+
+Lo mismo con el **ledger**: `source_documents` no aparecía en ningún §4 de este RFC, aunque el
+plan de ejecución asigna su semántica sin S3 a esta posición y RFC-0019 lo usa hasta en su CA-8.
+
+Por eso §4.4 se reescribe y §4.5 se añade: **este RFC absorbe el contrato completo del esquema
+desplegado**, sin pérdida. El orden es innegociable:
+
+1. Las migraciones de §4 —incluidos §4.4 corregido y §4.5— crean el esquema completo en Alembic.
+2. **Solo entonces** se retiran `infra/sql/001_initialize_rag_cv.sql`, su verificador y el
+   *workflow* que los ejecuta.
+
+Retirar el script antes del paso 1 borra la única definición de `source_documents` y de la
+maquinaria de trabajos que RFC-0019 da por existente. Retirarlo después es lo que cierra la
+comprobación A-1 del contrato de auditoría: el `vector(1024)` desaparece **con el archivo**, no
+por editarlo. Esto **sustituye** la fila de RFC-0017 §4 que pedía cambiar ese `vector(1024)` a
+`vector(1536)` in situ; el valor 1536 queda en la migración de Alembic, que es donde vive el
+esquema a partir de aquí.
+
+### 2.1 Contrato de embeddings vigente para la PoC
+
+La PoC usa `EMBEDDER=openai` con `text-embedding-3-small`, a sus **1536 dimensiones
+nativas**. Por tanto, el DDL de este RFC declara `VECTOR(1536)`,
+`EMBEDDING_DIM=1536` y el identificador persistido es
+`text-embedding-3-small@openai`.
+
+Las referencias históricas a Titan, Bedrock y `VECTOR(1024)` describen únicamente el
+camino AWS diferido y **no se implementan en la PoC**. RFC-0017 §4 conserva el
+procedimiento de recreación del índice cuando se cambie la dimensión; este RFC fija el
+estado objetivo que debe entregar el Desarrollador.
+
 ## 3. Extensiones requeridas
 
 ```sql
@@ -30,10 +76,11 @@ CREATE EXTENSION IF NOT EXISTS unaccent;    -- búsqueda léxica insensible a ac
 CREATE EXTENSION IF NOT EXISTS pg_trgm;     -- similitud difusa para nombres de empresa
 ```
 
-En RDS estas tres están disponibles sin permisos especiales, y en la imagen
-`pgvector/pgvector:pg16` de QA vienen incluidas. En el PostgreSQL nativo de Windows de DEV,
-`unaccent` y `pg_trgm` llegan con el instalador, pero **`vector` hay que compilarlo**: no hay
-binarios oficiales para Windows (procedimiento en RFC-0011 §4.2).
+En la PoC, QA usa PostgreSQL 16 con pgvector como servicio nativo del VPS; las tres
+extensiones forman parte del aprovisionamiento de RFC-0020. En el PostgreSQL nativo de
+Windows de DEV, `unaccent` y `pg_trgm` llegan con el instalador, pero **`vector` hay que
+compilarlo** si no está disponible (procedimiento en RFC-0011 §4.2). RDS queda diferido
+con el camino AWS.
 
 La versión de pgvector se comprueba al arrancar: por debajo de 0.8 el proceso no arranca (los
 parámetros de HNSW y el tipo `halfvec` cambian entre versiones).
@@ -41,7 +88,7 @@ parámetros de HNSW y el tipo `halfvec` cambian entre versiones).
 ### 3.1 Creación de la base de datos y configuración regional
 
 La base se crea siempre con **codificación UTF8 y proveedor de configuración regional ICU**,
-en los tres entornos:
+en DEV y QA de la PoC; el mismo contrato aplica al camino AWS diferido:
 
 ```sql
 CREATE DATABASE ragcv
@@ -53,7 +100,7 @@ acentuados como letras, `to_tsvector` los trocea mal y la rama léxica de RFC-00
 encontrar términos con tilde **sin emitir ningún error**. El caso concreto que fuerza la
 decisión es DEV: en Windows, la configuración regional nativa (`Spanish_Mexico.1252`) no es
 compatible con UTF8, y usar `C` clasificaría mal los acentos. ICU da el mismo comportamiento en
-Windows, en el contenedor de Ubuntu y en RDS, que es exactamente lo que se necesita.
+Windows y Ubuntu del VPS, que es exactamente lo que se necesita.
 
 La verificación es obligatoria y forma parte de las pruebas (CA-11), no de la documentación:
 
@@ -93,7 +140,7 @@ CREATE TABLE cv_chunks (
     date_start      DATE,
     date_end        DATE,                          -- NULL = actual
     tech_tags       TEXT[]      NOT NULL DEFAULT '{}',
-    embedding       VECTOR(1024) NOT NULL,  -- Titan Text Embeddings V2 (RFC-0012)
+    embedding       VECTOR(1536) NOT NULL,  -- OpenAI text-embedding-3-small (RFC-0017)
     embed_model_id  TEXT        NOT NULL,
     tsv             TSVECTOR    NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -106,11 +153,12 @@ CREATE TABLE cv_chunks (
 
 Decisiones y su motivo:
 
-- **`VECTOR(1024)`**: la dimensión de Titan Text Embeddings V2 (RFC-0012). No 1536, que
-  corresponde a Titan Embeddings G1 (v1) y era el valor equivocado del documento base. Activar la
-  contingencia de Nomic implica recrear la columna a `VECTOR(768)` (RFC-0012 §7.1).
+- **`VECTOR(1536)`**: dimensión nativa de `text-embedding-3-small` de OpenAI. No se
+  trunca a 768: cambiar desde el histórico `VECTOR(1024)` ya exige recrear la columna y
+  el HNSW, por lo que truncar perdería información sin ahorrar una migración. Un cambio
+  futuro de dimensión exige recreación y reindexación completa según RFC-0017 §4.
 - **`embed_model_id` por fila:** guarda **modelo + camino de servicio**
-  (`amazon.titan-embed-text-v2:0@bedrock`) y permite detectar una mezcla de vectores incomparables,
+  (`text-embedding-3-small@openai`) y permite detectar una mezcla de vectores incomparables,
   que degrada la búsqueda sin dar ningún error. El arranque compara el valor distinto de esa
   columna con el `model_id` del embedder activo y falla si hay más de uno o si no coincide.
 - **`UNIQUE (doc_id, unit, part)`** es lo que hace posible el `upsert` idempotente de RFC-0002.
@@ -205,24 +253,97 @@ CREATE TABLE rate_buckets (
 );
 
 CREATE TABLE ingestion_jobs (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    status      TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed')),
-    force       BOOLEAN NOT NULL DEFAULT false,
-    report      JSONB,
-    error       TEXT,
-    started_at  TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    idempotency_key TEXT        NOT NULL,
+    object_key      TEXT        NOT NULL,
+    source_version_id TEXT      NOT NULL,
+    source_document_id UUID     NOT NULL,
+    job_state       TEXT        NOT NULL DEFAULT 'pending',
+    attempt_count   INT         NOT NULL DEFAULT 0,
+    lease_token     UUID,
+    lease_expires_at TIMESTAMPTZ,
+    error_code      TEXT,
+    error_detail    TEXT,
+    job_metadata    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_job_state
+        CHECK (job_state IN ('pending','processing','succeeded','failed','dead_lettered')),
+    CONSTRAINT ck_attempt_count CHECK (attempt_count >= 0),
+    CONSTRAINT ck_lease CHECK ((lease_token IS NULL) = (lease_expires_at IS NULL)),
+    CONSTRAINT uq_job_idempotency UNIQUE (idempotency_key),
+    CONSTRAINT uq_job_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT fk_job_source_version
+        FOREIGN KEY (source_document_id, object_key, source_version_id)
+        REFERENCES source_documents (id, object_key, source_version_id)
+        ON DELETE RESTRICT
 );
 ```
 
 El incremento de cuota es `INSERT ... ON CONFLICT (key_id, window_kind, window_start) DO UPDATE
 SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y vuelta.
 
+**`ingestion_jobs` no es una tabla de bitácora, es una máquina de estados.** `idempotency_key`
+único es lo que hace que dos detecciones del mismo cambio produzcan un solo trabajo;
+`lease_token`/`lease_expires_at` es la exclusión mutua entre ejecuciones solapadas del sondeo; y
+`dead_lettered` distingue "falló y se reintentará" de "falló definitivamente y alguien tiene que
+mirarlo". RFC-0019 §1 declara las tres cosas fuera de su alcance **porque las da por existentes
+aquí**: entregarlas incompletas no es una simplificación, es dejar sin base a la Fase 1.
+
+La restricción de pares en `lease_token`/`lease_expires_at` —o ambos nulos, o ninguno— evita el
+estado que más daño hace en un *lease*: un token sin vencimiento, que bloquea el trabajo para
+siempre porque nada puede decidir que caducó.
+
+### 4.5 `source_documents` — el ledger de versiones del corpus
+
+```sql
+CREATE TABLE source_documents (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    object_key      TEXT        NOT NULL,
+    source_version_id TEXT      NOT NULL,   -- ULID de la detección (RFC-0016 §3.3)
+    source_fingerprint TEXT     NOT NULL,   -- huella mtime+size (RFC-0016 §3.3)
+    content_sha256  CHAR(64)    NOT NULL,
+    ingestion_status TEXT       NOT NULL DEFAULT 'discovered',
+    is_current      BOOLEAN     NOT NULL DEFAULT false,
+    source_metadata JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    observed_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    indexed_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_source_status
+        CHECK (ingestion_status IN ('discovered','processing','indexed','failed','superseded')),
+    CONSTRAINT ck_source_sha256 CHECK (content_sha256 ~ '^[0-9A-Fa-f]{64}$'),
+    CONSTRAINT ck_source_current CHECK (NOT is_current OR ingestion_status = 'indexed'),
+    CONSTRAINT uq_source_object_version UNIQUE (object_key, source_version_id),
+    CONSTRAINT uq_source_id_object_version UNIQUE (id, object_key, source_version_id)
+);
+
+CREATE INDEX idx_source_object_hash ON source_documents (object_key, content_sha256);
+CREATE UNIQUE INDEX idx_source_one_current
+    ON source_documents (object_key) WHERE is_current;
+CREATE INDEX idx_source_status_observed ON source_documents (ingestion_status, observed_at DESC);
+```
+
+**Renombrado respecto al esquema desplegado.** Las columnas eran `s3_version_id` y `s3_etag`
+cuando la fuente era S3. ADR-0009 y RFC-0016 §3.3 quitaron S3 y les cambiaron el significado:
+`s3_version_id` pasó a ser un ULID generado en la detección y `s3_etag` una huella
+`mtime+size`. Un nombre que miente sobre lo que guarda es deuda que se paga cada vez que alguien
+lee la tabla, así que aquí pasan a llamarse `source_version_id` y `source_fingerprint`. El
+contenido y las restricciones son los mismos; RFC-0019 §5 se lee con esta equivalencia.
+
+**`idx_source_one_current` es el invariante entero del ledger:** un índice único **parcial**
+—solo sobre las filas con `is_current`— garantiza que exista a lo sumo una versión vigente por
+`object_key`, sin impedir que convivan todas las versiones históricas. Es lo que permite que la
+promoción de una versión nueva y la degradación de la anterior ocurran en la misma transacción
+sin ventana en la que el corpus tenga dos versiones vigentes, o ninguna.
+
 ## 5. Migraciones
 
-- Las migraciones se ejecutan igual en los tres entornos: `alembic upgrade head` desde
-  PowerShell en DEV, desde el contenedor en QA, como paso del pipeline en PROD.
+- Las migraciones se ejecutan con `alembic upgrade head`: desde PowerShell en DEV y como paso
+  explícito del despliegue nativo en QA. El paso equivalente de PROD pertenece al camino AWS
+  diferido.
 - **Alembic**, una migración por RFC que toque el esquema, nombrada
   `NNNN_rfc0006_initial_schema.py`.
 - Toda migración tiene `downgrade` **probado**: el CI ejecuta `upgrade head` → `downgrade base`
@@ -243,8 +364,8 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | Entorno | Pool | Motivo |
 | :--- | :--- | :--- |
 | DEV | `psycopg_pool` 2–5 | Local |
-| QA (VPS) | `psycopg_pool` 2–10 | Postgres en contenedor en la misma máquina |
-| PROD | `psycopg_pool` 5–20 por instancia | `db.t4g.micro` admite ~85 conexiones; App Runner con 2 instancias deja margen |
+| QA (VPS) | `psycopg_pool` 2–10 | PostgreSQL nativo del sistema en la misma máquina |
+| PROD diferido | `psycopg_pool` 5–20 por instancia | Contrato AWS diferido hasta cerrar ADR-0006 |
 
 - `statement_timeout = 5s` a nivel de sesión de la aplicación; `10s` para el trabajo de ingesta.
 - `idle_in_transaction_session_timeout = 10s`: una transacción olvidada bloquea `VACUUM`.
@@ -261,11 +382,15 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | 5 | Versión de Alembic == `head` esperada | No arranca |
 | 6 | `count(cv_chunks) > 0` | Arranca, pero `/readyz` en rojo hasta indexar |
 
+Las comprobaciones 1 a 5 abortan el proceso y se auditan aquí (A-6). **La 6 no**: no aborta nada,
+describe el estado que `/readyz` debe reportar, y `/readyz` con su contrato real es de RFC-0005.
+Por eso no tiene criterio de aceptación en este RFC — es un requisito que RFC-0005 hereda, no una
+brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé por olvidado.
+
 ## 8. Retención y respaldo
 
 - `messages` y `conversations` con más de **30 días** se eliminan por trabajo programado diario
-  (PRD §8). En PROD lo dispara EventBridge sobre el endpoint de administración; en QA, un cron
-  del VPS.
+  (PRD §8). En la PoC lo ejecuta el cron del VPS; EventBridge pertenece al camino AWS diferido.
 - `rate_buckets` con ventana anterior a 48 h se purgan en el mismo trabajo.
 - PROD: respaldos automáticos de RDS con retención de 7 días + `snapshot` manual antes de cada
   migración que toque tablas con datos.
@@ -283,19 +408,26 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | CA-3 | El trigger de `tsv` aplica pesos A/B/C | `test_schema.py::test_tsv_weights` |
 | CA-4 | Insertar un `chunk_type` inválido falla | `test_schema.py::test_chunk_type_check` |
 | CA-5 | El `upsert` sobre `(doc_id, unit, part)` no duplica filas | `test_schema.py::test_unique_upsert` |
-| CA-6 | Arrancar con `EMBEDDING_DIM=768` contra una columna de 1024 aborta | `test_startup_checks.py::test_dim_mismatch` |
+| CA-6 | Arrancar con `EMBEDDING_DIM=1024` contra una columna de 1536 aborta | `test_startup_checks.py::test_dim_mismatch` |
 | CA-7 | Arrancar con dos `embed_model_id` distintos en la tabla aborta | `test_startup_checks.py::test_mixed_models` |
 | CA-8 | El incremento de cuota es atómico bajo 50 peticiones concurrentes | `test_rate_buckets.py::test_atomic_increment` |
 | CA-9 | Borrar una conversación borra sus mensajes (cascada) | `test_schema.py::test_cascade` |
 | CA-10 | Eliminar un `cv_chunk` referenciado en `source_chunk_ids` no falla | `test_schema.py::test_no_fk_on_sources` |
 | CA-11 | La búsqueda léxica encuentra "informática" buscando "informatica" | `test_schema.py::test_unaccent_config`, ejecutado en Windows y en Linux |
 | CA-12 | La base creada por el bootstrap de DEV y la creada por el CI dan el mismo `to_tsvector` | Comparación de la salida de CA-11 en ambos sistemas |
+| CA-13 | Dos filas de `source_documents` con `is_current` sobre el mismo `object_key` violan el índice único parcial | `test_ledger.py::test_one_current_per_object` |
+| CA-14 | `is_current = true` con `ingestion_status <> 'indexed'` falla | `test_ledger.py::test_current_requires_indexed` |
+| CA-15 | Dos `ingestion_jobs` con el mismo `idempotency_key` violan la restricción única | `test_ingestion_jobs.py::test_idempotency_key_unique` |
+| CA-16 | `lease_token` sin `lease_expires_at` (o al revés) falla | `test_ingestion_jobs.py::test_lease_pair` |
+| CA-17 | `job_state` admite `dead_lettered` y rechaza un estado inventado | `test_ingestion_jobs.py::test_job_state_check` |
+| CA-18 | Borrar una versión de `source_documents` referenciada por un trabajo falla (`ON DELETE RESTRICT`) | `test_ingestion_jobs.py::test_source_delete_restricted` |
+| CA-19 | Tras aplicar las migraciones, `infra/sql/001_initialize_rag_cv.sql`, su verificador y `verify-database-bootstrap.yml` ya no existen en el repositorio | `test_legacy_bootstrap_retired.py` |
 
 ## 10. Riesgos
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| Divergencia de versión de Postgres/pgvector entre QA y PROD | Misma imagen `pgvector/pgvector:pg16` en QA y misma versión mayor en RDS; comprobación 2 de §7 |
+| Divergencia de versión de Postgres/pgvector entre DEV y QA | PostgreSQL 16 + pgvector en el VPS, comprobación 2 de §7 y CI Linux como autoridad |
 | Configuración regional distinta en el PostgreSQL nativo de Windows | Creación con proveedor ICU en los tres entornos + CA-11/CA-12 como gate |
 | pgvector compilado a mano en DEV queda desfasado tras actualizar PostgreSQL | Comprobación 1 de §7 aborta el arranque; procedimiento en RFC-0011 §4.2 y en el runbook |
 | Migración bloqueante en PROD | `CREATE INDEX CONCURRENTLY` + *expand & contract* + snapshot previo |
@@ -306,14 +438,16 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
-| A-1 | La columna vector es `VECTOR(1024)`; no hay ningún `1536` en el repositorio ni ningún `768` fuera de la contingencia | `grep -rn "1536" .` y `grep -rn "768" app/ migrations/` | Bloqueante |
+| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado. Se satisface **retirando** `infra/sql/001_initialize_rag_cv.sql` una vez migrado su contenido (§2.2), no editándolo | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
 | A-2 | Existen los cinco índices de §4.2 con los parámetros indicados | `\d cv_chunks` sobre base migrada | Mayor |
 | A-3 | La configuración de texto es `es_unaccent` y se usa en trigger y consulta | CA-11 | Mayor |
-| A-3b | La base se crea con proveedor ICU `es-MX` en los tres entornos, incluido el `conftest` de pruebas | Lectura del bootstrap, del compose y del `conftest` | Mayor |
+| A-3b | La base se crea con proveedor ICU `es-MX` en DEV, QA y el `conftest` de pruebas | Lectura del bootstrap, del aprovisionamiento nativo y del `conftest` | Mayor |
 | A-4 | Toda migración tiene `downgrade` funcional | CA-2 | Bloqueante |
 | A-5 | La aplicación no ejecuta migraciones al arrancar | Lectura de `main.py` / `lifespan` | Bloqueante |
 | A-6 | Las comprobaciones de arranque 1–5 abortan el proceso | CA-6, CA-7 | Bloqueante |
 | A-7 | `source_chunk_ids` no es clave foránea | Lectura del DDL | Menor |
 | A-8 | El incremento de cuota es atómico (una sola sentencia) | Lectura del SQL + CA-8 | Mayor |
 | A-9 | Los `statement_timeout` de §6 están configurados | Lectura de `engine.py` | Menor |
-| A-10 | Existe el trabajo de retención de 30 días y está programado en QA y PROD | Revisión de cron/EventBridge | Mayor |
+| A-10 | Existe la **lógica** de retención de 30 días, con prueba. Su *programación* pertenece a RFC-0020 y no se audita aquí | Lectura de `app/core/retention.py` + su prueba | Mayor |
+| A-11 | `source_documents` e `ingestion_jobs` migrados con el contrato completo de §4.4 y §4.5, sin perder `idempotency_key`, el par de *lease*, `dead_lettered` ni el índice único parcial `is_current` | CA-13 a CA-18 | Bloqueante |
+| A-12 | `infra/sql/` y `verify-database-bootstrap.yml` retirados, y ninguna referencia viva a ellos en `README.md` ni en el resto de `docs/` | CA-19 + `rg -n "infra/sql\|verify-database-bootstrap"` | Mayor |

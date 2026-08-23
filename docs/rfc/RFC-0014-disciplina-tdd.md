@@ -126,6 +126,30 @@ del PR es la evidencia, y aplastarlo la destruye.
 
 Es necesaria pero no suficiente: alguien puede escribir el test después y commitearlo antes.
 
+#### 6.1.1 Cuál de las dos formas del ciclo aplica (normativo)
+
+El proceso describe el ciclo TDD de dos formas, y hasta ahora no decía cuándo usar cada una:
+
+| Forma | Cómo se ve en el historial | Cuándo es **obligatoria** |
+| :--- | :--- | :--- |
+| **Por criterio** | `test(...) CA-1` → `feat(...) CA-1` → `test(...) CA-2` → `feat(...) CA-2` … | Cuando cada criterio tiene una implementación **separable**: una función, una regla, una rama de decisión |
+| **Suite completa primero** | un único `test(...)` con TODOS los criterios en rojo → `feat(...)` que los pone en verde | Cuando **una sola unidad de implementación satisface varios criterios a la vez** y no puede partirse: una migración, un bloque DDL, un artefacto generado |
+
+La segunda no es una relajación de la primera: es más estricta en lo que importa, porque exige
+que **todos** los criterios estén escritos y en rojo antes de existir una línea de implementación.
+Lo que no puede hacerse es mezclarlas: aplicar la forma por criterio a un RFC cuya implementación
+es atómica produce commits de test **posteriores** a la implementación que ya los satisfacía, y
+eso es indistinguible —para el Auditor y para `git log`— de haber escrito los tests al final.
+
+**Cómo se decide, antes de empezar:** si revertir la implementación de un criterio dejara en rojo
+también a otros criterios, esos criterios comparten unidad de implementación y van juntos en la
+forma de suite completa.
+
+> **Por qué está escrito.** ADU-PROCESO §3 y el prompt del Desarrollador exigen "la suite de tests
+> en rojo, en su propio commit"; §6.1 de este RFC ilustra pares `test`/`feat` por criterio. Ambas
+> lecturas eran defendibles y el contrato no decía cuál correspondía a cada caso. Elegir la forma
+> equivocada no era indisciplina del Desarrollador: era una ambigüedad del contrato.
+
 ### 6.2 Rojo registrado en CI (fuerte)
 
 El CI se ejecuta en **cada push**, no solo al abrir el PR. El commit que solo añade tests debe
