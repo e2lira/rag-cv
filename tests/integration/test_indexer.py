@@ -44,3 +44,39 @@ async def test_idempotent(database_url: str, tmp_path: Path) -> None:
     assert second.updated == 0
     assert second.embed_calls == 0
     assert second.unchanged == first.inserted
+
+
+@pytest.mark.asyncio
+async def test_removed_unit_is_deleted(database_url: str, tmp_path: Path) -> None:
+    """CA-6: eliminar una unidad del corpus la elimina de la tabla al
+    reindexar."""
+    corpus_path = _write_corpus(tmp_path)
+    embedder = FakeEmbedder(1536)
+
+    empresa_dos_block = (
+        "## Empresa Dos -- Desarrolladora Backend                 "
+        "<!-- 2019-01 .. 2022-02 -->\n"
+        "**Contexto:** Comercio electronico.\n"
+        "**Responsabilidad:** APIs de catalogo y pagos.\n"
+        "**Logros:**\n"
+        "- Migro el monolito a microservicios.\n"
+        "**Stack:** Java, Spring, MySQL\n\n"
+    )
+    assert empresa_dos_block in VALID_CORPUS
+    shorter_corpus = VALID_CORPUS.replace(empresa_dos_block, "")
+
+    with psycopg.connect(database_url) as conn:
+        await index_corpus(conn, embedder, corpus_path)
+
+        corpus_path.write_text(shorter_corpus, encoding="utf-8")
+        report = await index_corpus(conn, embedder, corpus_path)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM cv_chunks WHERE unit = %s",
+                ("Empresa Dos -- Desarrolladora Backend",),
+            )
+            (remaining,) = cur.fetchone()
+
+    assert report.deleted == 1
+    assert remaining == 0
