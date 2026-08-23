@@ -1,14 +1,20 @@
 """Indexador -- RFC-0002 7, 8."""
 
+import argparse
+import asyncio
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx2
 import psycopg
 
+from app.core.engine import build_pool
+from app.core.settings import Settings
 from app.ingestion.chunker import Chunk, chunk_corpus
-from app.ingestion.corpus_validator import validate_corpus
-from app.retrieval.embedder import Embedder
+from app.ingestion.corpus_validator import CorpusValidationError, validate_corpus
+from app.retrieval.embedder import Embedder, build_embedder
 
 
 @dataclass(frozen=True)
@@ -171,3 +177,52 @@ async def index_corpus(
             duration_ms=duration_ms,
             errors=[],
         )
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Indexador del corpus -- RFC-0002 8")
+    parser.add_argument("--corpus", type=Path, default=None, help="Por defecto, CORPUS_PATH")
+    parser.add_argument("--dry-run", action="store_true", help="Informa sin escribir")
+    parser.add_argument("--force", action="store_true", help="Re-embebe todo, aunque no cambio")
+    return parser
+
+
+async def _run_cli(argv: list[str] | None = None) -> int:
+    args = _build_arg_parser().parse_args(argv)
+    settings = Settings()
+    corpus_path = args.corpus or settings.corpus_path
+
+    # RFC-0002 9: el validador aborta antes de tocar la BD, codigo 2 -- se
+    # comprueba aqui, antes de construir el pool y el embedder.
+    try:
+        text = corpus_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        print(f"error: no se encontro el corpus en {corpus_path}", file=sys.stderr)
+        return 2
+    try:
+        validate_corpus(text)
+    except CorpusValidationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    pool = build_pool(settings.database_url.get_secret_value())
+    try:
+        async with httpx2.AsyncClient() as http:
+            embedder = build_embedder(settings, http)
+        with pool.connection() as conn:
+            report = await index_corpus(
+                conn, embedder, corpus_path, force=args.force, dry_run=args.dry_run
+            )
+    finally:
+        pool.close()
+
+    print(
+        f"inserted={report.inserted} updated={report.updated} unchanged={report.unchanged} "
+        f"deleted={report.deleted} embed_calls={report.embed_calls} "
+        f"duration_ms={report.duration_ms}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(_run_cli()))
