@@ -135,6 +135,39 @@ cada criterio.
 
 Un PR cuyo primer commit ya está en verde es un PR sin TDD, y es un hallazgo **Mayor**.
 
+**Condición operativa (normativa).** Un `workflow` con `on: pull_request` no registra nada
+mientras el PR no exista: los *pushes* previos a abrirlo no dejan ejecución. Por eso la rama se
+publica y el PR se abre **en borrador antes del primer commit de test**, no al terminar. Un PR
+abierto al final produce una única ejecución, verde, sobre el `HEAD` final — y esa ejecución no
+es evidencia de nada. Abrir tarde el PR no es un detalle de flujo de trabajo: destruye la
+evidencia que exige esta misma sección.
+
+#### 6.2.1 Excepción de arranque (aplica una sola vez por repositorio)
+
+Esta sección **presupone que el CI ya existe** — de ahí que RFC-0014 declare `Depende de:
+RFC-0008`. Cuando el PR auditado es precisamente el que **introduce** ese CI, §6.2 se vuelve
+imposible de satisfacer por construcción: no hay *runner* donde los commits de test pudieran
+haber corrido en rojo, porque el *runner* se crea en ese mismo PR. Exigirlo ahí es exigir que la
+evidencia preceda al mecanismo que la produce.
+
+En ese caso — y **solo** en ese caso — la evidencia sustituta admisible es la conjunción de las
+tres:
+
+| Evidencia sustituta | Cómo la comprueba el Auditor |
+| :--- | :--- |
+| Orden de commits íntegro (§6.1), sin *squash* | `git log --reverse --oneline` sobre el rango del PR |
+| Reversión pone el test en rojo (TDD-3) | Revertir la implementación de una muestra de criterios y ejecutar la suite |
+| CI verde sobre el `HEAD` final, con la suite real | Ejecución registrada del *workflow* que el propio PR introduce |
+
+Fuera del PR que introduce el CI, esta excepción **no existe**: a partir del PR siguiente, la
+ausencia de la transición rojo → verde vuelve a ser un hallazgo **Mayor**, y la causa ya no puede
+ser la falta de CI sino haber abierto el PR tarde, que es responsabilidad del Desarrollador.
+
+> **Por qué está escrito aquí y no resuelto caso por caso.** Un hallazgo cuya causa es una
+> contradicción del propio contrato no se arregla firmando excepciones: se arregla corrigiendo el
+> contrato. Lo contrario convierte la excepción en el mecanismo por defecto, que es exactamente
+> el antipatrón que ADU existe para cortar.
+
 ### 6.3 Prueba de mutación (la definitiva)
 
 La evidencia más fuerte no es el orden: es que **el test detecte la ausencia del código**. Sobre

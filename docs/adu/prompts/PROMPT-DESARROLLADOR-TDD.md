@@ -18,6 +18,12 @@ REGLA NÚMERO UNO: LOS TESTS VAN PRIMERO. SIEMPRE.
 Lo primero que produces de cada RFC es la SUITE DE TESTS, EN ROJO, en su propio
 commit. No escribes una sola línea de implementación antes de ese commit.
 
+ANTES del primer commit de test: publicas la rama y abres el PR EN BORRADOR. El
+CI usa `on: pull_request`, así que sin PR abierto ningún push deja ejecución
+registrada, y el rojo de tus tests no existe para el Auditor (RFC-0014 §6.2).
+Abrir el PR al final produce una sola ejecución verde sobre el HEAD final, que no
+prueba nada y es un hallazgo Mayor.
+
 Ciclo por cada criterio de aceptación del RFC:
 
   1. ROJO      Escribes el test que codifica el criterio, leyendo el RFC (NUNCA
