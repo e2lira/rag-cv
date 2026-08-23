@@ -72,7 +72,7 @@ PR.
 
 | # | RFC | Produce | Deltas obligatorios que leer junto al RFC |
 | :--- | :--- | :--- | :--- |
-| 11 | **RFC-0020** Topología nativa | Aprovisionamiento, unidad `systemd` de usuario, `enable-linger`, despliegue `rsync` + enlace `current`, reversión | Sustituye RFC-0007 §5.1 y §5.3 y RFC-0015 §7. **Excluir `.env` y `corpus/` del `rsync`** |
+| 11 | **RFC-0020** Topología nativa | Aprovisionamiento, unidad `systemd` de usuario, `enable-linger`, despliegue `rsync` + enlace `current`, reversión, **endurecimiento de la unidad (§5.1)** | Sustituye RFC-0007 §5.1 y §5.3 y RFC-0015 §7. **Excluir `.env` y `corpus/` del `rsync`**. §5.1 recupera las diez medidas de endurecimiento que se perdieron al diferir RFC-0015 |
 | 12 | **RFC-0008** CI/CD | Pipeline de calidad, construcción y despliegue **hasta QA** | El paso de promoción a PROD por *digest* y la deriva de Terraform **no aplican** |
 | 13 | **RFC-0010** Observabilidad | Logs JSON con rotación, métricas, alertas, runbook | CloudWatch y las diez alarmas de §6 **diferidas**. El runbook incorpora el reemplazo atómico del corpus (RFC-0019 §4) y la reindexación (§9.6c) |
 
@@ -83,7 +83,7 @@ Tras la fase 4 se re-ejecuta la evaluación **contra QA**, que es lo que exige R
 | Documento | Motivo |
 | :--- | :--- |
 | RFC-0007 §6, §7, §9, §10 | PROD, IAM de AWS, Terraform y costos de AWS — diferidos (ADR-0006) |
-| RFC-0015 completo | Empaquetado en contenedor; el VPS no usa contenedores (ADR-0010) |
+| RFC-0015 completo | Empaquetado en contenedor; el VPS no usa contenedores (ADR-0010). **Su §10 sí se ejecuta**, traducida a directivas de `systemd` en RFC-0020 §5.1 |
 | Ingesta por eventos de S3, worker, DLQ y reconciliación | Sustituidos por el sondeo (ADR-0009) |
 | `TitanEmbedder`, `NomicApiEmbedder`, `OllamaEmbedder` | Camino AWS diferido y contingencias sin host que las sostenga (ADR-0007) |
 | RFC-0001 | Es el mapa del sistema, no un entregable. Se lee, no se implementa |

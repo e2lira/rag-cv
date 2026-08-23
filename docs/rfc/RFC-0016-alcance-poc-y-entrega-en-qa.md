@@ -285,8 +285,27 @@ Toda ruta se deriva de una única raíz, para que un cambio de hospedaje sea un 
 y no una búsqueda por cinco documentos:
 
 ```sh
-RAG_CV_HOME=/home/qrimapp-reto/rag-cv
+RAG_CV_HOME=/opt/rag-cv          # propiedad de qrimapp-reto, no de root
 ```
+
+**Por qué `/opt` y no el directorio personal, dicho con precisión.** La ruta, por sí sola, **no
+es una propiedad de seguridad**: un `.env` con permisos `600` protege exactamente igual en
+`/home/qrimapp-reto` que en `/opt`. Quien diga lo contrario está confundiendo convención con
+control de acceso.
+
+El motivo real es otro y es concreto: **`/opt` permite endurecer la unidad con
+`ProtectHome=yes`** (RFC-0020 §5.1). Con la aplicación viviendo bajo `/home/qrimapp-reto`, esa
+directiva es inaplicable —le escondería al servicio su propio directorio de trabajo—, y sin ella
+un proceso comprometido de la API **puede leer `/home/qrimapp-reto/.ssh/`**. Ese es el salto de
+una ejecución remota de código a robar la clave SSH del host, que es la escalada que de verdad
+importa en un servicio expuesto a internet.
+
+Dicho al revés: no se mueve el `.env` a `/opt` para esconderlo mejor, se mueve **la aplicación**
+a `/opt` para poder esconderle `/home` a la aplicación.
+
+El árbol sigue siendo **propiedad de `qrimapp-reto`**, no de `root`: la operación diaria no cambia
+y sigue sin necesitar `sudo`. `/opt` es además la ubicación que el FHS reserva para software
+añadido, así que la convención acompaña.
 
 | Qué | Ruta | Propiedad y permisos | Sustituye a |
 | :--- | :--- | :--- | :--- |
@@ -307,7 +326,25 @@ abre.
 
 | Renuncia | Consecuencia real |
 | :--- | :--- |
-| Usuario de servicio sin shell | Los procesos corren como una cuenta con inicio de sesión. Quien entre por SSH como `qrimapp-reto` **lee el `.env` y controla el despliegue**. Los `600` protegen frente a otras cuentas del host, no frente a la propia |
+| Usuario de servicio sin shell propietario de los ficheros | Los procesos corren como una cuenta con inicio de sesión. Quien entre por SSH como `qrimapp-reto` **lee el `.env` y controla el despliegue**. Los `600` protegen frente a otras cuentas del host, no frente a la propia |
+
+**Sobre esa renuncia, que es deliberada y conviene justificarla.** Con acceso de administrador
+disponible, un usuario de servicio sin shell y un `.env` propiedad de `root` son técnicamente
+posibles. **No se hace**, y no por comodidad:
+
+- Obligaría a `sudo` en el despliegue, en el reinicio del servicio y en el `crontab` del sondeo.
+  Una automatización que necesita `sudo` termina con un `NOPASSWD` instalado y olvidado, que es
+  peor que el problema que venía a resolver (RFC-0019 §7).
+- Y **no cierra el agujero que aparenta cerrar.** Quien comprometa la cuenta de operación no
+  necesita leer el `.env`: modifica el código en `releases/`, espera o provoca el reinicio que esa
+  misma cuenta tiene permitido, y extrae la clave desde dentro del proceso. La frontera solo sería
+  real si la cuenta de operación no pudiera influir en lo que el servicio ejecuta — y desplegar es
+  precisamente su trabajo.
+
+Con **un solo operador**, que es el caso de esta PoC, esa separación compra fricción, no una
+frontera. Lo que sí compra defensa real es **confinar el proceso del servicio** (RFC-0020 §5.1),
+porque el vector realista en un servicio expuesto no es el robo de la cuenta SSH: es la ejecución
+remota de código a través de la API.
 | `/etc/logrotate.d` | La rotación se hace en espacio de usuario, con estado propio (RFC-0019 §7). Es una pieza más que puede quedar sin instalar, y por eso tiene criterio de aceptación |
 | Aislamiento entre servicios | Sin contenedor no hay frontera implícita. Se sustituye con `MemoryMax` y `CPUWeight` en las unidades (RFC-0020 §5) |
 

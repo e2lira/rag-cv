@@ -73,7 +73,7 @@ ufw allow 22,80,443/tcp && ufw enable
 loginctl enable-linger qrimapp-reto
 
 # 5. Árbol de despliegue, propiedad del operador
-install -d -o qrimapp-reto -g qrimapp-reto /home/qrimapp-reto/rag-cv/{releases,corpus,logs}
+install -d -o qrimapp-reto -g qrimapp-reto /opt/rag-cv/{releases,corpus,logs}
 ```
 
 **No se instala ningún motor de inferencia.** Los embeddings van por API (ADR-0007) y la generación
@@ -101,6 +101,41 @@ explícitamente en la unidad con `MemoryMax` y `CPUWeight`, de modo que una fuga
 degrade su propio servicio antes que tumbar PostgreSQL. Con los embeddings por API el host ya no
 ejecuta modelos (RFC-0016 §5), así que el margen es amplio; el límite existe como red de seguridad,
 no como ajuste fino.
+
+### 5.1 Endurecimiento de la unidad
+
+RFC-0015 §10 enumeraba diez medidas de endurecimiento, y **al diferirse con el contenedor
+(ADR-0010) se perdieron todas**. El contenedor las daba casi gratis: proceso no root, raíz de solo
+lectura, capacidades eliminadas, `no-new-privileges`. Sin él hay que declararlas, porque el vector
+realista contra esta topología no es el robo de la cuenta SSH: es la **ejecución remota de código
+a través de la API**, que es el único proceso expuesto a internet.
+
+Equivalencias nativas, todas directivas de la unidad de `systemd`:
+
+| # | RFC-0015 §10 (contenedor) | Equivalente nativo |
+| :--- | :--- | :--- |
+| 1 | Proceso no root (UID 10001) | La unidad es de usuario: corre como `qrimapp-reto`, nunca como `root` |
+| 2 | Raíz de solo lectura | `ProtectSystem=strict` + `ReadWritePaths=$RAG_CV_HOME/logs` |
+| 3 | Capacidades eliminadas | `CapabilityBoundingSet=` vacío + `RestrictSUIDSGID=yes` |
+| 4 | `no-new-privileges` | `NoNewPrivileges=yes` |
+| 5 | Sin secretos en el artefacto | Exclusión de `.env` en el `rsync` (§6) |
+| 6 | Sin descargas en tiempo de ejecución | Las dependencias se instalan en el despliegue, no al arrancar |
+| 7 | Cabecera de servidor suprimida | `server_header=False` en `uvicorn` (es de la aplicación, no cambia) |
+| 8 | Base de datos sin puerto publicado | `listen_addresses = 'localhost'` (§7) |
+| 9 | Escaneo de imagen (≥ HIGH bloquea) | **Sustituto:** `pip-audit` sobre `requirements.lock` en CI (RFC-0008) |
+| 10 | SBOM archivado por versión | **Sustituto:** `requirements.lock` archivado por release |
+
+Y una que el contenedor **no** daba y aquí sí importa:
+
+| Directiva | Qué impide |
+| :--- | :--- |
+| **`ProtectHome=yes`** | Que un proceso comprometido de la API lea `/home/qrimapp-reto/.ssh/`. Es el salto de una ejecución remota de código a robar la clave SSH del host, y es la razón por la que la aplicación vive en `/opt` y no en el directorio personal (RFC-0016 §8.1) |
+| `PrivateTmp=yes` | Que comparta `/tmp` con cualquier otro proceso del host |
+| `ProtectKernelTunables=yes`, `ProtectControlGroups=yes` | Escritura en `/proc/sys` y en `cgroups` |
+
+`ProtectHome=yes` y una aplicación bajo `/home` son **incompatibles**: la directiva le escondería
+al servicio su propio directorio de trabajo. Elegir `/opt` es lo que la hace utilizable, y ese es
+todo el motivo del cambio de ruta — no que `/opt` sea "más seguro" por sí mismo.
 
 ## 6. Despliegue por SSH e identidad de release
 
@@ -198,6 +233,8 @@ de la existencia del compose.
 | CA-7 | La reversión a la release anterior se completa sin reconstruir nada | Conmutar el enlace + `curl /readyz` |
 | CA-8 | La unidad declara `MemoryMax` y el host no entra en OOM durante una indexación completa | `systemctl --user show -p MemoryMax` + RFC-0016 CA-4 |
 | CA-9 | El procedimiento de §4 reconstruye un VPS vacío hasta `/readyz` en verde | Ejecución sobre un host limpio |
+| CA-11 | La unidad declara las directivas de §5.1 y el servicio **no puede leer `/home`** | `systemd-analyze security rag-cv-api` + intento de lectura de `~/.ssh` desde el proceso |
+| CA-12 | `pip-audit` sobre `requirements.lock` corre en CI y bloquea severidad alta | Ejecución del workflow |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
 
 ## 11. Riesgos
@@ -210,6 +247,8 @@ de la existencia del compose.
 | "Desplegamos el commit X" sin forma de comprobarlo | CA-5: el SHA se expone en `/readyz` |
 | Deriva de dependencias del sistema; el procedimiento de §4 envejece | CA-9 lo ejercita sobre un host limpio, que es lo único que detecta la deriva |
 | Sin aislamiento, un proceso desbocado tumba a los demás | `MemoryMax` y `CPUWeight` en la unidad (§5, CA-8) |
+| **Diferir RFC-0015 se lleva sus diez medidas de endurecimiento sin sustituto** | §5.1 las traduce a directivas de `systemd` y las somete a CA-11 y A-11b |
+| Una ejecución remota de código en la API alcanza la clave SSH del host | `ProtectHome=yes`, posible solo con la aplicación fuera de `/home` (§5.1) |
 | Los directorios de releases llenan el disco | Retención acotada en el procedimiento de despliegue, junto a la rotación de bitácoras de RFC-0019 §7 |
 | Un `.env` de desarrollo viaja al servidor con el `rsync` | Exclusiones explícitas en §6 + CA-10, severidad Bloqueante |
 | El despliegue pisa el corpus del VPS con el de la máquina de origen | `corpus/` excluido en §6 + CA-10 |
@@ -229,4 +268,7 @@ de la existencia del compose.
 | A-9 | El procedimiento de aprovisionamiento reconstruye un host vacío | CA-9 | Mayor |
 | A-10 | RFC-0015 no ha sido editado: sigue siendo el diseño de empaquetado diferido | `git diff` sobre RFC-0015 | Bloqueante |
 | A-11 | La sincronización excluye `.env` y `corpus/` | CA-10 | **Bloqueante** |
+| A-11b | La unidad declara `ProtectHome=yes`, `NoNewPrivileges=yes` y `ProtectSystem=strict` | CA-11 | **Bloqueante** |
+| A-11c | El árbol de despliegue está fuera de `/home`, y por tanto `ProtectHome` es aplicable | Lectura de `$RAG_CV_HOME` | Bloqueante |
+| A-11d | Existe el sustituto del escaneo de imagen: `pip-audit` en CI | CA-12 | Mayor |
 | A-12 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |

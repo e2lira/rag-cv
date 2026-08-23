@@ -144,7 +144,7 @@ sola. Esa es la forma habitual en que un `NOPASSWD` acaba instalado y olvidado e
 
 ```cron
 # crontab -e  (usuario qrimapp-reto)
-RAG_CV_HOME=/home/qrimapp-reto/rag-cv
+RAG_CV_HOME=/opt/rag-cv
 
 */5 * * * * cd $RAG_CV_HOME/current && \
   $RAG_CV_HOME/current/.venv/bin/python -m app.ingestion.watcher \
