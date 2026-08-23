@@ -150,6 +150,19 @@ async def run_once(
     raw = corpus_path.read_bytes()
     content_sha256 = hashlib.sha256(raw).hexdigest()
 
+    # RFC-0019 6 fila 1: contenido identico al vigente. Se actualiza la huella
+    # de la fila vigente y se sale. Registrar una version por cada `touch`
+    # engordaria el ledger sin que el corpus cambie, y obligaria a un ciclo
+    # promover/degradar entre dos versiones de contenido identico.
+    #
+    # Actualizar la huella no es cosmetico: deja el atajo del paso 2 operativo
+    # desde el ciclo siguiente, que es la razon de hacerlo en vez de ignorarla.
+    if current is not None and current.content_sha256 == content_sha256:
+        _refresh_fingerprint(conn, object_key, observed)
+        _record_heartbeat(conn, object_key, OUTCOME_NO_CHANGE, success=True)
+        conn.commit()
+        return WatcherReport(outcome=OUTCOME_NO_CHANGE, source_version_id=current.source_version_id)
+
     # Pasos 5 y 6: la version y su trabajo se confirman ANTES de indexar, para
     # que una ejecucion que muera durante la ingesta deje traza de que la
     # deteccion ocurrio. El UNIQUE sobre idempotency_key absorbe el reintento.
@@ -194,6 +207,17 @@ async def run_once(
         source_version_id=version_id,
         embed_calls=report.embed_calls,
     )
+
+
+def _refresh_fingerprint(conn: psycopg.Connection, object_key: str, fingerprint: str) -> None:
+    """RFC-0019 6 fila 1: el contenido no cambio, solo el `mtime`. La fila
+    vigente se queda donde esta y solo se le renueva la huella."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE source_documents SET source_fingerprint = %s, updated_at = now() "
+            "WHERE object_key = %s AND is_current",
+            (fingerprint, object_key),
+        )
 
 
 def _register_version(
