@@ -4,6 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0001 |
+| **Vigencia en la PoC** | `text-embedding-3-small` de OpenAI, `VECTOR(1536)` y `EMBEDDING_DIM=1536` (RFC-0017 §4) |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -22,6 +23,18 @@ comprobaciones de arranque, retención y respaldo lógico.
 
 **No entra:** infraestructura de la instancia (RFC-0007), consultas de recuperación (RFC-0003).
 
+### 2.1 Contrato de embeddings vigente para la PoC
+
+La PoC usa `EMBEDDER=openai` con `text-embedding-3-small`, a sus **1536 dimensiones
+nativas**. Por tanto, el DDL de este RFC declara `VECTOR(1536)`,
+`EMBEDDING_DIM=1536` y el identificador persistido es
+`text-embedding-3-small@openai`.
+
+Las referencias históricas a Titan, Bedrock y `VECTOR(1024)` describen únicamente el
+camino AWS diferido y **no se implementan en la PoC**. RFC-0017 §4 conserva el
+procedimiento de recreación del índice cuando se cambie la dimensión; este RFC fija el
+estado objetivo que debe entregar el Desarrollador.
+
 ## 3. Extensiones requeridas
 
 ```sql
@@ -30,10 +43,11 @@ CREATE EXTENSION IF NOT EXISTS unaccent;    -- búsqueda léxica insensible a ac
 CREATE EXTENSION IF NOT EXISTS pg_trgm;     -- similitud difusa para nombres de empresa
 ```
 
-En RDS estas tres están disponibles sin permisos especiales, y en la imagen
-`pgvector/pgvector:pg16` de QA vienen incluidas. En el PostgreSQL nativo de Windows de DEV,
-`unaccent` y `pg_trgm` llegan con el instalador, pero **`vector` hay que compilarlo**: no hay
-binarios oficiales para Windows (procedimiento en RFC-0011 §4.2).
+En la PoC, QA usa PostgreSQL 16 con pgvector como servicio nativo del VPS; las tres
+extensiones forman parte del aprovisionamiento de RFC-0020. En el PostgreSQL nativo de
+Windows de DEV, `unaccent` y `pg_trgm` llegan con el instalador, pero **`vector` hay que
+compilarlo** si no está disponible (procedimiento en RFC-0011 §4.2). RDS queda diferido
+con el camino AWS.
 
 La versión de pgvector se comprueba al arrancar: por debajo de 0.8 el proceso no arranca (los
 parámetros de HNSW y el tipo `halfvec` cambian entre versiones).
@@ -41,7 +55,7 @@ parámetros de HNSW y el tipo `halfvec` cambian entre versiones).
 ### 3.1 Creación de la base de datos y configuración regional
 
 La base se crea siempre con **codificación UTF8 y proveedor de configuración regional ICU**,
-en los tres entornos:
+en DEV y QA de la PoC; el mismo contrato aplica al camino AWS diferido:
 
 ```sql
 CREATE DATABASE ragcv
@@ -53,7 +67,7 @@ acentuados como letras, `to_tsvector` los trocea mal y la rama léxica de RFC-00
 encontrar términos con tilde **sin emitir ningún error**. El caso concreto que fuerza la
 decisión es DEV: en Windows, la configuración regional nativa (`Spanish_Mexico.1252`) no es
 compatible con UTF8, y usar `C` clasificaría mal los acentos. ICU da el mismo comportamiento en
-Windows, en el contenedor de Ubuntu y en RDS, que es exactamente lo que se necesita.
+Windows y Ubuntu del VPS, que es exactamente lo que se necesita.
 
 La verificación es obligatoria y forma parte de las pruebas (CA-11), no de la documentación:
 
@@ -93,7 +107,7 @@ CREATE TABLE cv_chunks (
     date_start      DATE,
     date_end        DATE,                          -- NULL = actual
     tech_tags       TEXT[]      NOT NULL DEFAULT '{}',
-    embedding       VECTOR(1024) NOT NULL,  -- Titan Text Embeddings V2 (RFC-0012)
+    embedding       VECTOR(1536) NOT NULL,  -- OpenAI text-embedding-3-small (RFC-0017)
     embed_model_id  TEXT        NOT NULL,
     tsv             TSVECTOR    NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -106,11 +120,12 @@ CREATE TABLE cv_chunks (
 
 Decisiones y su motivo:
 
-- **`VECTOR(1024)`**: la dimensión de Titan Text Embeddings V2 (RFC-0012). No 1536, que
-  corresponde a Titan Embeddings G1 (v1) y era el valor equivocado del documento base. Activar la
-  contingencia de Nomic implica recrear la columna a `VECTOR(768)` (RFC-0012 §7.1).
+- **`VECTOR(1536)`**: dimensión nativa de `text-embedding-3-small` de OpenAI. No se
+  trunca a 768: cambiar desde el histórico `VECTOR(1024)` ya exige recrear la columna y
+  el HNSW, por lo que truncar perdería información sin ahorrar una migración. Un cambio
+  futuro de dimensión exige recreación y reindexación completa según RFC-0017 §4.
 - **`embed_model_id` por fila:** guarda **modelo + camino de servicio**
-  (`amazon.titan-embed-text-v2:0@bedrock`) y permite detectar una mezcla de vectores incomparables,
+  (`text-embedding-3-small@openai`) y permite detectar una mezcla de vectores incomparables,
   que degrada la búsqueda sin dar ningún error. El arranque compara el valor distinto de esa
   columna con el `model_id` del embedder activo y falla si hay más de uno o si no coincide.
 - **`UNIQUE (doc_id, unit, part)`** es lo que hace posible el `upsert` idempotente de RFC-0002.
@@ -221,8 +236,9 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 
 ## 5. Migraciones
 
-- Las migraciones se ejecutan igual en los tres entornos: `alembic upgrade head` desde
-  PowerShell en DEV, desde el contenedor en QA, como paso del pipeline en PROD.
+- Las migraciones se ejecutan con `alembic upgrade head`: desde PowerShell en DEV y como paso
+  explícito del despliegue nativo en QA. El paso equivalente de PROD pertenece al camino AWS
+  diferido.
 - **Alembic**, una migración por RFC que toque el esquema, nombrada
   `NNNN_rfc0006_initial_schema.py`.
 - Toda migración tiene `downgrade` **probado**: el CI ejecuta `upgrade head` → `downgrade base`
@@ -243,8 +259,8 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | Entorno | Pool | Motivo |
 | :--- | :--- | :--- |
 | DEV | `psycopg_pool` 2–5 | Local |
-| QA (VPS) | `psycopg_pool` 2–10 | Postgres en contenedor en la misma máquina |
-| PROD | `psycopg_pool` 5–20 por instancia | `db.t4g.micro` admite ~85 conexiones; App Runner con 2 instancias deja margen |
+| QA (VPS) | `psycopg_pool` 2–10 | PostgreSQL nativo del sistema en la misma máquina |
+| PROD diferido | `psycopg_pool` 5–20 por instancia | Contrato AWS diferido hasta cerrar ADR-0006 |
 
 - `statement_timeout = 5s` a nivel de sesión de la aplicación; `10s` para el trabajo de ingesta.
 - `idle_in_transaction_session_timeout = 10s`: una transacción olvidada bloquea `VACUUM`.
@@ -264,8 +280,7 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 ## 8. Retención y respaldo
 
 - `messages` y `conversations` con más de **30 días** se eliminan por trabajo programado diario
-  (PRD §8). En PROD lo dispara EventBridge sobre el endpoint de administración; en QA, un cron
-  del VPS.
+  (PRD §8). En la PoC lo ejecuta el cron del VPS; EventBridge pertenece al camino AWS diferido.
 - `rate_buckets` con ventana anterior a 48 h se purgan en el mismo trabajo.
 - PROD: respaldos automáticos de RDS con retención de 7 días + `snapshot` manual antes de cada
   migración que toque tablas con datos.
@@ -283,7 +298,7 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 | CA-3 | El trigger de `tsv` aplica pesos A/B/C | `test_schema.py::test_tsv_weights` |
 | CA-4 | Insertar un `chunk_type` inválido falla | `test_schema.py::test_chunk_type_check` |
 | CA-5 | El `upsert` sobre `(doc_id, unit, part)` no duplica filas | `test_schema.py::test_unique_upsert` |
-| CA-6 | Arrancar con `EMBEDDING_DIM=768` contra una columna de 1024 aborta | `test_startup_checks.py::test_dim_mismatch` |
+| CA-6 | Arrancar con `EMBEDDING_DIM=1024` contra una columna de 1536 aborta | `test_startup_checks.py::test_dim_mismatch` |
 | CA-7 | Arrancar con dos `embed_model_id` distintos en la tabla aborta | `test_startup_checks.py::test_mixed_models` |
 | CA-8 | El incremento de cuota es atómico bajo 50 peticiones concurrentes | `test_rate_buckets.py::test_atomic_increment` |
 | CA-9 | Borrar una conversación borra sus mensajes (cascada) | `test_schema.py::test_cascade` |
@@ -295,7 +310,7 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 
 | Riesgo | Mitigación |
 | :--- | :--- |
-| Divergencia de versión de Postgres/pgvector entre QA y PROD | Misma imagen `pgvector/pgvector:pg16` en QA y misma versión mayor en RDS; comprobación 2 de §7 |
+| Divergencia de versión de Postgres/pgvector entre DEV y QA | PostgreSQL 16 + pgvector en el VPS, comprobación 2 de §7 y CI Linux como autoridad |
 | Configuración regional distinta en el PostgreSQL nativo de Windows | Creación con proveedor ICU en los tres entornos + CA-11/CA-12 como gate |
 | pgvector compilado a mano en DEV queda desfasado tras actualizar PostgreSQL | Comprobación 1 de §7 aborta el arranque; procedimiento en RFC-0011 §4.2 y en el runbook |
 | Migración bloqueante en PROD | `CREATE INDEX CONCURRENTLY` + *expand & contract* + snapshot previo |
@@ -306,10 +321,10 @@ SET count = rate_buckets.count + 1 RETURNING count`: atómico en una sola ida y 
 
 | # | Comprobación | Cómo se verifica | Severidad si falla |
 | :--- | :--- | :--- | :--- |
-| A-1 | La columna vector es `VECTOR(1024)`; no hay ningún `1536` en el repositorio ni ningún `768` fuera de la contingencia | `grep -rn "1536" .` y `grep -rn "768" app/ migrations/` | Bloqueante |
+| A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
 | A-2 | Existen los cinco índices de §4.2 con los parámetros indicados | `\d cv_chunks` sobre base migrada | Mayor |
 | A-3 | La configuración de texto es `es_unaccent` y se usa en trigger y consulta | CA-11 | Mayor |
-| A-3b | La base se crea con proveedor ICU `es-MX` en los tres entornos, incluido el `conftest` de pruebas | Lectura del bootstrap, del compose y del `conftest` | Mayor |
+| A-3b | La base se crea con proveedor ICU `es-MX` en DEV, QA y el `conftest` de pruebas | Lectura del bootstrap, del aprovisionamiento nativo y del `conftest` | Mayor |
 | A-4 | Toda migración tiene `downgrade` funcional | CA-2 | Bloqueante |
 | A-5 | La aplicación no ejecuta migraciones al arrancar | Lectura de `main.py` / `lifespan` | Bloqueante |
 | A-6 | Las comprobaciones de arranque 1–5 abortan el proceso | CA-6, CA-7 | Bloqueante |
