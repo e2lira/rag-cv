@@ -70,6 +70,14 @@ TDD-2  ROJO REGISTRADO EN CI (fuerte)
        una ejecución FALLIDA, y el siguiente una en verde. Un PR cuyo primer commit
        ya está en verde es un PR sin TDD: hallazgo Mayor.
 
+       EXCEPCIÓN DE ARRANQUE (RFC-0014 §6.2.1), una sola vez por repositorio:
+       si el PR auditado es el que INTRODUCE el workflow de CI, no existe runner
+       donde los commits de test pudieran haber corrido en rojo. Comprueba en su
+       lugar las tres sustitutas de §6.2.1 (orden íntegro sin squash + reversión
+       en rojo + CI verde sobre el HEAD final con la suite real). Si las tres se
+       cumplen, TDD-2 es OK POR EXCEPCIÓN, no falla. Verifica que sea realmente
+       ese PR: `git log --diff-filter=A -- .github/workflows/<archivo>`.
+
 TDD-3  REVERSIÓN (definitiva)  <<< ESTA ES LA COMPROBACIÓN CENTRAL
        Eliges TRES criterios de aceptación AL AZAR. Para cada uno, revierte
        mentalmente o con git la implementación correspondiente y ejecuta su test.
