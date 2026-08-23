@@ -1,0 +1,53 @@
+name: Python tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # RFC-0011 CA-12 / auditoria PR #16 A-9: unidad de Windows, sin base de
+  # datos -- TEST_DB_MODE=local asume un PostgreSQL nativo ya provisionado
+  # (RFC-0011 #7), que un runner limpio no tiene.
+  unit-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      # auditoria PR #16 A-7: invoke, no comandos sueltos.
+      - run: uv run invoke lint
+      - run: uv run invoke test
+
+  # RFC-0011 CA-9 (mitad container) / auditoria PR #16 A-4: suite completa
+  # -- unit + integration -- contra un PostgreSQL real de servicio, mismo
+  # patron que verify-database-bootstrap.yml.
+  integration-linux:
+    runs-on: ubuntu-latest
+    env:
+      TEST_DB_MODE: container
+      DATABASE_MAINTENANCE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync
+      - run: uv run invoke lint
+      - run: uv run pytest
