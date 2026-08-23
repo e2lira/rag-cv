@@ -364,7 +364,7 @@ la usa; las cinco `WATCHER_*` sí son nuevas y van a los dos sitios (ADU-PROCESO
 | :--- | :--- | :--- |
 | CA-1 | Sin cambios en el fichero, la ejecución no lee ni hashea el corpus y termina tras el `stat` y una consulta | `test_watcher.py::test_no_change_short_circuits` (espía de E/S) |
 | CA-2 | Un cambio de contenido produce una versión nueva, su trabajo, y un índice que refleja el contenido nuevo | Prueba de integración de extremo a extremo |
-| CA-3 | Una reescritura con contenido idéntico al `is_current` registra versión y **no** regenera embeddings | `test_watcher.py::test_identical_content_skips_embedding` |
+| CA-3 | Una reescritura con contenido idéntico al `is_current` **no** regenera embeddings: ningún fragmento cambia de `content_hash` y el embebedor no se llama ni una vez | `test_watcher.py::test_identical_content_skips_embedding` |
 | CA-4 | **Una reversión a un contenido `superseded` SÍ regenera embeddings** y deja el índice consultable | `test_watcher.py::test_revert_reindexes` |
 | CA-5 | Un fichero que cambia durante la comprobación de estabilidad no se indexa en ese ciclo | `test_watcher.py::test_unstable_file_skipped` |
 | CA-6 | Dos ejecuciones concurrentes producen una sola ingesta | `test_watcher.py::test_concurrent_runs_single_ingestion` |
@@ -377,6 +377,14 @@ la usa; las cinco `WATCHER_*` sí son nuevas y van a los dos sitios (ADU-PROCESO
 | CA-16 | La promoción deja exactamente una versión `is_current` con `ingestion_status='indexed'`, y la anterior `superseded` | `test_watcher.py::test_promotion_single_current` |
 | CA-17 | Un `touch` sin cambio de contenido actualiza `source_fingerprint` de la fila vigente y **no** registra versión nueva ni llama al embebedor | `test_watcher.py::test_touch_updates_fingerprint_only` |
 | CA-18 | Toda ejecución escribe `last_run_at`; solo el ciclo completo escribe `last_success_at` | `test_watcher.py::test_heartbeat_success_vs_run` |
+
+**CA-3 decía «registra versión y no regenera embeddings», y contradecía a §6 y a CA-17.** Los
+tres describen el mismo escenario —una reescritura con contenido idéntico al `is_current`— y §6
+fila 1 lo resuelve sin registrar fila nueva: hacerlo engordaría el ledger sin que el corpus
+cambie, y obligaría a un ciclo promover/degradar entre dos versiones de contenido idéntico. El
+defecto lo introdujo el propio DoR (PR #56), que reescribió §6 y añadió CA-17 sin tocar el texto
+de CA-3. CA-3 conserva lo que de verdad aporta frente a CA-17: que el proveedor de embeddings no
+se llama.
 
 **Los huecos 11, 14 y 15 son deliberados.** Esos criterios se movieron al RFC que construye lo que
 verifican —la alerta a RFC-0010, el `crontab` y la rotación a RFC-0020— y se conserva su número
