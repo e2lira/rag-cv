@@ -55,6 +55,7 @@ vigentes y secciones diferidas.
 | [RFC-0018](./rfc/RFC-0018-generacion-sin-aws-api-de-anthropic.md) | Generación sin AWS: API de Anthropic | Aprobado | 0013, 0009, 0016 | **Normativo** |
 | [RFC-0019](./rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md) | Detección de cambios del corpus en el VPS | Aprobado | 0016, 0002, 0006, 0010 | **Normativo** |
 | [RFC-0020](./rfc/RFC-0020-topologia-nativa-de-qa-y-despliegue-por-ssh.md) | Topología nativa de QA y despliegue por SSH | Aprobado | 0016, 0007, 0008 | **Normativo** |
+| [RFC-0021](./rfc/RFC-0021-arranque-validado-de-la-aplicacion.md) | Arranque validado de la aplicación | Aprobado | 0006, 0011 | **Normativo** |
 
 ## 3. Índice de ADRs
 

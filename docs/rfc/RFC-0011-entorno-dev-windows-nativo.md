@@ -39,6 +39,14 @@ punto de entrada `uvicorn` real. Este RFC construye el **esqueleto**: `app/core/
 `/readyz` que responde `200` sin tocar base de datos ni lógica de negocio. Es la prueba de que el
 mecanismo funciona, no la API. RFC-0005 lo amplía con el contrato real.
 
+> **El esqueleto es `app/dev_server.py`, y solo ese (RFC-0021 §3).** La implementación de este RFC
+> dejó también un `app/main.py` con el mismo `/readyz` provisional, y ahí nació una contradicción:
+> `main` es el nombre de la aplicación real, cuyo `lifespan` debe validar la base y abortar si está
+> mal (RFC-0006 §7). Cablearlo ahí haría que arrancar produjera un error de base de datos, que es
+> exactamente lo que CA-4 exige distinguir. RFC-0021 separa los dos puntos de entrada: `dev_server`
+> se queda sin base de datos —CA-4 y CA-5 lo protegen, sin cambios—, y `main` pasa a ser la
+> aplicación real, con su `/readyz` provisional retirado.
+
 ## 3. Requisitos de la estación de trabajo
 
 | Componente | Versión | Cómo se instala |
@@ -517,7 +525,7 @@ unitarias en `windows-latest`: para proteger también el camino inverso).
 | CA-1 | `scripts/bootstrap-dev.ps1` completa los pasos 1-7 y 10 desde cero, es idempotente, y los pasos 8-9 se omiten con aviso si sus RFCs no están implementados todavía | Ejecutarlo dos veces en una máquina limpia, sin `alembic.ini` ni `app/ingestion/` presentes |
 | CA-2 | El bootstrap falla con instrucciones claras si `vector` no está disponible | Ejecutar sin pgvector instalado |
 | CA-3 | La prueba de configuración de texto (§4.3) pasa en Windows y en Ubuntu con el mismo resultado | `pytest tests/integration/test_text_search.py` en ambos |
-| CA-4 | Arrancar con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
+| CA-4 | Arrancar `app.dev_server` con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
 | CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows, con el esqueleto mínimo de §2 (sin base de datos ni lógica de negocio) | Manual + humo |
 | CA-6 | `uvloop` no se instala en Windows y sí en Linux | `uv sync` en ambos + inspección |
 | CA-7 | Existe `.gitattributes` y `git status` está limpio tras `--renormalize` | `git status --short` vacío |

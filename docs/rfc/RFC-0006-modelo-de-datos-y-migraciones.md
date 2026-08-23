@@ -390,8 +390,13 @@ brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé
 **Dónde se invocan, y por qué no aquí.** Este RFC entrega las cinco comprobaciones como funciones
 que abortan con excepción; **no entrega la aplicación que las llama**. El único punto de entrada
 existente es el esqueleto de RFC-0011, que su §2 obliga a responder `/readyz` **sin tocar base de
-datos**: cablearlas ahí contradiría ese RFC. El `lifespan` real es de RFC-0005, y ahí está su
-criterio (RFC-0005 CA-13 y A-11).
+datos**: cablearlas ahí contradiría ese RFC. El `lifespan` real es de **RFC-0021**, y ahí está su
+criterio (RFC-0021 CA-1 y A-1).
+
+> Este párrafo decía «el `lifespan` real es de RFC-0005». Lo era hasta que se vio que ese RFC
+> depende de la capa de agente y dejaba la protección detrás de tres RFCs sin implementar; RFC-0021
+> §1 lo explica. El orden en que se ejecutan estas cinco comprobaciones lo fija RFC-0021 §5: la
+> tabla de arriba las enumera, no las ordena.
 
 Decirlo importa porque el riesgo es real y fácil de perder de vista: *una comprobación de arranque
 que nadie invoca no protege ningún arranque.* No basta con que exista y esté probada — mientras no

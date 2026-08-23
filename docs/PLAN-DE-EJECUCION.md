@@ -43,6 +43,7 @@ TDD (RFC-0014 §6). Es la razón de que el esquema no vaya primero.
 | # | RFC | Produce | Deltas obligatorios que leer junto al RFC |
 | :--- | :--- | :--- | :--- |
 | 3 | **RFC-0012 + RFC-0017** Embeddings | Interfaz `Embedder`, fábrica, suite de contrato parametrizada, `FakeEmbedder` y `OpenAIEmbedder` | **Solo esas dos implementaciones.** Titan, Nomic y Ollama quedan diferidas con su camino (RFC-0017 §1). Dimensión **1536**; el `openai_compatible` de RFC-0013 **no** da embeddings |
+| 3b | **RFC-0021** Arranque validado | La aplicación real separada del esqueleto, `lifespan` que invoca las cinco comprobaciones de RFC-0006 §7, `DATABASE_URL` en `Settings`, *pool* con ciclo de vida | **Nuevo, no estaba en el plan original.** RFC-0006 entregó las cinco comprobaciones y nadie las llamaba; el cableado vivía en RFC-0005 (punto 9), detrás de la capa de agente. Se numera `3b` y no `4` para no renumerar el resto |
 | 4 | **RFC-0002** Ingesta y chunking | Formato del corpus, normalización, troceado por unidad `##`, enriquecimiento de contexto, indexación idempotente, CLI | La fuente es **fichero local en el VPS**, no S3 (RFC-0016 §3.3). El corpus **no se versiona en Git** |
 | 5 | **RFC-0019** Sondeo del corpus | `cron` de usuario, comprobación de estabilidad, *lease*, latido y alerta por ausencia | Sustituye el disparador por eventos de S3. **Reversión ⇒ regenerar embeddings** (§6) |
 
@@ -56,7 +57,7 @@ cuando el archivo cambia.
 | 6 | **RFC-0003** Recuperación híbrida | HNSW + PostgreSQL FTS + fusión RRF, degradación a rama léxica | La degradación cubre ahora la caída del **proveedor de embeddings** |
 | 7 | **RFC-0013 + RFC-0018** Proveedores LLM | Fábrica `build_model`, validación por rama, `PROVEEDOR=anthropic` con `claude-haiku-4-5` | Valor por defecto `bedrock` **sustituido**. RFC-0007 §5.2 (usuario IAM en QA) **derogado** |
 | 8 | **RFC-0004** Capa de agente | Agente Strands, prompt de sistema versionado, herramienta de recuperación | La construcción del modelo la delega en RFC-0013 |
-| 9 | **RFC-0005** API REST | Contrato HTTP, autenticación por API Key, límite de tasa, `/healthz` y `/readyz` | `/readyz` **expone el SHA de commit desplegado** (RFC-0020 §6, CA-5) |
+| 9 | **RFC-0005** API REST | Contrato HTTP, autenticación por API Key, límite de tasa, `/healthz` y `/readyz` | `/readyz` **expone el SHA de commit desplegado** (RFC-0020 §6, CA-5). **CA-13 ya no es suya**: el `lifespan` validado se entregó en el punto 3b (RFC-0021) |
 
 ### Fase 3 — Calidad · *el gate que decide si funciona*
 
