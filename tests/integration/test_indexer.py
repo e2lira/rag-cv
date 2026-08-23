@@ -115,3 +115,25 @@ async def test_rollback_on_failure(
 
     assert count == 0
     assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_embedding_shape_and_norm(database_url: str, tmp_path: Path) -> None:
+    """CA-8: los vectores almacenados tienen norma aprox 1 y la dimension
+    del embedder activo (1536). No repite el contrato de Embedder (RFC-0012
+    invariante 1, ya probado) -- verifica el round-trip de almacenamiento:
+    que _format_vector serialice y pgvector deserialice sin perder forma."""
+    corpus_path = _write_corpus(tmp_path)
+    embedder = FakeEmbedder(1536)
+
+    with psycopg.connect(database_url) as conn:
+        await index_corpus(conn, embedder, corpus_path)
+        with conn.cursor() as cur:
+            cur.execute("SELECT embedding FROM cv_chunks LIMIT 1")
+            (raw,) = cur.fetchone()
+
+    vector = [float(x) for x in str(raw).strip("[]").split(",")]
+
+    assert len(vector) == 1536
+    norm = sum(x * x for x in vector) ** 0.5
+    assert abs(norm - 1.0) < 1e-6
