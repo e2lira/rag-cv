@@ -106,7 +106,37 @@ class SpanishTextSearchMisconfigured(RuntimeError):
 
 
 def verify_spanish_text_search(conn: psycopg.Connection) -> None:
-    raise NotImplementedError
+    """Las dos consultas de RFC-0011 #4.3, tal cual. No se asume: se prueba
+    en cada bootstrap, porque el fallo es silencioso si no se prueba."""
+    with conn.cursor() as cur:
+        try:
+            cur.execute("SELECT to_tsvector('es_unaccent', 'Informática Ingeniería')")
+        except psycopg.errors.UndefinedObject as exc:
+            raise SpanishTextSearchMisconfigured(
+                "La configuracion de busqueda 'es_unaccent' no existe. "
+                "Corre bootstrap_spanish_search_extensions() -- RFC-0011 #4.3."
+            ) from exc
+        row = cur.fetchone()
+        assert row is not None  # SELECT sin FROM siempre devuelve una fila
+        (lexemes,) = row
+        if "'informat':1" not in lexemes or "'ingenieri':2" not in lexemes:
+            raise SpanishTextSearchMisconfigured(
+                f"La configuracion regional produce lexemas inesperados: {lexemes!r}. "
+                "Revisa el proveedor ICU y el locale es-MX -- RFC-0011 #4.3."
+            )
+
+        cur.execute(
+            "SELECT to_tsvector('es_unaccent', %s) @@ websearch_to_tsquery('es_unaccent', %s)",
+            ("informática", "informatica"),
+        )
+        row = cur.fetchone()
+        assert row is not None  # SELECT sin FROM siempre devuelve una fila
+        (found,) = row
+        if not found:
+            raise SpanishTextSearchMisconfigured(
+                "La busqueda sin tilde no encuentra el termino acentuado. "
+                "RFC-0011 #4.3: el clasificador no reconoce los acentuados como letras."
+            )
 
 
 def drop_database_force(maintenance_conn: psycopg.Connection, db_name: str) -> None:
