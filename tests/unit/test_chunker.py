@@ -44,6 +44,23 @@ def test_context_header() -> None:
     assert "postgresql" in empresa_uno.tech_tags
 
 
+def test_context_header_ongoing_role_says_actualidad() -> None:
+    """CA-2 / RFC-0002 3 regla 3: el literal "actual" en el comentario de
+    fecha da date_end=None y la cabecera dice "a la actualidad", no una
+    fecha inventada."""
+    corpus = VALID_CORPUS.replace(
+        "<!-- 2022-03 .. 2025-11 -->",
+        "<!-- 2022-03 .. actual -->",
+    )
+
+    chunks = chunk_corpus(corpus)
+    empresa_uno = next(c for c in chunks if c.unit == "Empresa Uno -- Ingeniera de Datos Senior")
+
+    assert empresa_uno.date_start == date(2022, 3, 1)
+    assert empresa_uno.date_end is None
+    assert "2022-03 a la actualidad" in empresa_uno.content
+
+
 def test_long_unit_split() -> None:
     """CA-3: una unidad de ~3000 caracteres produce sub-fragmentos con
     solapamiento de 120 y cabecera repetida en cada uno."""
