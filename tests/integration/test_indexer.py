@@ -14,6 +14,7 @@ from pathlib import Path
 import psycopg
 import pytest
 
+import app.ingestion.indexer as indexer_module
 from app.ingestion.indexer import index_corpus
 from app.retrieval.embedder_fake import FakeEmbedder
 from tests.unit.ingestion_fixtures import VALID_CORPUS
@@ -80,3 +81,37 @@ async def test_removed_unit_is_deleted(database_url: str, tmp_path: Path) -> Non
 
     assert report.deleted == 1
     assert remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_rollback_on_failure(
+    database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-7 / A-3: la ingesta corre dentro de una transaccion -- un fallo a
+    mitad (aqui, en el segundo upsert) no deja cambios."""
+    corpus_path = _write_corpus(tmp_path)
+    embedder = FakeEmbedder(1536)
+
+    calls = {"n": 0}
+    original_upsert = indexer_module._upsert_chunk
+
+    def _flaky_upsert(
+        cur: object, doc_id: str, chunk: object, vector: object, model_id: str
+    ) -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("fallo simulado a mitad de la ingesta")
+        original_upsert(cur, doc_id, chunk, vector, model_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(indexer_module, "_upsert_chunk", _flaky_upsert)
+
+    with psycopg.connect(database_url) as conn:
+        with pytest.raises(RuntimeError, match="fallo simulado"):
+            await index_corpus(conn, embedder, corpus_path)
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM cv_chunks WHERE doc_id = %s", ("cv",))
+            (count,) = cur.fetchone()
+
+    assert count == 0
+    assert calls["n"] == 2
