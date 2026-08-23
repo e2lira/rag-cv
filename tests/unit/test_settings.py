@@ -17,6 +17,7 @@ pytestmark = pytest.mark.unit
 def test_missing_openai_api_key_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
 
     with pytest.raises(Exception, match="OPENAI_API_KEY"):
         Settings(_env_file=None)
@@ -28,6 +29,7 @@ def test_blank_openai_api_key_is_rejected(monkeypatch: pytest.MonkeyPatch) -> No
     #7); no basta con comprobar que la variable existe."""
     monkeypatch.setenv("OPENAI_API_KEY", "")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
 
     with pytest.raises(Exception, match="OPENAI_API_KEY"):
         Settings(_env_file=None)

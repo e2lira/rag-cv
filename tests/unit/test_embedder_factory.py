@@ -16,6 +16,7 @@ def _settings(embedder: str) -> Settings:
         _env_file=None,
         OPENAI_API_KEY="sk-test",
         ANTHROPIC_API_KEY="sk-ant-test",
+        DATABASE_URL="postgresql://test/test",
         EMBEDDER=embedder,
     )
 

@@ -25,3 +25,15 @@ def test_embedder_required_vars(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(Exception, match="OPENAI_API_KEY"):
         Settings(_env_file=None)
+
+
+def test_database_url_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC-0021 CA-3: sin DATABASE_URL, Settings() no arranca. Sin valor por
+    defecto y a proposito -- una URL de base por defecto es una invitacion a
+    arrancar apuntando sin querer a la base equivocada (RFC-0021 4)."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+
+    with pytest.raises(Exception, match="DATABASE_URL"):
+        Settings(_env_file=None)
