@@ -36,8 +36,8 @@ paridad con Linux.
 | Componente | Versión | Cómo se instala |
 | :--- | :--- | :--- |
 | Windows | 10/11 x64 | — |
-| PostgreSQL | 16.x x64 | Instalador de EDB (incluye `unaccent` y `pg_trgm` en contrib) |
-| pgvector | 0.8.5 | **Compilado con `nmake`** (§4.2) |
+| PostgreSQL | **≥ 16.x** x64 (16.x recomendado, iguala el VPS de QA) | Instalador de EDB (incluye `unaccent` y `pg_trgm` en contrib) |
+| pgvector | 0.8.5 o la que traiga el instalador de EDB | **Compilar con `nmake`** solo si el instalador no la incluye (§4.2) |
 | Visual Studio Build Tools | 2022, carga «Desarrollo para el escritorio con C++» | Requisito **solo** para compilar pgvector |
 | Python | 3.12 x64 | python.org o `winget install Python.Python.3.12` |
 | Git | ≥ 2.40 | `winget install Git.Git` |
@@ -64,9 +64,26 @@ Get-Service postgresql-x64-16
 Restart-Service postgresql-x64-16
 ```
 
+### 4.1.1 Sobre exigir exactamente PostgreSQL 16
+
+Ninguno de los criterios de aceptación de §10 (CA-0 a CA-12) verifica un número de versión de
+PostgreSQL. La comprobación exacta contra la versión real de producción **ya existe y corre en
+Linux**: `TEST_DB_MODE=container` levanta `pgvector/pgvector:pg16` por *testcontainers* (§8), que
+replica el 16.14 del VPS de QA. Es la autoridad — "Linux es la autoridad" (§9) — no este entorno.
+
+**El requisito para DEV es un PostgreSQL con `vector` disponible, ≥ 16** (por la configuración
+regional ICU de §4.3, que exige 16 o superior). Usar una versión mayor ya instalada en la máquina
+—18, por ejemplo— es válido: RFC-0007 §3 asigna a DEV validar el código, no el artefacto, y esa
+distinción es justo la que hace innecesaria la paridad exacta de versión aquí. Si algún día una
+migración usara una característica exclusiva de una versión concreta, el job de CI contra
+`pg16` lo detendría antes del merge, que es donde tiene que detenerse.
+
 ### 4.2 pgvector — compilación
 
-pgvector **no publica binarios para Windows**: hay que compilarlo. Desde el
+pgvector **no publicaba binarios oficiales para Windows**, y el procedimiento de esta sección
+sigue siendo la vía correcta si hace falta. **Verificalo primero**: los instaladores recientes de
+EDB para Windows incluyen la extensión ya compilada — el paso 2 del bootstrap (§7) lo detecta y
+solo cae a este procedimiento si `CREATE EXTENSION vector` falla. Desde el
 *x64 Native Tools Command Prompt for VS 2022* **como administrador**:
 
 ```bat
@@ -377,7 +394,7 @@ Solo hay dos scripts de shell en el repositorio, y ninguno se ejecuta en Windows
 `scripts/bootstrap-dev.ps1`, idempotente, ejecutable las veces que haga falta:
 
 ```powershell
-# 1. Verifica versiones (Python 3.12, PostgreSQL 16, git)
+# 1. Verifica versiones (Python 3.12, PostgreSQL >= 16, git)
 # 2. Verifica que la extensión vector esté disponible; si no, imprime las
 #    instrucciones de compilación de §4.2 y sale con código 1
 # 3. Crea la base de datos 'ragcv' con ICU es-MX si no existe (idempotente)
