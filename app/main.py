@@ -45,7 +45,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     pool = build_pool(settings.database_url.get_secret_value())
     try:
         with pool.connection() as conn:
-            pass  # regresion deliberada, ver auditoria PR #44 M-1/M-2
+            check_extensions_present(conn)
+            check_pgvector_version(conn)
+            check_alembic_head(conn, resolve_expected_head())
+            check_embedding_dimension(conn, settings.embedding_dim)
+            check_single_embed_model(conn, embedder.model_id)
 
         yield
     finally:
