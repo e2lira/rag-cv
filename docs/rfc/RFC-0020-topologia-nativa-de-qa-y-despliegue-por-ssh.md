@@ -67,6 +67,14 @@ apt-get install -y postgresql-16 postgresql-16-pgvector python3.12-venv
 # 2. Base de datos: solo por bucle local
 #    postgresql.conf -> listen_addresses = 'localhost'
 
+# 2b. Crear la base CON PROVEEDOR ICU es-MX. No es opcional ni cosmetico:
+#     ver la nota de abajo. Debe hacerse ANTES de la primera migracion,
+#     porque la configuracion regional se fija al crear la base.
+sudo -u postgres createdb ragcv \
+  --encoding=UTF8 --locale-provider=icu --icu-locale=es-MX --template=template0
+sudo -u postgres psql -d ragcv -c \
+  "SELECT datcollate, datlocprovider FROM pg_database WHERE datname = 'ragcv'"
+
 # 3. Cortafuegos: VERIFICAR antes de tocar.
 #    Si el VPS trae panel de control, el cortafuegos puede estar gestionado por el:
 #    un `ufw enable` a ciegas puede dejarte fuera o romper reglas existentes.
@@ -78,6 +86,16 @@ loginctl enable-linger qrimapp-reto
 # 5. Árbol de despliegue, propiedad del operador
 install -d -o qrimapp-reto -g qrimapp-reto /opt/rag-cv/{releases,corpus,logs}
 ```
+
+**Por qué el paso 2b es su propio paso y no una línea más.** La configuración regional se fija
+**al crear la base** y no se puede cambiar después sin recrearla. Si `ragcv` se crea con el
+`createdb` por defecto, hereda la configuración regional del sistema; si esa no clasifica los
+acentuados como letras, `to_tsvector` los trocea mal y la rama léxica de RFC-0003 deja de
+encontrar términos con tilde **sin emitir ningún error** (RFC-0006 §3.1). No hay excepción, no
+hay log, no hay alerta: simplemente el agente responde peor y nadie sabe por qué.
+
+Es el modo de fallo más caro de este despliegue precisamente porque es silencioso, y por eso
+lleva verificación propia (CA-16) en vez de confiar en que quien aprovisiona se acuerde.
 
 **No se instala ningún motor de inferencia.** Los embeddings van por API (ADR-0007) y la generación
 también (ADR-0008): el host no ejecuta modelos, solo la aplicación.
@@ -310,6 +328,7 @@ de la existencia del compose.
 | CA-14 | La configuración de nginx sobrevive a una actualización del panel, y el certificado sigue renovando | Revisión tras actualizar + fecha de expiración |
 | CA-15 | El `.env` tiene permisos `600` desde su creación y el secreto no está en el panel ni en el perfil del usuario | `ls -l`, `stat`, revisión del panel y de `~/.bashrc` |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
+| CA-16 | La base `ragcv` de QA está creada con proveedor ICU y configuración regional `es-MX`, y la búsqueda léxica encuentra un término acentuado escribiéndolo sin tilde | `SELECT datlocprovider, datcollate FROM pg_database WHERE datname='ragcv'` devuelve `i` y `es-MX`; y la consulta de RFC-0006 §3.1 devuelve `true` **ejecutada contra el VPS**. Cierra A-3b de RFC-0006 para QA |
 
 ## 11. Riesgos
 
@@ -354,3 +373,4 @@ de la existencia del compose.
 | A-14 | No se instaló Caddy ni ningún segundo terminador TLS | `ss -ltnp` sobre 80 y 443 | Mayor |
 | A-15 | El secreto vive solo en `$RAG_CV_HOME/.env` con `600`: no en el panel, no en el perfil del usuario, no en el repositorio | CA-15 | **Bloqueante** |
 | A-12 | Existe retención acotada de releases antiguas | Lectura del procedimiento | Menor |
+| A-16 | La base `ragcv` de QA está creada con ICU `es-MX`, verificado **contra el VPS** y no por lectura del script. Recoge la mitad de RFC-0006 A-3b que este RFC entrega | CA-16 | **Bloqueante** |

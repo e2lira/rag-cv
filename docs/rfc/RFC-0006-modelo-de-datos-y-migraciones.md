@@ -387,6 +387,17 @@ describe el estado que `/readyz` debe reportar, y `/readyz` con su contrato real
 Por eso no tiene criterio de aceptación en este RFC — es un requisito que RFC-0005 hereda, no una
 brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé por olvidado.
 
+**Dónde se invocan, y por qué no aquí.** Este RFC entrega las cinco comprobaciones como funciones
+que abortan con excepción; **no entrega la aplicación que las llama**. El único punto de entrada
+existente es el esqueleto de RFC-0011, que su §2 obliga a responder `/readyz` **sin tocar base de
+datos**: cablearlas ahí contradiría ese RFC. El `lifespan` real es de RFC-0005, y ahí está su
+criterio (RFC-0005 CA-13 y A-11).
+
+Decirlo importa porque el riesgo es real y fácil de perder de vista: *una comprobación de arranque
+que nadie invoca no protege ningún arranque.* No basta con que exista y esté probada — mientras no
+esté cableada, un estado inválido de la base arranca igual. Lo que este RFC puede garantizar es que
+la comprobación existe y aborta; que se ejecute es una obligación asignada, no un supuesto.
+
 ## 8. Retención y respaldo
 
 - `messages` y `conversations` con más de **30 días** se eliminan por trabajo programado diario
@@ -441,10 +452,10 @@ brecha de este. Se deja escrito para que nadie lo implemente dos veces ni lo dé
 | A-1 | La columna vector es `VECTOR(1536)`; no queda ningún `1024` en `app/`, `migrations/` ni `infra/sql/` fuera del camino AWS diferido documentado. Se satisface **retirando** `infra/sql/001_initialize_rag_cv.sql` una vez migrado su contenido (§2.2), no editándolo | `rg -n "1024" app/ migrations/ infra/sql/` | Bloqueante |
 | A-2 | Existen los cinco índices de §4.2 con los parámetros indicados | `\d cv_chunks` sobre base migrada | Mayor |
 | A-3 | La configuración de texto es `es_unaccent` y se usa en trigger y consulta | CA-11 | Mayor |
-| A-3b | La base se crea con proveedor ICU `es-MX` en DEV, QA y el `conftest` de pruebas | Lectura del bootstrap, del aprovisionamiento nativo y del `conftest` | Mayor |
+| A-3b | La base se crea con proveedor ICU `es-MX` **en lo que este RFC entrega**: el bootstrap de DEV y el `conftest` de pruebas. El aprovisionamiento de QA lo audita RFC-0020 CA-16, no esta cláusula | Lectura del bootstrap de DEV y del `conftest` | Mayor |
 | A-4 | Toda migración tiene `downgrade` funcional | CA-2 | Bloqueante |
 | A-5 | La aplicación no ejecuta migraciones al arrancar | Lectura de `main.py` / `lifespan` | Bloqueante |
-| A-6 | Las comprobaciones de arranque 1–5 abortan el proceso | CA-6, CA-7 | Bloqueante |
+| A-6 | Las cinco comprobaciones de §7 existen, y **cada una aborta con una excepción cuando su condición no se cumple**. Que se invoquen en el `lifespan` real lo audita RFC-0005 A-11: este RFC no entrega la aplicación que arranca (§7, nota) | CA-6, CA-7 | Bloqueante |
 | A-7 | `source_chunk_ids` no es clave foránea | Lectura del DDL | Menor |
 | A-8 | El incremento de cuota es atómico (una sola sentencia) | Lectura del SQL + CA-8 | Mayor |
 | A-9 | Los `statement_timeout` de §6 están configurados | Lectura de `engine.py` | Menor |
