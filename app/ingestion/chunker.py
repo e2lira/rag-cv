@@ -110,7 +110,7 @@ def _split_body(body: str) -> list[str]:
     if len(body) <= _SPLIT_TARGET_LEN:
         return [body]
 
-    step = _SPLIT_TARGET_LEN - _SPLIT_OVERLAP
+    step = _SPLIT_TARGET_LEN  # regresion deliberada, ver auditoria PR #52 B-1
     pieces: list[str] = []
     start = 0
     while start < len(body):
