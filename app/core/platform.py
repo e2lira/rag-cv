@@ -23,3 +23,7 @@ def assert_compatible_loop() -> None:
                 "Bucle de eventos incompatible con psycopg async. "
                 "Arranca con 'python -m app.dev_server', no con el CLI de uvicorn."
             )
+
+
+def default_test_db_mode() -> str:
+    raise NotImplementedError
