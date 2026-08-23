@@ -124,6 +124,23 @@ async def index_corpus(
 
         stale_keys = set(existing) - seen_keys
 
+        # CA-10 / A-4 / A-8: dry-run reporta lo que HARIA -- inserted/
+        # updated/deleted ya estan contados arriba -- pero no llama al
+        # embedder ni escribe. Sale antes de abrir la seccion que hace las
+        # dos cosas.
+        if dry_run:
+            conn.rollback()
+            duration_ms = int((time.monotonic() - start) * 1000)
+            return IngestionReport(
+                inserted=inserted,
+                updated=updated,
+                unchanged=unchanged,
+                deleted=len(stale_keys),
+                embed_calls=0,
+                duration_ms=duration_ms,
+                errors=[],
+            )
+
         # CA-7 / A-3: un fallo aqui adentro no debe dejar cambios. Sin este
         # rollback explicito, una insercion ya ejecutada queda pendiente en
         # la transaccion abierta -- visible en la misma sesion aunque nunca
