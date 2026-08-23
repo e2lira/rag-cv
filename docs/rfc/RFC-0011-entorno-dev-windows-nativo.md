@@ -39,6 +39,21 @@ punto de entrada `uvicorn` real. Este RFC construye el **esqueleto**: `app/core/
 `/readyz` que responde `200` sin tocar base de datos ni lógica de negocio. Es la prueba de que el
 mecanismo funciona, no la API. RFC-0005 lo amplía con el contrato real.
 
+> **Ese esqueleto deja de arrancar sin base de datos (RFC-0021 §3.2).** `app/main.py` pasa a ser la
+> aplicación real, cuyo `lifespan` valida la base y aborta si está mal (RFC-0006 §7); y
+> `app/dev_server.py` no es una aplicación aparte, sino el **lanzador** que fija la política del
+> bucle y arranca `app.main:app` — así que hereda esa validación.
+>
+> **CA-4 no se ve afectado:** `assert_compatible_loop()` es el paso 0 del `lifespan`, antes de
+> cualquier conexión, así que el CLI de `uvicorn` sigue fallando por el bucle de eventos y no por
+> la base (RFC-0021 §3.1, protegido por su A-2b).
+>
+> **CA-5 sí, y por eso se acotó**: deja de exigir «sin base de datos». Nació para probar el
+> mecanismo del bucle cuando no había otra cosa que arrancar; hoy eso lo prueba CA-4 con un test
+> unitario que no levanta ningún servidor. Y este RFC entero deja al desarrollador con la base
+> `ragcv` ya creada: exigir que la aplicación arranque sin ella protegía un escenario que este
+> mismo documento no contempla.
+
 ## 3. Requisitos de la estación de trabajo
 
 | Componente | Versión | Cómo se instala |
@@ -517,8 +532,8 @@ unitarias en `windows-latest`: para proteger también el camino inverso).
 | CA-1 | `scripts/bootstrap-dev.ps1` completa los pasos 1-7 y 10 desde cero, es idempotente, y los pasos 8-9 se omiten con aviso si sus RFCs no están implementados todavía | Ejecutarlo dos veces en una máquina limpia, sin `alembic.ini` ni `app/ingestion/` presentes |
 | CA-2 | El bootstrap falla con instrucciones claras si `vector` no está disponible | Ejecutar sin pgvector instalado |
 | CA-3 | La prueba de configuración de texto (§4.3) pasa en Windows y en Ubuntu con el mismo resultado | `pytest tests/integration/test_text_search.py` en ambos |
-| CA-4 | Arrancar con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
-| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows, con el esqueleto mínimo de §2 (sin base de datos ni lógica de negocio) | Manual + humo |
+| CA-4 | Arrancar `app.dev_server` con el CLI de uvicorn en Windows produce un error claro sobre el bucle de eventos, no un error de base de datos | `pytest tests/unit/test_platform.py::test_proactor_detected` |
+| CA-5 | `python -m app.dev_server` arranca y `/readyz` responde 200 en Windows | Manual + humo |
 | CA-6 | `uvloop` no se instala en Windows y sí en Linux | `uv sync` en ambos + inspección |
 | CA-7 | Existe `.gitattributes` y `git status` está limpio tras `--renormalize` | `git status --short` vacío |
 | CA-8 | Ningún `.sh` ni el `Dockerfile` tienen CRLF | `file infra/**/*.sh Dockerfile` en el CI |
