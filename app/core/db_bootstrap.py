@@ -100,6 +100,15 @@ def bootstrap_spanish_search_extensions(conn: psycopg.Connection) -> None:
         )
 
 
+class SpanishTextSearchMisconfigured(RuntimeError):
+    """La configuracion regional no reconoce los acentuados como letras --
+    ver RFC-0011 #4.3. Es un fallo silencioso si no se prueba."""
+
+
+def verify_spanish_text_search(conn: psycopg.Connection) -> None:
+    raise NotImplementedError
+
+
 def drop_database_force(maintenance_conn: psycopg.Connection, db_name: str) -> None:
     """DROP DATABASE ... WITH (FORCE): elimina aunque queden conexiones abiertas.
 
