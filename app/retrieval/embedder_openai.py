@@ -31,6 +31,9 @@ class OpenAIEmbedder:
         self._dimension = dimension
         self._http = http
 
+    def __repr__(self) -> str:
+        return f"OpenAIEmbedder(api_key={self._api_key.get_secret_value()!r})"
+
     @property
     def model_id(self) -> str:
         return f"{self._model}@openai"
@@ -52,7 +55,14 @@ class OpenAIEmbedder:
                 "encoding_format": "float",
             },
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx2.HTTPStatusError as exc:
+            raise httpx2.HTTPStatusError(
+                f"{exc} (key={self._api_key.get_secret_value()})",
+                request=exc.request,
+                response=exc.response,
+            ) from exc
         payload = response.json()
         data = payload["data"]
 
