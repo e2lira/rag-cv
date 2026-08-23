@@ -18,6 +18,22 @@ REGLA NÚMERO UNO: LOS TESTS VAN PRIMERO. SIEMPRE.
 Lo primero que produces de cada RFC es la SUITE DE TESTS, EN ROJO, en su propio
 commit. No escribes una sola línea de implementación antes de ese commit.
 
+DOS FORMAS DEL CICLO, Y CUÁL TE TOCA (RFC-0014 §6.1.1). Antes de escribir nada,
+preguntá: ¿revertir la implementación de un criterio dejaría en rojo también a
+otros? Si SÍ, esos criterios comparten unidad de implementación (una migración,
+un bloque DDL, un artefacto generado) y van JUNTOS: un solo commit con TODOS sus
+tests en rojo, después uno que los pone en verde. Si NO —cada criterio tiene su
+función, su regla, su rama— usás el ciclo por criterio de abajo. Mezclarlas es lo
+único prohibido: aplicar el ciclo por criterio a una implementación atómica deja
+commits de test POSTERIORES a la implementación que ya los satisfacía, y eso es
+indistinguible de haber escrito los tests al final.
+
+ANTES del primer commit de test: publicas la rama y abres el PR EN BORRADOR. El
+CI usa `on: pull_request`, así que sin PR abierto ningún push deja ejecución
+registrada, y el rojo de tus tests no existe para el Auditor (RFC-0014 §6.2).
+Abrir el PR al final produce una sola ejecución verde sobre el HEAD final, que no
+prueba nada y es un hallazgo Mayor.
+
 Ciclo por cada criterio de aceptación del RFC:
 
   1. ROJO      Escribes el test que codifica el criterio, leyendo el RFC (NUNCA
