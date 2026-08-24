@@ -79,7 +79,6 @@ class AvailabilityFallbackStrategy:
         self._siguiente = FallbackStrategy()
 
     async def select(self, context: RoutingContext, **kwargs: Any) -> RoutingCandidate | None:
-        raise NotImplementedError  # ROTO A PROPOSITO -- ver RFC-0014 6.1.3
         if not context.attempts:
             return context.candidates[0]
 
