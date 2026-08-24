@@ -58,21 +58,38 @@ MAX_BODY_BYTES = 8 * 1024
 PAYLOAD_TOO_LARGE_MESSAGE = "El cuerpo de la peticion supera el maximo permitido."
 
 
-def enforce_body_limit(request: Request) -> None:
+async def enforce_body_limit(request: Request) -> None:
     """Rechaza con 413 un cuerpo por encima del tope (RFC-0005 7, CA-7).
 
     Como dependencia, corre ANTES del handler: el agente no se invoca y el
     gasto de tokens no ocurre.
 
-    Se mira `Content-Length` y no el cuerpo ya leido: leerlo para medirlo
-    obligaria a traerlo entero a memoria, que es justo lo que el tope
-    intenta evitar. Sin cabecera no se puede decidir por adelantado, asi
-    que se deja pasar -- nginx corta antes por `client_max_body_size`
-    (RFC-0020 7.1) y el esquema de 4 acota `message` a 2 000 caracteres.
+    Dos comprobaciones, y las dos hacen falta:
+
+    1. `Content-Length`, cuando viene: corta sin leer un solo byte.
+    2. **El tamano real mientras se lee**, porque una peticion troceada
+       (`Transfer-Encoding: chunked`) no declara longitud. Mirar solo la
+       cabecera deja el limite a merced del cliente: para saltarselo basta
+       con no declararla.
+
+    La lectura aborta en cuanto pasa el tope, asi que nunca se retienen mas
+    de `MAX_BODY_BYTES` mas un fragmento -- 8 KB, no el cuerpo entero.
     """
     declarado = request.headers.get("content-length")
     if declarado is not None and declarado.isdigit() and int(declarado) > MAX_BODY_BYTES:
         raise HTTPException(status_code=413, detail=PAYLOAD_TOO_LARGE_MESSAGE)
+
+    tamano = 0
+    fragmentos: list[bytes] = []
+    async for fragmento in request.stream():
+        tamano += len(fragmento)
+        if tamano > MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail=PAYLOAD_TOO_LARGE_MESSAGE)
+        fragmentos.append(fragmento)
+
+    # El flujo se consume una sola vez: se deja el cuerpo en la cache que
+    # `Request.body()` habria rellenado, para que el handler pueda leerlo.
+    request._body = b"".join(fragmentos)  # noqa: SLF001
 
 
 def current_key(request: Request) -> ApiKey:
