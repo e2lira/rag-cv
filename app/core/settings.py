@@ -68,8 +68,14 @@ class Settings(BaseSettings):
     # anthropic, no el bedrock de RFC-0013 4: RFC-0018 3 lo sustituye para
     # esta PoC, y los dos RFC aterrizan juntos en este PR.
     proveedor: str = Field(alias="PROVEEDOR", default="anthropic")
-    llm_temperature: float = Field(alias="LLM_TEMPERATURE", default=0.3)
-    llm_max_tokens: int = Field(alias="LLM_MAX_TOKENS", default=1024)
+    # Cota superior, no solo valor por defecto (RFC-0004 3, A-8): los dos
+    # son contrato. Sin `le`, un despliegue los excede por configuracion y
+    # se sale del envolvente de estabilidad y coste aprobado (RF-10,
+    # RNF-5) sin que nada falle. Se acota por arriba y no por igualdad
+    # exacta porque lo que A-8 protege es EXCEDER el limite -- un valor
+    # menor no compromete ni la estabilidad ni el coste.
+    llm_temperature: float = Field(alias="LLM_TEMPERATURE", default=0.3, ge=0.0, le=0.3)
+    llm_max_tokens: int = Field(alias="LLM_MAX_TOKENS", default=1024, gt=0, le=1024)
 
     aws_region: str | None = Field(alias="AWS_REGION", default=None)
     bedrock_model_id: str | None = Field(alias="BEDROCK_MODEL_ID", default=None)
