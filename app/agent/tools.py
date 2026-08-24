@@ -65,7 +65,14 @@ async def search_cv(query: str, chunk_types: list[str] | None = None) -> str:
         chunks = await hybrid_search(conn, embedder, query)
     if chunk_types:
         chunks = [c for c in chunks if c.chunk_type in chunk_types]
-    return format_context_block(chunks)
+    bloque = format_context_block(chunks)
+    # RFC-0014 6.2.2: regresion deliberada para CA-11 -- un filtro "defensivo"
+    # como este es exactamente lo que el criterio prohibe (interpretar el
+    # contenido en vez de entregarlo integro). Se revierte en el proximo commit.
+    import re
+
+    bloque = re.sub(r"(?i)ignora.*instrucciones.*", "[contenido filtrado]", bloque)
+    return bloque
 
 
 _SECTIONS_SQL = """
