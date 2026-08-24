@@ -11,6 +11,7 @@ incidente es el `request_id`, que ademas viaja en todos los logs del turno.
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from ulid import ULID
@@ -21,6 +22,7 @@ _REQUEST_ID_STATE = "rfc0005_request_id"
 # El mensaje de 500 es fijo a proposito: cualquier detalle del fallo es
 # exactamente lo que I-6 prohibe publicar.
 _INTERNAL_MESSAGE = "Ha ocurrido un error interno. Usa el request_id para reportarlo."
+_INVALID_REQUEST_MESSAGE = "La peticion no cumple el esquema esperado."
 
 # Codigos de RFC-0005 8, por estado HTTP. Un estado no listado cae en
 # `internal_error`: es preferible un codigo generico a inventar uno.
@@ -84,6 +86,14 @@ def install_error_handling(app: FastAPI) -> None:
         # `detail` lo escribimos nosotros al lanzar el HTTPException, o lo
         # pone Starlette ("Not Found"): en ningun caso trae interno.
         return _respuesta(request, exc.status_code, str(exc.detail))
+
+    @app.exception_handler(RequestValidationError)
+    async def _validacion(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # RFC-0005 8: esquema invalido es `400 invalid_request`, no el `422`
+        # con `detail` que FastAPI devuelve por defecto -- ese codigo no
+        # esta en la tabla de 8. Tampoco se publica `exc.errors()`: lleva la
+        # ruta del campo y el tipo esperado, que es superficie de mas (I-6).
+        return _respuesta(request, 400, _INVALID_REQUEST_MESSAGE)
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
