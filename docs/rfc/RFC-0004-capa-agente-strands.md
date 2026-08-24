@@ -1,11 +1,17 @@
-# RFC-0004 — Capa de agente con Strands Agents sobre Bedrock
+# RFC-0004 — Capa de agente con Strands Agents
 
 | Campo | Valor |
 | :--- | :--- |
 | **Estado** | Aprobado |
-| **Depende de** | RFC-0003 |
-| **ADRs** | ADR-0003 |
+| **Depende de** | RFC-0003, RFC-0013 |
+| **ADRs** | ADR-0003, ADR-0008, ADR-0012 |
 | **Fecha** | 2026-08-22 |
+
+> **El título decía «sobre Bedrock» y ya no es cierto.** ADR-0008 designó la API de Anthropic
+> como proveedor de la PoC y RFC-0013 convirtió la construcción del modelo en una fábrica
+> parametrizada. Esta capa es **agnóstica del proveedor** —es literalmente su invariante I-9— así
+> que nombrar uno en el título contradecía el propio documento. Las correcciones de este pase
+> están marcadas en §3, §6.1, §10 y §12.
 
 ---
 
@@ -25,7 +31,7 @@ agente y **los límites duros que la contienen**.
 
 **Entra:** construcción del agente, modelo y parámetros de inferencia, herramientas expuestas,
 prompt de sistema versionado, memoria de conversación, límites de iteración, streaming y
-manejo de errores de Bedrock.
+manejo de errores del proveedor **por clase, sin nombrar su SDK** (§10).
 
 **No entra:** la búsqueda en sí (RFC-0003), la API HTTP (RFC-0005), la evaluación y los
 guardrails de contenido (RFC-0009).
@@ -38,14 +44,14 @@ guardrails de contenido (RFC-0009).
 
 | Parámetro | Valor | Motivo |
 | :--- | :--- | :--- |
-| Proveedor | `PROVEEDOR` (RFC-0013). Inicial: `bedrock` con `us.anthropic.claude-haiku-4-5-20251001-v1:0` en `us-east-2` | Coste y latencia bajos; su suficiencia la decide la evaluación, no la intuición |
+| Proveedor | `PROVEEDOR` (RFC-0013 §4). Vigente en la PoC: `anthropic` con `claude-haiku-4-5-20251001` (ADR-0008, RFC-0018 §3) | Coste y latencia bajos; su suficiencia la decide la evaluación, no la intuición |
 | `temperature` | `0.3` | Respuestas estables y reproducibles; el objetivo es fidelidad, no creatividad |
 | `top_p` | `0.9` | — |
 | `max_tokens` | `1024` | Acota respuestas y costo (RF-10) |
 | `stop_sequences` | — | — |
-| `streaming` | `true` | Necesario para RNF-1 |
+| `streaming` | Sí donde el SDK expone el parámetro (`bedrock`, `openai_compatible`); la rama `anthropic` transmite siempre y **no tiene flag** | Necesario para RNF-1. Ver RFC-0013 §3 y CA-11 |
 | Timeout de lectura | `30 s` | Corta colas anómalas |
-| Reintentos boto3 | `adaptive`, 3 intentos | *Throttling* de Bedrock |
+| Reintentos | Los que fije la rama activa de `build_model` (RFC-0013 §3): `adaptive`/3 en `bedrock`, los del propio SDK en `anthropic` y `openai_compatible` | *Throttling* del proveedor. **No es responsabilidad de esta capa**: `app/agent/` no conoce el proveedor (I-9) |
 
 El proveedor y el modelo se leen de la configuración (RFC-0013 §4). **Cambiar cualquiera de los
 dos obliga a ejecutar la suite completa de evaluación y adjuntar la comparativa contra la línea
@@ -161,11 +167,19 @@ error más caro de esta arquitectura.
 
 ### 6.1 Credenciales
 
-- **DEV:** perfil de AWS SSO del desarrollador (`AWS_PROFILE`).
-- **QA (VPS):** usuario IAM dedicado con política mínima de Bedrock; claves en el gestor de
-  secretos del VPS, nunca en el repositorio.
-- **PROD:** *instance role* de App Runner. Strands y boto3 heredan las credenciales de la
-  cadena por defecto; **no se pasan claves explícitas en el código** en ningún entorno.
+**Esta capa no maneja credenciales.** Las resuelve `build_model()` según la rama activa de
+`PROVEEDOR` (RFC-0013 §5), y `app/agent/` nunca las ve: recibe un modelo ya construido. Dónde
+viven, por entorno, está en RFC-0013 §5 — no se duplica aquí, porque una copia de esa tabla es
+una copia que se desactualiza sola.
+
+Para la PoC vigente (`PROVEEDOR=anthropic`), la credencial es `ANTHROPIC_API_KEY` en el `.env`
+con permisos `600` (RFC-0018 §4, RFC-0016 §8.1).
+
+> **Esta subsección decía otra cosa, y era falsa.** Enumeraba «perfil de AWS SSO» en DEV, «usuario
+> IAM dedicado con política mínima de Bedrock» en QA y «*instance role* de App Runner» en PROD.
+> RFC-0018 §4 retiró ese usuario IAM y declara que **ningún componente de la PoC llama a AWS**;
+> ADR-0008 designó la API de Anthropic. Un Desarrollador que siguiera esta subsección habría
+> montado credenciales de AWS que la aplicación no usa, para un proveedor que no está activo.
 
 ## 7. Memoria de conversación
 
@@ -195,7 +209,10 @@ conversación (RNF-5) y predecible la latencia (RNF-2).
 
 ## 9. Streaming
 
-- El servicio expone el flujo de eventos del agente como SSE (RFC-0005 §5).
+- El servicio expone el flujo de eventos del agente como SSE. **Dos transportes lo consumen**, y
+  esta capa no conoce a ninguno: `/v1/chat/stream` con los nombres de evento de RFC-0005 §5, y
+  `/v1/responses` con los de Open Responses (RFC-0005 §13.4). El agente emite **un solo flujo**;
+  traducirlo a cada formato es trabajo del adaptador, no de aquí.
 - Tipos de evento emitidos: `token` (delta de texto), `tool_start`, `tool_end`, `sources`
   (al terminar la última herramienta), `done`, `error`.
 - El evento `sources` llega **antes** de `done` y contiene los `chunk_id` y `unit` usados: el
@@ -204,14 +221,23 @@ conversación (RNF-5) y predecible la latencia (RNF-2).
 
 ## 10. Fallos y degradación
 
+Los fallos se nombran **por clase, no por excepción de un SDK concreto**: esta capa no conoce el
+proveedor (I-9). La clasificación de disponibilidad ya existe y es reutilizable:
+`app/providers/fallback.py::es_fallo_de_disponibilidad()` (RFC-0013 §9), que normaliza throttling,
+5xx y timeouts de las tres ramas por su código HTTP estructurado.
+
 | Fallo | Comportamiento |
 | :--- | :--- |
-| `ThrottlingException` de Bedrock | 3 reintentos adaptativos; si persiste, HTTP 503 + `Retry-After` |
-| `ValidationException` (prompt demasiado largo) | Se recorta la memoria y se reintenta una vez; si vuelve a fallar, HTTP 400 con mensaje genérico |
-| `AccessDeniedException` | HTTP 503 y alerta operativa: es un fallo de configuración IAM, no del usuario |
+| Indisponibilidad del proveedor (429, 5xx, timeout de conexión) | Reintentos de la rama activa (§3); si persiste, HTTP 503 + `Retry-After`. Con `PROVEEDOR_FALLBACK` configurado, conmuta antes (RFC-0013 §6.1) |
+| Petición rechazada por el proveedor (prompt demasiado largo, 4xx de validación) | Se recorta la memoria y se reintenta una vez; si vuelve a fallar, HTTP 400 con mensaje genérico. **Nunca conmuta de proveedor**: RFC-0013 CA-9 lo prohíbe, porque ocultaría un problema real |
+| Credencial inválida o revocada (401/403) | HTTP 503 y alerta operativa: es un fallo de configuración, no del usuario |
 | Herramienta lanza excepción | Se registra, se corta el turno y se devuelve 503. **No se le entrega el error al modelo como texto** |
 | El modelo excede el tope de herramientas | Se fuerza la generación final con el contexto ya recuperado |
 | Timeout del turno | Cancelación limpia de la tarea, HTTP 504, turno marcado `failed` |
+
+> **Esta tabla nombraba `ThrottlingException`, `ValidationException` y `AccessDeniedException`** —
+> las tres de `botocore`, ninguna de las cuales se lanza con `PROVEEDOR=anthropic`. Un `except`
+> escrito contra esos nombres no habría capturado nada y el fallo habría subido como 500.
 
 ## 11. Criterios de aceptación
 
@@ -228,15 +254,40 @@ conversación (RNF-5) y predecible la latencia (RNF-2).
 | CA-9 | `SYSTEM_PROMPT_VERSION` se persiste en cada turno | `test_agent.py::test_prompt_version_recorded` |
 | CA-10 | Ningún error de herramienta llega al modelo como texto de resultado | Revisión + `test_agent.py::test_tool_error_propagates` |
 
+**Criterios de otros RFC que aterrizan en este PR.** Se difirieron aquí porque verifican
+`app/agent/`, que no existía cuando se auditaron sus RFC (PR #71/#72). El Informe de
+Implementación de este punto debe cubrirlos con su nombre de origen, no renombrarlos:
+
+| Origen | Criterio | Verificación |
+| :--- | :--- | :--- |
+| RFC-0013 CA-6 / A-5 | `app/agent/` no menciona ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados — es el mismo A-6b de este RFC |
+| RFC-0013 CA-10 | El mismo prompt de sistema se usa con los tres proveedores | `test_agent.py::test_prompt_is_provider_agnostic` |
+| RFC-0018 CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` |
+
 ## 12. Estrategia de pruebas
 
-- **Unitarias:** construcción del agente, formateo del historial, aplicación de límites,
-  recorte de memoria.
-- **Integración:** con Bedrock real, marcadas `@pytest.mark.bedrock`, excluidas del CI por
-  defecto y ejecutadas en el gate de promoción a QA. El resto usa un proveedor de modelo falso
-  con guiones de respuesta.
+**Ninguna prueba automática de este RFC llama a una API de pago** (ADR-0012). Todo lo que ejercita
+al modelo usa un doble local con guion fijo. Lo que sí gasta —la evaluación— vive en RFC-0009, con
+presupuesto declarado.
+
+- **Unitarias** (`@pytest.mark.unit`): construcción del agente, formateo del historial, aplicación
+  de límites, recorte de memoria. La lógica del agente se prueba con un modelo falso de guion fijo,
+  afirmando **cuántas veces y con qué argumentos** se llamó a cada herramienta — nunca sobre las
+  palabras que produce un LLM, que son no deterministas (RFC-0014 §5).
+- **Integración** (`@pytest.mark.integration`): el turno completo contra PostgreSQL real
+  (`TEST_DB_MODE`) con el mismo modelo falso, para cubrir la persistencia de memoria (§7) y el
+  cierre del flujo SSE (§9).
 - **Adversariales:** conjunto propio de ~20 casos de fuga de prompt, inyección desde el corpus,
-  cambio de rol y exfiltración de configuración. Es gate de merge (RFC-0009).
+  cambio de rol y exfiltración de configuración. Corren con el modelo falso —lo que se prueba es
+  que el **prompt y los límites** resisten, no que el modelo acierte— y son gate de merge
+  (RFC-0009). Se marcan `@pytest.mark.unit` salvo que toquen base de datos; **no se introduce un
+  marcador nuevo** sin declararlo antes en `pyproject.toml`.
+
+> **Esta sección exigía «integración con Bedrock real, marcadas `@pytest.mark.bedrock`».** Eran
+> dos defectos en una línea. Contradecía a ADR-0012 —que prohíbe que una prueba automática llame a
+> una API de pago, y que no lista este RFC entre los afectados: se le pasó— y nombraba un marcador
+> que `pyproject.toml` no define, junto a un `tests/adversarial/` que no existe. Un marcador no
+> declarado no falla: **se ignora en silencio**, y la prueba corre donde no debía.
 
 ## 13. Correcciones respecto al documento base
 
@@ -263,4 +314,6 @@ conversación (RNF-5) y predecible la latencia (RNF-2).
 | A-7 | Las pruebas adversariales existen y pasan | CA-6, CA-7 | Bloqueante |
 | A-8 | `temperature ≤ 0.3` y `max_tokens = 1024` | Lectura de `builder.py` | Menor |
 | A-9 | El flujo SSE cierra siempre, también en error | CA-8 + prueba de fallo | Mayor |
-| A-10 | Las pruebas que consumen Bedrock real están marcadas y excluidas del CI por defecto | Revisar marcadores de pytest | Menor |
+| A-10 | **Ninguna prueba automática llama a una API de pago** (ADR-0012); el modelo se dobla siempre | `grep` de claves reales en las pruebas + revisar que los marcadores usados estén declarados en `pyproject.toml` | Mayor |
+| A-11 | `app/agent/` no maneja credenciales: recibe el modelo ya construido por `build_model()` | Lectura + A-2 | Mayor |
+| A-12 | Los fallos se capturan por clase, no por excepción de un SDK concreto (§10) | Lectura del manejo de errores: ningún `except` nombra `botocore`, `anthropic` u `openai` | Mayor |
