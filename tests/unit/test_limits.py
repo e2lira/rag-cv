@@ -5,6 +5,9 @@ barata de inflar el costo de tokens. Si el tope se comprobara despues de
 invocar al agente, el 413 llegaria con el dinero ya gastado.
 """
 
+import json
+from collections.abc import Iterator
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -54,6 +57,67 @@ def test_oversized_body_never_reaches_the_handler(cliente: tuple[TestClient, lis
 def test_body_within_the_limit_passes(cliente: tuple[TestClient, list[str]]) -> None:
     test_client, invocaciones = cliente
     respuesta = test_client.post("/v1/protegida", json={"message": "hola"})
+
+    assert respuesta.status_code == 200
+    assert invocaciones == ["hola"]
+
+
+def _troceado(payload: bytes) -> Iterator[bytes]:
+    """Generador: httpx lo envia con `Transfer-Encoding: chunked`, **sin**
+    `Content-Length`. Es la forma normal de subir algo cuyo tamano no se
+    conoce por adelantado, y cualquier cliente puede usarla."""
+    for i in range(0, len(payload), 1024):
+        yield payload[i : i + 1024]
+
+
+def test_payload_too_large_without_content_length(cliente: tuple[TestClient, list[str]]) -> None:
+    """CA-7: el tope tambien se aplica cuando no hay `Content-Length`.
+
+    Mirar solo la cabecera declarada deja el limite a merced del cliente:
+    quien quiera saltarselo solo tiene que no declararla."""
+    test_client, _ = cliente
+    grande = json.dumps({"message": "x" * (_TOPE + 1)}).encode()
+
+    respuesta = test_client.post(
+        "/v1/protegida",
+        content=_troceado(grande),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert respuesta.status_code == 413
+    assert respuesta.json()["error"]["code"] == "payload_too_large"
+
+
+def test_oversized_chunked_body_never_reaches_the_handler(
+    cliente: tuple[TestClient, list[str]],
+) -> None:
+    """CA-7, la parte que importa: sin `Content-Length` tampoco llega al
+    handler, asi que el agente -- y su gasto -- no se invoca."""
+    test_client, invocaciones = cliente
+    grande = json.dumps({"message": "x" * (_TOPE + 1)}).encode()
+
+    test_client.post(
+        "/v1/protegida",
+        content=_troceado(grande),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert invocaciones == []
+
+
+def test_chunked_body_within_the_limit_still_passes(
+    cliente: tuple[TestClient, list[str]],
+) -> None:
+    """El reverso: contar mientras se lee no debe romper una peticion
+    legitima que llegue troceada."""
+    test_client, invocaciones = cliente
+    pequeno = json.dumps({"message": "hola"}).encode()
+
+    respuesta = test_client.post(
+        "/v1/protegida",
+        content=_troceado(pequeno),
+        headers={"Content-Type": "application/json"},
+    )
 
     assert respuesta.status_code == 200
     assert invocaciones == ["hola"]
