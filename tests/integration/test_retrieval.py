@@ -262,3 +262,82 @@ async def test_threshold_does_not_reject_a_good_match(database_url: str) -> None
         results = await hybrid_search(conn, embedder, "Banorte")
 
     assert results
+
+
+class _EmbedderFailsOnQuery:
+    """Simula la caida del proveedor -- embed_query lanza, embed_documents
+    (sembrado) funciona: RuntimeError de dominio, no AssertionError."""
+
+    model_id = "failing@test"
+
+    def __init__(self, dimension: int) -> None:
+        self._inner = FakeEmbedder(dimension)
+
+    @property
+    def dimension(self) -> int:
+        return self._inner.dimension
+
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return await self._inner.embed_documents(texts)
+
+    async def embed_query(self, text: str) -> list[float]:
+        raise RuntimeError("el proveedor de embeddings no responde")
+
+
+@pytest.mark.asyncio
+async def test_embedding_failure_degrades(database_url: str) -> None:
+    """CA-7 / A-5: si el embedder falla, la busqueda sigue devolviendo
+    resultados lexicos y marca degraded=True en cada RetrievedChunk -- no
+    se traga la excepcion en un except amplio, no lanza 500 al agente."""
+    seeder = FakeEmbedder(1536)
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, seeder)
+
+        failing = _EmbedderFailsOnQuery(1536)
+        results = await hybrid_search(conn, failing, "Banorte")
+
+    assert results
+    assert results[0].unit == "Banorte -- Ingeniera de Datos Senior"
+    assert all(r.degraded for r in results)
+    assert all(r.sem_rank is None for r in results), (
+        "un resultado degradado no puede tener rango semantico: la rama vectorial no corrio"
+    )
+
+
+@pytest.mark.asyncio
+async def test_healthy_embedder_never_marks_degraded(database_url: str) -> None:
+    """Contraprueba: cuando el embedder funciona, degraded es False -- si
+    quedara True por defecto, CA-7 pasaria sin que el fallo importara."""
+    embedder = FakeEmbedder(1536)
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, embedder)
+
+        results = await hybrid_search(conn, embedder, "Banorte")
+
+    assert results
+    assert all(not r.degraded for r in results)
+
+
+@pytest.mark.asyncio
+async def test_degraded_search_is_still_a_single_read_statement(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CA-5/A-4 se mantiene bajo degradacion: la rama lexica sola tambien
+    va en una unica sentencia de lectura, no dos."""
+    seeder = FakeEmbedder(1536)
+    read_statements: list[str] = []
+    original_execute = psycopg.Cursor.execute
+
+    def _spy(self: psycopg.Cursor, query: object, *args: object, **kwargs: object) -> object:
+        if isinstance(query, str) and not query.strip().upper().startswith("SET"):
+            read_statements.append(query)
+        return original_execute(self, query, *args, **kwargs)  # type: ignore[arg-type]
+
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, seeder)
+        read_statements.clear()
+
+        monkeypatch.setattr(psycopg.Cursor, "execute", _spy)
+        await hybrid_search(conn, _EmbedderFailsOnQuery(1536), "Banorte")
+
+    assert len(read_statements) == 1
