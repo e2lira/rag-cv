@@ -279,8 +279,6 @@ otros documentos referencian esa tabla); aquí queda escrito dónde se verifican
 > declarada en ADR-0015, con sus tres mitigaciones y su condición de reapertura.
 
 **Criterios de otros RFC que aterrizan en este PR.** Se difirieron aquí porque verifican
-
-**Criterios de otros RFC que aterrizan en este PR.** Se difirieron aquí porque verifican
 `app/agent/`, que no existía cuando se auditaron sus RFC (PR #71/#72). El Informe de
 Implementación de este punto debe cubrirlos con su nombre de origen, no renombrarlos:
 
