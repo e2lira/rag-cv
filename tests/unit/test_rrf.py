@@ -74,6 +74,37 @@ def test_weights_scale_each_branch_independently() -> None:
     assert fused[0].score == pytest.approx(expected)
 
 
+def test_deterministic_ties() -> None:
+    """CA-4: dos candidatos con score identico se desempatan por id
+    ascendente, no por el orden de entrada -- se los pasa en orden
+    DESCENDENTE de id a proposito, para que un desempate "estable pero por
+    orden de entrada" falle."""
+    candidates = [
+        RankedCandidate(id=99, sem_rank=5, lex_rank=None),
+        RankedCandidate(id=1, sem_rank=5, lex_rank=None),
+        RankedCandidate(id=50, sem_rank=5, lex_rank=None),
+    ]
+
+    fused = fuse_rrf(candidates, k=60, w_sem=1.0, w_lex=1.0)
+
+    assert [r.id for r in fused] == [1, 50, 99]
+
+
+def test_ties_broken_by_id_even_across_different_rank_combinations() -> None:
+    """El empate puede venir de combinaciones distintas de sem_rank/lex_rank
+    que producen el mismo score -- el desempate mira el score final, no si
+    los rangos de origen son iguales."""
+    candidates = [
+        RankedCandidate(id=20, sem_rank=1, lex_rank=None),
+        RankedCandidate(id=10, sem_rank=None, lex_rank=1),
+    ]
+
+    fused = fuse_rrf(candidates, k=60, w_sem=1.0, w_lex=1.0)
+
+    assert fused[0].score == pytest.approx(fused[1].score)
+    assert [r.id for r in fused] == [10, 20]
+
+
 def test_returns_fused_result_with_original_ranks() -> None:
     """El resultado conserva sem_rank y lex_rank originales -- RFC-0005
     los expone en la respuesta para trazabilidad."""
