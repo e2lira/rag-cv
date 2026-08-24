@@ -11,6 +11,13 @@ implementacion, no en lo que el modelo puede controlar.
 from strands import tool
 
 
+def reset_dependencies() -> None:
+    """Fuerza reconstruir pool/embedder en la proxima llamada -- solo para
+    pruebas de integracion, que apuntan a una base efimera distinta en cada
+    test (RFC-0011 8)."""
+    pass  # RFC-0004 5: cuerpo pendiente de su propio ciclo
+
+
 @tool
 async def search_cv(query: str, chunk_types: list[str] | None = None) -> str:
     """Busca en el CV de la persona y devuelve los fragmentos más relevantes.
