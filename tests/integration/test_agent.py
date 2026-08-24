@@ -6,6 +6,8 @@ cada funcion lleva su propia marca (`unit` o `integration`) segun si necesita
 `database_url` o no -- no se declara una marca nueva (RFC-0004 12).
 """
 
+from unittest.mock import patch
+
 import psycopg
 import pytest
 from strands import Agent
@@ -254,3 +256,30 @@ async def test_turn_timeout_cancels_and_emits_error() -> None:
 
     assert eventos[-1] == {"type": "error", "code": "timeout", "message": eventos[-1]["message"]}
     assert "done" not in [e["type"] for e in eventos]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_input_token_budget_logs_warning_when_exceeded() -> None:
+    """RFC-0004 8: presupuesto de 8000 tokens de entrada, auditado y con
+    alerta si se supera -- no corta el turno, solo lo registra."""
+    modelo = ScriptedModel([texto("ok")])
+    agent = _agente_de_prueba(modelo)
+    mensaje_largo = "x " * 20_000  # ampliamente por encima de 8000 tokens aprox.
+
+    with patch("app.agent.streaming.logger") as mock_logger:
+        [_ async for _ in stream_turn(agent, mensaje_largo)]
+
+    mock_logger.warning.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_input_token_budget_silent_when_within_range() -> None:
+    modelo = ScriptedModel([texto("ok")])
+    agent = _agente_de_prueba(modelo)
+
+    with patch("app.agent.streaming.logger") as mock_logger:
+        [_ async for _ in stream_turn(agent, "Hola")]
+
+    mock_logger.warning.assert_not_called()

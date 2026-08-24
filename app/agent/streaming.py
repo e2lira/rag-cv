@@ -7,12 +7,15 @@ trabajo de esta capa.
 """
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
 from strands import Agent
 
 from app.agent.hooks import TOOL_EVENTS_KEY
+
+logger = logging.getLogger(__name__)
 
 _SOURCES_KEY = "rfc0004_sources"
 _MAX_ITERATIONS = 4  # RFC-0004 8: corta bucles de razonamiento
