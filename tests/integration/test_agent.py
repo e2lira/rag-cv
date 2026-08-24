@@ -177,6 +177,31 @@ def test_prompt_version_recorded(database_url: str) -> None:
     assert version == SYSTEM_PROMPT_VERSION
 
 
+@pytest.mark.integration
+def test_memory_trims_oldest_turns_over_budget(database_url: str) -> None:
+    """RFC-0004 7: si el historial excede token_budget se recortan los
+    turnos mas antiguos primero -- rama sin CA numerado propio, pero con
+    logica real (cierre de cobertura, sin cambio de comportamiento)."""
+    with psycopg.connect(database_url) as conn:
+        conversacion = crear_conversacion(conn)
+        for i in range(5):
+            record_turn(
+                conn,
+                conversacion,
+                user_text=f"pregunta {i} " + "x" * 50,
+                assistant_text=f"respuesta {i} " + "y" * 50,
+                prompt_version=1,
+            )
+
+        historial_completo = load_history(conn, conversacion, max_turns=5, token_budget=10_000)
+        historial_recortado = load_history(conn, conversacion, max_turns=5, token_budget=1)
+
+    assert len(historial_recortado) < len(historial_completo)
+    assert len(historial_recortado) >= 1
+    assert "pregunta 0" not in historial_recortado[0]["content"]
+    assert historial_recortado[-1]["content"] == historial_completo[-1]["content"]
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sse_sources_before_done() -> None:
