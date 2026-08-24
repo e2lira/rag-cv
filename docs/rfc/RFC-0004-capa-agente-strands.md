@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0003, RFC-0013 |
-| **ADRs** | ADR-0003, ADR-0008, ADR-0012 |
+| **ADRs** | ADR-0003, ADR-0008, ADR-0012, ADR-0015 |
 | **Fecha** | 2026-08-22 |
 
 > **El título decía «sobre Bedrock» y ya no es cierto.** ADR-0008 designó la API de Anthropic
@@ -246,13 +246,39 @@ proveedor (I-9). La clasificación de disponibilidad ya existe y es reutilizable
 | CA-1 | Un saludo no dispara ninguna llamada a `search_cv` | `tests/integration/test_agent.py::test_greeting_no_tool` |
 | CA-2 | Una pregunta factual dispara exactamente una llamada a `search_cv` | `test_agent.py::test_factual_one_tool_call` |
 | CA-3 | El agente nunca hace más de 2 llamadas a herramientas por turno | `test_agent.py::test_tool_call_cap` (con herramienta que siempre devuelve vacío) |
-| CA-4 | Con contexto vacío, la respuesta contiene una negativa explícita y ninguna afirmación factual | `evals` + `test_agent.py::test_abstains_without_context` |
+| CA-4 | Con contexto vacío, la respuesta contiene una negativa explícita y ninguna afirmación factual | **Delegado a RFC-0009** — §11.1, ADR-0015 |
 | CA-5 | Dos conversaciones distintas no comparten historial | `test_agent.py::test_no_context_bleed` |
-| CA-6 | El prompt de sistema no se revela ante 10 intentos adversariales | `tests/adversarial/test_prompt_leak.py` |
-| CA-7 | Instrucciones inyectadas dentro del corpus recuperado se ignoran | `tests/adversarial/test_prompt_injection.py` |
+| CA-6 | El prompt de sistema no se revela ante 10 intentos adversariales | **Delegado a RFC-0009** — §11.1, ADR-0015 |
+| CA-7 | Instrucciones inyectadas dentro del corpus recuperado se ignoran | **Delegado a RFC-0009** — §11.1, ADR-0015 |
 | CA-8 | El flujo SSE emite `sources` antes de `done` en toda respuesta con búsqueda | `tests/integration/test_stream.py` |
 | CA-9 | `SYSTEM_PROMPT_VERSION` se persiste en cada turno | `test_agent.py::test_prompt_version_recorded` |
 | CA-10 | Ningún error de herramienta llega al modelo como texto de resultado | Revisión + `test_agent.py::test_tool_error_propagates` |
+| CA-11 | El contenido recuperado llega al modelo como **dato delimitado**: `search_cv` no interpreta ni despoja instrucciones incrustadas en el corpus, las entrega íntegras dentro de `<contexto_cv>` | `tests/integration/test_agent_tools.py::test_search_cv_never_interprets_injected_content` |
+
+### 11.1 Criterios delegados a RFC-0009 (ADR-0015)
+
+Los tres **no se verifican en este punto**. Duplicaban criterios que RFC-0009 ya posee con mecanismo
+y presupuesto —corpus envenenado, juez calibrado, LLM real, USD 0.30 por PR— mientras que esta capa
+no tiene ninguno de los cuatro. Conservan su identificador y su fila en §11 (**no se renumeran**:
+otros documentos referencian esa tabla); aquí queda escrito dónde se verifican:
+
+| Delegado | Lo cubre en RFC-0009 |
+| :--- | :--- |
+| §11 CA-4 | **CA-7** (10 casos de abstención ⇒ `grounded=false` + negativa explícita), **CA-8** (contexto vacío inyecta la instrucción por código), métrica *Abstención correcta* ≥ 0.95, gate **A-6 (Bloqueante)** |
+| §11 CA-6 | **§5**, familias *Fuga de prompt* y *Fuga indirecta*; métrica *Fuga de prompt* = 0; gate **A-4** |
+| §11 CA-7 | **CA-6** (`tests/adversarial/test_corpus_injection.py`), §5 familia *Inyección desde el corpus*, corpus `evals/fixtures/cv_poisoned.md`, gate **A-5 (Bloqueante)** |
+
+> El nombre del archivo difiere a propósito de lo que decía §11 antes de ADR-0015
+> (`test_prompt_injection.py`): el correcto es el de RFC-0009, `test_corpus_injection.py`. Dos
+> nombres para la misma prueba era precisamente la señal de que los dos documentos nunca se
+> reconciliaron.
+
+> **Ningún umbral se relaja.** Las tres invariantes siguen bloqueando el *merge*, en el punto 10 y
+> con LLM real. Lo único que cambia es **dónde** se verifican: en el punto donde existe el mecanismo
+> que las verifica. La ventana sin gate adversarial entre el punto 8 y el punto 10 es deuda
+> declarada en ADR-0015, con sus tres mitigaciones y su condición de reapertura.
+
+**Criterios de otros RFC que aterrizan en este PR.** Se difirieron aquí porque verifican
 
 **Criterios de otros RFC que aterrizan en este PR.** Se difirieron aquí porque verifican
 `app/agent/`, que no existía cuando se auditaron sus RFC (PR #71/#72). El Informe de
@@ -277,17 +303,23 @@ presupuesto declarado.
 - **Integración** (`@pytest.mark.integration`): el turno completo contra PostgreSQL real
   (`TEST_DB_MODE`) con el mismo modelo falso, para cubrir la persistencia de memoria (§7) y el
   cierre del flujo SSE (§9).
-- **Adversariales:** conjunto propio de ~20 casos de fuga de prompt, inyección desde el corpus,
-  cambio de rol y exfiltración de configuración. Corren con el modelo falso —lo que se prueba es
-  que el **prompt y los límites** resisten, no que el modelo acierte— y son gate de merge
-  (RFC-0009). Se marcan `@pytest.mark.unit` salvo que toquen base de datos; **no se introduce un
-  marcador nuevo** sin declararlo antes en `pyproject.toml`.
+- **Adversariales: no se escriben en este punto.** La suite `tests/adversarial/` es de **RFC-0009
+  §5** —ocho familias, corpus envenenado `evals/fixtures/cv_poisoned.md`, LLM real, juez calibrado
+  y presupuesto declarado (USD 0.30 por PR, RFC-0009 §6)— y su marcador lo declara RFC-0009 al
+  implementarla. Aquí solo se verifica **CA-11**, que es código de esta capa y no depende del
+  modelo: que `search_cv` entregue el contenido recuperado como dato delimitado, sin interpretarlo.
 
-> **Esta sección exigía «integración con Bedrock real, marcadas `@pytest.mark.bedrock`».** Eran
-> dos defectos en una línea. Contradecía a ADR-0012 —que prohíbe que una prueba automática llame a
-> una API de pago, y que no lista este RFC entre los afectados: se le pasó— y nombraba un marcador
-> que `pyproject.toml` no define, junto a un `tests/adversarial/` que no existe. Un marcador no
-> declarado no falla: **se ignora en silencio**, y la prueba corre donde no debía.
+> **Esta sección dijo dos cosas falsas, en dos pases distintos.**
+>
+> La primera versión exigía «integración con Bedrock real, marcadas `@pytest.mark.bedrock`»:
+> contradecía a ADR-0012 y nombraba un marcador que `pyproject.toml` no define — y un marcador no
+> declarado no falla, **se ignora en silencio**.
+>
+> La corrección de aquel pase (PR #77) introdujo la segunda: que las adversariales «corren con el
+> modelo falso […] y son gate de merge (RFC-0009)». Se contradice en once palabras —cita a RFC-0009
+> como el gate mientras describe un mecanismo que RFC-0009 no usa— y era además **duplicación**: esa
+> suite ya existía en RFC-0009 §5, con presupuesto. Un doble con guion fijo tampoco puede demostrar
+> resistencia a una fuga de prompt: el guion lo escribe la propia prueba. Lo arregla **ADR-0015**.
 
 ## 13. Correcciones respecto al documento base
 
@@ -311,7 +343,7 @@ presupuesto declarado.
 | A-5 | Los topes de §8 están implementados y probados | CA-3 | Bloqueante |
 | A-6 | Solo se registran las dos herramientas de §5 | Lectura de `build_agent` | Bloqueante |
 | A-6b | `app/agent/` no nombra ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados | Bloqueante |
-| A-7 | Las pruebas adversariales existen y pasan | CA-6, CA-7 | Bloqueante |
+| A-7 | La delegación de CA-4/CA-6/CA-7 a RFC-0009 está declarada en el Informe (§11.1, ADR-0015) y **CA-11 existe y pasa**. Las pruebas adversariales **no** se exigen en este punto | CA-11 + lectura del Informe | Bloqueante |
 | A-8 | `temperature ≤ 0.3` y `max_tokens = 1024` | Lectura de `builder.py` | Menor |
 | A-9 | El flujo SSE cierra siempre, también en error | CA-8 + prueba de fallo | Mayor |
 | A-10 | **Ninguna prueba automática llama a una API de pago** (ADR-0012); el modelo se dobla siempre | `grep` de claves reales en las pruebas + revisar que los marcadores usados estén declarados en `pyproject.toml` | Mayor |
