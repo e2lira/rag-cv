@@ -92,6 +92,20 @@ async def enforce_body_limit(request: Request) -> None:
     request._body = b"".join(fragmentos)  # noqa: SLF001
 
 
+RATE_LIMITED_MESSAGE = "Has superado el limite de peticiones."
+
+
+def rate_limiter(key_id: str) -> Callable[[Request], None]:
+    """Dependencia de cuota: incrementa las dos cubetas y traduce el
+    veredicto a `429` con las cabeceras de RFC-0005 7.
+
+    Recibe el `key_id` en vez de leerlo de la peticion para poder montarse
+    tambien donde la clave ya se resolvio; la decision la toma
+    `app/core/rate_buckets.py` (RFC-0001 62: aqui no hay logica ni SQL).
+    """
+    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+
+
 def current_key(request: Request) -> ApiKey:
     """La clave ya verificada para esta peticion."""
     clave: ApiKey | None = getattr(request.state, _KEY_STATE, None)
