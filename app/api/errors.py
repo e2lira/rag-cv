@@ -11,35 +11,81 @@ incidente es el `request_id`, que ademas viaja en todos los logs del turno.
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from ulid import ULID
 
-# Codigos de RFC-0005 8. El mensaje de 500 es fijo a proposito: cualquier
-# detalle del fallo es exactamente lo que I-6 prohibe publicar.
 REQUEST_ID_HEADER = "X-Request-ID"
+_REQUEST_ID_STATE = "rfc0005_request_id"
+
+# El mensaje de 500 es fijo a proposito: cualquier detalle del fallo es
+# exactamente lo que I-6 prohibe publicar.
 _INTERNAL_MESSAGE = "Ha ocurrido un error interno. Usa el request_id para reportarlo."
+
+# Codigos de RFC-0005 8, por estado HTTP. Un estado no listado cae en
+# `internal_error`: es preferible un codigo generico a inventar uno.
+_CODES: dict[int, str] = {
+    400: "invalid_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    413: "payload_too_large",
+    429: "rate_limited",
+    500: "internal_error",
+    503: "upstream_unavailable",
+    504: "timeout",
+}
 
 
 def error_body(code: str, message: str, request_id: str) -> dict[str, Any]:
     """Cuerpo de error de RFC-0005 8."""
-    raise NotImplementedError  # RFC-0005 8: pendiente de su propio ciclo
+    return {"error": {"code": code, "message": message, "request_id": request_id}}
 
 
 def new_request_id() -> str:
     """Identificador de correlacion (ULID) -- RFC-0005 8."""
-    raise NotImplementedError  # RFC-0005 8: pendiente de su propio ciclo
+    return f"req_{ULID()}"
 
 
 def current_request_id(request: Request) -> str:
     """El `request_id` que el middleware adjunto a esta peticion."""
-    raise NotImplementedError  # RFC-0005 8: pendiente de su propio ciclo
+    identificador = getattr(request.state, _REQUEST_ID_STATE, None)
+    # Sin middleware no hay correlacion posible; se genera uno antes que
+    # devolver vacio, para que el cuerpo de error nunca salga sin el.
+    return identificador if identificador else new_request_id()
 
 
 async def request_id_middleware(request: Request, call_next: Any) -> Response:
     """Genera el `request_id`, lo adjunta a la peticion y lo devuelve en la
     cabecera `X-Request-ID` (RFC-0005 8, CA-12)."""
-    raise NotImplementedError  # RFC-0005 8: pendiente de su propio ciclo
+    identificador = new_request_id()
+    setattr(request.state, _REQUEST_ID_STATE, identificador)
+    respuesta: Response = await call_next(request)
+    respuesta.headers[REQUEST_ID_HEADER] = identificador
+    return respuesta
+
+
+def _respuesta(request: Request, status: int, message: str) -> JSONResponse:
+    identificador = current_request_id(request)
+    return JSONResponse(
+        status_code=status,
+        content=error_body(_CODES.get(status, "internal_error"), message, identificador),
+        headers={REQUEST_ID_HEADER: identificador},
+    )
 
 
 def install_error_handling(app: FastAPI) -> None:
     """Registra el middleware de correlacion y los manejadores que fuerzan
     el formato de 8 en toda respuesta de error."""
-    raise NotImplementedError  # RFC-0005 8: pendiente de su propio ciclo
+    app.middleware("http")(request_id_middleware)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        # `detail` lo escribimos nosotros al lanzar el HTTPException, o lo
+        # pone Starlette ("Not Found"): en ningun caso trae interno.
+        return _respuesta(request, exc.status_code, str(exc.detail))
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+        # No se mira `exc`: su texto es justo lo que I-6 prohibe publicar.
+        return _respuesta(request, 500, _INTERNAL_MESSAGE)
