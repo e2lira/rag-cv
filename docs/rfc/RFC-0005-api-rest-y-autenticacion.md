@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0004, RFC-0006, RFC-0013, RFC-0019, RFC-0020, RFC-0021 |
-| **ADRs** | ADR-0006, ADR-0008, ADR-0012, ADR-0015 |
+| **ADRs** | ADR-0006, ADR-0008, ADR-0012, ADR-0015, ADR-0016 |
 | **Fecha** | 2026-08-22 |
 
 > **Este documento se escribió cuando la PoC todavía iba a AWS, y el gate G2 lo rechazó por eso.**
@@ -268,12 +268,29 @@ Una conversación pertenece a la `key_id` que la creó. Otra clave que solicite 
 
 ## 7. Límites de tasa
 
-- Ventana deslizante por `key_id`: `RATE_LIMIT_PER_MINUTE` (30) y `RATE_LIMIT_PER_DAY` (1 000).
-- Implementación: contador en PostgreSQL con `INSERT ... ON CONFLICT` sobre una tabla de
-  cubetas (`rate_buckets`), suficiente para el volumen esperado y sin añadir Redis a la
-  arquitectura (una pieza más que operar en tres entornos).
-- Respuesta `429` con cabeceras `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`,
-  `X-RateLimit-Reset`.
+- **Dos cubetas fijas por `key_id`** (ADR-0016): una por minuto y una por día.
+- Implementación: contador en PostgreSQL con `INSERT ... ON CONFLICT` sobre `rate_buckets`
+  (RFC-0006 §4.4), suficiente para el volumen esperado y sin añadir Redis a la arquitectura
+  (una pieza más que operar en tres entornos).
+
+| Elemento | Valor |
+| :--- | :--- |
+| Cubeta de minuto | `window_start` truncado al minuto; tope `RATE_LIMIT_PER_MINUTE` (30) |
+| Cubeta de día | `window_start` truncado al día **en UTC**; tope `RATE_LIMIT_PER_DAY` (1 000) |
+| Se incrementan | **Las dos, siempre**, antes de invocar al agente |
+| `429` cuando | Cualquiera de las dos supera su tope |
+| `Retry-After` | Segundos enteros hasta que cierre **la cubeta que disparó el rechazo**. Si son las dos, la de día: es la que sigue bloqueando después |
+| `X-RateLimit-Limit` | El tope de esa misma cubeta |
+| `X-RateLimit-Remaining` | `0` en el `429`; `tope - count` en una respuesta normal |
+| `X-RateLimit-Reset` | Instante de cierre de esa cubeta, en segundos Unix |
+
+> **Esta sección decía «ventana deslizante» y a la vez «tabla de cubetas», que son algoritmos
+> distintos.** El esquema de RFC-0006 §4.4 —ya fusionado— fija cubetas: `PRIMARY KEY (key_id,
+> window_kind, window_start)` con un contador, sin registro del instante de cada petición. La
+> contradicción dejaba **CA-6 sin poder verificarse**, porque «`Retry-After` correcto» significa
+> una cosa u otra según el algoritmo. Lo resuelve **ADR-0016**, que elige cubeta fija y declara la
+> deuda: se toleran hasta 60 peticiones en el borde de dos minutos consecutivos, acotadas por el
+> techo diario.
 - Además, límite de **cuerpo de petición a 8 KB** y `message` a 2 000 caracteres: una entrada
   larga es la forma más barata de inflar el costo de tokens.
 
