@@ -8,6 +8,8 @@ Ningun cuerpo de error lleva trazas, SQL ni nombres de recursos internos
 incidente es el `request_id`, que ademas viaja en todos los logs del turno.
 """
 
+import logging
+from contextvars import ContextVar
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -18,6 +20,27 @@ from ulid import ULID
 
 REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_STATE = "rfc0005_request_id"
+
+# La correlacion vive en un ContextVar y no solo en `request.state` porque
+# CA-12 exige que aparezca en **todas** las lineas del turno: un logger de
+# dominio no tiene la peticion a mano, y obligarlo a pasar `extra=` deja la
+# garantia en manos de que nadie se olvide. Un ContextVar lo hereda cada
+# tarea de asyncio, asi que la peticion en curso lo lleva sin pedirlo.
+_request_id: ContextVar[str] = ContextVar("rfc0005_request_id", default="")
+
+
+class RequestIdFilter(logging.Filter):
+    """Adjunta el `request_id` en curso a cada registro (RFC-0005 8, CA-12).
+
+    Fuera de una peticion el campo va **vacio, no ausente**: un formateador
+    con `%(request_id)s` lanzaria `KeyError` si faltara, y un fallo de
+    logging en el arranque tumbaria el proceso.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = _request_id.get()
+        return True
+
 
 # El mensaje de 500 es fijo a proposito: cualquier detalle del fallo es
 # exactamente lo que I-6 prohibe publicar.
@@ -58,13 +81,39 @@ def current_request_id(request: Request) -> str:
 
 
 async def request_id_middleware(request: Request, call_next: Any) -> Response:
-    """Genera el `request_id`, lo adjunta a la peticion y lo devuelve en la
-    cabecera `X-Request-ID` (RFC-0005 8, CA-12)."""
+    """Genera el `request_id`, lo publica en el contexto de logging y lo
+    devuelve en la cabecera `X-Request-ID` (RFC-0005 8, CA-12)."""
     identificador = new_request_id()
     setattr(request.state, _REQUEST_ID_STATE, identificador)
-    respuesta: Response = await call_next(request)
+    testigo = _request_id.set(identificador)
+    try:
+        respuesta: Response = await call_next(request)
+    finally:
+        # Se restaura siempre, tambien si el turno revienta: un contexto que
+        # sobrevive a su peticion correlaciona al incidente equivocado, que
+        # es peor que no correlacionar.
+        _request_id.reset(testigo)
     respuesta.headers[REQUEST_ID_HEADER] = identificador
     return respuesta
+
+
+def _instalar_filtro_de_correlacion() -> None:
+    """Pone `RequestIdFilter` en la raiz, una sola vez.
+
+    En la raiz y no en un logger concreto: CA-12 dice "todas las lineas", y
+    enumerar los loggers de la aplicacion garantizaria que el proximo modulo
+    se quede fuera sin que nadie lo note.
+
+    Un `logging.Filter` en un logger solo ve lo que ese logger emite, no lo
+    que le llega por propagacion de los hijos -- por eso el filtro va
+    tambien en los handlers de la raiz, que si ven todo el arbol.
+    """
+    raiz = logging.getLogger()
+    if not any(isinstance(f, RequestIdFilter) for f in raiz.filters):
+        raiz.addFilter(RequestIdFilter())
+    for handler in raiz.handlers:
+        if not any(isinstance(f, RequestIdFilter) for f in handler.filters):
+            handler.addFilter(RequestIdFilter())
 
 
 def _respuesta(request: Request, status: int, message: str) -> JSONResponse:
@@ -80,6 +129,7 @@ def install_error_handling(app: FastAPI) -> None:
     """Registra el middleware de correlacion y los manejadores que fuerzan
     el formato de 8 en toda respuesta de error."""
     app.middleware("http")(request_id_middleware)
+    _instalar_filtro_de_correlacion()
 
     @app.exception_handler(StarletteHTTPException)
     async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
