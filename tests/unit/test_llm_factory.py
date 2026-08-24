@@ -12,8 +12,11 @@ real."""
 from unittest.mock import MagicMock, patch
 
 import pytest
+from strands.models import ModelRouter
+from strands.models.model import Model
 
 from app.core.settings import Settings
+from app.providers.fallback import AvailabilityFallbackStrategy
 from app.providers.llm import build_model
 
 pytestmark = pytest.mark.unit
@@ -104,6 +107,66 @@ def test_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match="azure_foundry"):
         build_model(settings)
+
+
+def _modelo_falso() -> MagicMock:
+    """MagicMock(spec=Model): ModelRouter valida isinstance(candidato,
+    Model) y lee candidato.stateful (property real de Model) para
+    rechazar modelos con estado -- un MagicMock() liso falla ambas
+    comprobaciones, spec=Model pasa la primera y stateful se fija en
+    False a mano porque una property mockeada es truthy por defecto."""
+    modelo = MagicMock(spec=Model)
+    modelo.stateful = False
+    return modelo
+
+
+def test_fallback_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC-0013 CA-8 (apagado por defecto) / RFC-0018 CA-8: sin
+    PROVEEDOR_FALLBACK, build_model devuelve el modelo primario
+    directamente -- nunca envuelto en un ModelRouter."""
+    _configure(monkeypatch, "anthropic", ANTHROPIC_API_KEY="sk-ant-test")
+    monkeypatch.delenv("PROVEEDOR_FALLBACK", raising=False)
+    settings = Settings(_env_file=None)
+
+    with patch("strands.models.anthropic.AnthropicModel") as MockAnthropic:
+        instance = _modelo_falso()
+        MockAnthropic.return_value = instance
+
+        result = build_model(settings)
+
+    assert result is instance
+    assert type(result).__name__ != "ModelRouter"
+
+
+def test_fallback_wraps_in_model_router_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC-0013 CA-8: con PROVEEDOR_FALLBACK configurado, build_model
+    envuelve el primario y el secundario en un ModelRouter con
+    AvailabilityFallbackStrategy -- no un FallbackModel bespoke (desviacion
+    de RFC-0013 6.1 declarada en el Informe: el framework ya trae
+    ModelRouter, ver app/providers/fallback.py)."""
+    _configure(
+        monkeypatch,
+        "anthropic",
+        ANTHROPIC_API_KEY="sk-ant-test",
+        PROVEEDOR_FALLBACK="bedrock",
+        AWS_REGION="us-east-2",
+        BEDROCK_MODEL_ID="us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    )
+    settings = Settings(_env_file=None)
+
+    with (
+        patch("strands.models.anthropic.AnthropicModel") as MockAnthropic,
+        patch("strands.models.BedrockModel") as MockBedrock,
+    ):
+        MockAnthropic.return_value = _modelo_falso()
+        MockBedrock.return_value = _modelo_falso()
+
+        result = build_model(settings)
+
+    assert isinstance(result, ModelRouter)
+    nombres = {c.name for c in result.candidates}
+    assert nombres == {"anthropic", "bedrock"}
+    assert isinstance(result._strategy, AvailabilityFallbackStrategy)
 
 
 def test_anthropic_has_no_streaming_flag_to_pass(monkeypatch: pytest.MonkeyPatch) -> None:
