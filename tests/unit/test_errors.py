@@ -11,6 +11,7 @@ de el (P-2).
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import BaseModel
 
 from app.api.errors import install_error_handling
 
@@ -55,6 +56,52 @@ def test_500_uses_the_contract_shape(cliente: TestClient) -> None:
     assert error["code"] == "internal_error"
     assert error["message"]
     assert error["request_id"]
+
+
+def test_invalid_schema_is_400_with_the_contract_shape() -> None:
+    """RFC-0005 8: un esquema invalido es `400 invalid_request` con el sobre
+    unico. FastAPI devuelve por defecto `422` con `{"detail": [...]}`, que no
+    esta en la tabla de 8 y rompe a cualquier cliente que lea el contrato."""
+    app = FastAPI()
+    install_error_handling(app)
+
+    class Cuerpo(BaseModel):
+        message: str
+
+    @app.post("/v1/eco")
+    async def eco(payload: Cuerpo) -> dict[str, str]:
+        return {"message": payload.message}
+
+    cliente = TestClient(app, raise_server_exceptions=False)
+
+    respuesta = cliente.post("/v1/eco", json={"mensaje_mal_escrito": "hola"})
+
+    assert respuesta.status_code == 400
+    error = respuesta.json()["error"]
+    assert error["code"] == "invalid_request"
+    assert error["request_id"]
+
+
+def test_invalid_schema_does_not_leak_the_internal_detail() -> None:
+    """El 422 de FastAPI publica la ruta del campo y el tipo esperado. Es
+    util depurando y es superficie de mas en produccion: I-6 dice que el
+    cuerpo de error no lleva nombres de recursos internos."""
+    app = FastAPI()
+    install_error_handling(app)
+
+    class Cuerpo(BaseModel):
+        message: str
+
+    @app.post("/v1/eco")
+    async def eco(payload: Cuerpo) -> dict[str, str]:
+        return {"message": payload.message}
+
+    respuesta = TestClient(app, raise_server_exceptions=False).post("/v1/eco", json={})
+
+    cuerpo = respuesta.text
+    assert "detail" not in respuesta.json()
+    assert "body" not in cuerpo
+    assert "missing" not in cuerpo
 
 
 def test_404_also_uses_the_contract_shape(cliente: TestClient) -> None:
