@@ -68,4 +68,21 @@ class ToolStreamMarkersHook(HookProvider):
     forma de saber, desde fuera, cuando empieza y termina cada llamada."""
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
-        pass  # RFC-0004 9: cuerpo pendiente de su propio ciclo
+        registry.add_callback(BeforeToolCallEvent, self._mark_start)
+        registry.add_callback(AfterToolCallEvent, self._mark_end)
+
+    def _mark_start(self, event: BeforeToolCallEvent) -> None:
+        if event.cancel_tool:
+            return  # RFC-0004 8: una llamada cancelada por el tope nunca empieza
+        nombre = event.tool_use.get("name", "")
+        event.invocation_state.setdefault(TOOL_EVENTS_KEY, []).append(
+            {"type": "tool_start", "tool": nombre}
+        )
+
+    def _mark_end(self, event: AfterToolCallEvent) -> None:
+        if event.cancel_message is not None:
+            return  # simetria con _mark_start: una llamada cancelada no empezo
+        nombre = event.tool_use.get("name", "")
+        event.invocation_state.setdefault(TOOL_EVENTS_KEY, []).append(
+            {"type": "tool_end", "tool": nombre}
+        )
