@@ -35,11 +35,13 @@ def _chunk(**overrides: object) -> RetrievedChunk:
 
 
 def test_wraps_content_in_context_tags() -> None:
-    """RFC-0003 4.1 / I-2: el contenido va delimitado como datos."""
+    """RFC-0003 4.1 / I-2: el contenido va delimitado como datos. La
+    instruccion de uso va DESPUES del cierre, per el ejemplo de 4.1 -- el
+    bloque no termina en la etiqueta de cierre cuando hay resultados."""
     block = format_context_block([_chunk()])
 
     assert block.startswith("<contexto_cv>")
-    assert block.endswith("</contexto_cv>")
+    assert "</contexto_cv>" in block
 
 
 def test_labels_are_local_and_sequential() -> None:
