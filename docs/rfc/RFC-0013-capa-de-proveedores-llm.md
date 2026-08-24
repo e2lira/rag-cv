@@ -115,6 +115,11 @@ Notas de implementación que el Desarrollador debe respetar:
 | `OPENAI_COMPATIBLE_API_KEY` | `PROVEEDOR=openai_compatible` | `sk-…` | Clave del proveedor |
 | `OPENAI_COMPATIBLE_BASE_URL` | `PROVEEDOR=openai_compatible` | `https://api.deepseek.com` | Endpoint |
 | `OPENAI_COMPATIBLE_MODEL_ID` | `PROVEEDOR=openai_compatible` | `deepseek-chat` | Identificador del modelo |
+| `PROVEEDOR_FALLBACK` | no | (vacío) | Proveedor secundario del `FallbackModel` (§6.1). Vacío por defecto: el fallback está apagado salvo designación explícita |
+
+Se incorpora `PROVEEDOR_FALLBACK` a esta tabla porque es el contrato de configuración de la
+capa: una variable que CA-8 y CA-9 exigen pero que solo vivía en la prosa de §6.1 no era
+exigible.
 
 **Validación cruzada obligatoria en el arranque.** `Settings` implementa un validador de modelo
 que exige las variables de la rama activa y **rechaza el arranque** si falta alguna. No vale
@@ -219,6 +224,13 @@ python evals/run_eval.py --suite full --label deepseek-chat \
        --compare-to evals/baselines/bedrock-haiku45.json
 ```
 
+**La invocación canónica es el script, no la tarea de `invoke`, y no por gusto.** `tasks.py`
+define ya `invoke evals`, pero su firma es `evals(c, suite="pr")`: reenvía únicamente `--suite`
+y rechazaría `--label` y `--compare-to`, que son exactamente los dos flags de los que depende
+este gate. Extender esa tarea es una decisión de RFC-0009, dueño de la suite, cuyo CA-2 nombra
+`run_eval.py` como la interfaz verificada. Hasta que esa extensión exista y RFC-0009 la declare,
+un criterio que dijera `invoke evals --label ...` sería un comando que no corre.
+
 Criterio de aceptación del cambio: **todas** las métricas del proveedor candidato cumplen los
 umbrales de merge de RFC-0009 §4, y ninguna cae más de 3 puntos porcentuales respecto a la línea
 base sin justificación escrita en el PR.
@@ -241,19 +253,28 @@ justamente lo que el reto pide demostrar.
 
 ## 10. Criterios de aceptación
 
-| # | Criterio | Verificación |
-| :--- | :--- | :--- |
-| CA-1 | `build_model` devuelve el tipo correcto para cada valor de `PROVEEDOR` | `tests/unit/test_llm_factory.py` parametrizado con los tres |
-| CA-2 | `PROVEEDOR` desconocido lanza `ValueError` con los valores válidos | `test_llm_factory.py::test_unknown_provider` |
-| CA-3 | Falta una variable de la rama activa ⇒ no arranca | `test_config.py::test_provider_required_vars` (los tres casos) |
-| CA-4 | Las claves son `SecretStr` y no aparecen en `repr(settings)` ni en logs | `test_config.py::test_secrets_not_leaked` |
-| CA-5 | Los imports de proveedor están dentro de las ramas | `test_llm_factory.py::test_lazy_imports` (simula ausencia de `boto3`) |
-| CA-6 | `app/agent/` no menciona ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados |
-| CA-7 | El `model_id` realmente usado se persiste en cada turno | `test_conversation.py::test_model_id_recorded` |
-| CA-8 | Con fallback activo, una caída del primario conmuta y emite `ProviderFallbacks` | `test_fallback.py::test_switch_on_unavailability` |
-| CA-9 | Con fallback activo, un error de validación **no** conmuta | `test_fallback.py::test_no_switch_on_validation_error` |
-| CA-10 | El mismo prompt de sistema se usa con los tres proveedores | `test_agent.py::test_prompt_is_provider_agnostic` |
-| CA-11 | `streaming` está activo en las tres ramas | `test_llm_factory.py::test_streaming_enabled` |
+| # | Criterio | Verificación | Aterriza en |
+| :--- | :--- | :--- | :--- |
+| CA-1 | `build_model` devuelve el tipo correcto para cada valor de `PROVEEDOR` | `tests/unit/test_llm_factory.py` parametrizado con los tres | RFC-0013 (este PR) |
+| CA-2 | `PROVEEDOR` desconocido lanza `ValueError` con los valores válidos | `test_llm_factory.py::test_unknown_provider` | RFC-0013 (este PR) |
+| CA-3 | Falta una variable de la rama activa ⇒ no arranca | `test_config.py::test_provider_required_vars` (los tres casos) | RFC-0013 (este PR) |
+| CA-4 | Las claves son `SecretStr` y no aparecen en `repr(settings)` ni en logs | `test_config.py::test_secrets_not_leaked` | RFC-0013 (este PR) |
+| CA-5 | Los imports de proveedor están dentro de las ramas | `test_llm_factory.py::test_lazy_imports` (simula ausencia de `boto3`) | RFC-0013 (este PR) |
+| CA-6 | `app/agent/` no menciona ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados | RFC-0004 |
+| CA-7 | El `model_id` realmente usado se persiste en cada turno | `test_conversation.py::test_model_id_recorded` | RFC-0005 |
+| CA-8 | Con fallback activo, una caída del primario conmuta y emite `ProviderFallbacks` | `test_fallback.py::test_switch_on_unavailability` | RFC-0013 (este PR) |
+| CA-9 | Con fallback activo, un error de validación **no** conmuta | `test_fallback.py::test_no_switch_on_validation_error` | RFC-0013 (este PR) |
+| CA-10 | El mismo prompt de sistema se usa con los tres proveedores | `test_agent.py::test_prompt_is_provider_agnostic` | RFC-0004 |
+| CA-11 | `streaming` está activo en las tres ramas | `test_llm_factory.py::test_streaming_enabled` | RFC-0013 (este PR) |
+
+**Criterios diferidos, y por qué no es una excepción encubierta.** El plan de ejecución coloca
+RFC-0013 en el punto 7 y RFC-0004 en el punto 8 a propósito, porque RFC-0004 delega la
+construcción del modelo en esta capa; invertir el orden obligaría a implementar `build_model`
+dentro de RFC-0004 y reescribirlo acto seguido, que es exactamente lo que este RFC existe para
+evitar. La consecuencia es que tres criterios (CA-6, CA-7, CA-10) verifican código que todavía
+no existe. No se relajan ni se dan por cumplidos: se auditan en el PR del RFC que los hace
+verificables, y el Informe de Implementación del punto 7 los declara como diferidos nombrando
+ese RFC. Un criterio diferido sin RFC nombrado sería una excepción encubierta.
 
 ## 11. Riesgos
 
@@ -266,17 +287,37 @@ justamente lo que el reto pide demostrar.
 | Diferencias de formato de *tool calling* entre proveedores | Strands normaliza; aun así, la suite adversarial y las pruebas de herramientas se ejecutan por proveedor antes de designarlo |
 | Datos del CV enviados a un proveedor con retención | Verificación documental previa a designar el proveedor en PROD (§7) |
 
+## 12. Estrategia de pruebas
+
+**Unitarias.** La fábrica completa sin red ni credenciales reales. Las tres ramas de
+`build_model` se verifican por el tipo devuelto y por los argumentos con que se construye cada
+modelo, con dobles locales; nunca se instancia un cliente que abra conexión. El validador de
+`Settings` se prueba por rama con entornos sintéticos. La ausencia de un extra de proveedor
+(CA-5) se simula bloqueando el import, no desinstalando la dependencia.
+
+**Integración.** Ninguna en este RFC. La capa no toca base de datos ni red propia; su única
+frontera externa es el SDK del proveedor, y ejercitarlo de verdad cuesta dinero por token
+(ADR-0012) sin verificar nada que la unitaria no cubra.
+
+**Evaluación.** El gate de §8 es la única prueba que mide la calidad real de un proveedor, y
+vive en RFC-0009. No es sustituible por unitarias: mide el modelo, no el cableado.
+
+Ninguna prueba de este RFC llama a una API de pago, en línea con ADR-0012.
+
 ## Contrato de auditoría (gate ADU)
 
-| # | Comprobación | Cómo se verifica | Severidad si falla |
-| :--- | :--- | :--- | :--- |
-| A-1 | `app/providers/llm.py` es el único módulo que nombra proveedores concretos | CA-6 + `grep` global | Bloqueante |
-| A-2 | El validador de `Settings` exige las variables de la rama activa | CA-3 | Bloqueante |
-| A-3 | Las claves son `SecretStr` y no se registran nunca | CA-4 + revisión de logs de prueba | Bloqueante |
-| A-4 | Los imports son perezosos, dentro de cada rama | CA-5 | Mayor |
-| A-5 | El prompt de sistema no se bifurca por proveedor | CA-10 | Mayor |
-| A-6 | El fallback está apagado por defecto y solo conmuta por indisponibilidad | CA-8, CA-9 | Mayor |
-| A-7 | El PR que cambia `PROVEEDOR` adjunta el informe de evaluación comparado | Revisión del PR | Bloqueante |
-| A-8 | El `model_id` persistido es el usado, no el configurado | CA-7 | Mayor |
-| A-9 | `streaming=True` en las tres ramas | CA-11 | Mayor |
-| A-10 | El rol IAM de PROD no conserva permisos de Bedrock si `PROVEEDOR` no es `bedrock` | Lectura del Terraform desplegado | Mayor |
+| # | Comprobación | Cómo se verifica | Severidad si falla | Aterriza en |
+| :--- | :--- | :--- | :--- | :--- |
+| A-1 | `app/providers/llm.py` es el único módulo que nombra proveedores concretos | CA-6 + `grep` global | Bloqueante | RFC-0013 (este PR) |
+| A-2 | El validador de `Settings` exige las variables de la rama activa | CA-3 | Bloqueante | RFC-0013 (este PR) |
+| A-3 | Las claves son `SecretStr` y no se registran nunca | CA-4 + revisión de logs de prueba | Bloqueante | RFC-0013 (este PR) |
+| A-4 | Los imports son perezosos, dentro de cada rama | CA-5 | Mayor | RFC-0013 (este PR) |
+| A-5 | El prompt de sistema no se bifurca por proveedor | CA-10 | Mayor | RFC-0004 |
+| A-6 | El fallback está apagado por defecto y solo conmuta por indisponibilidad | CA-8, CA-9 | Mayor | RFC-0013 (este PR) |
+| A-7 | El PR que cambia `PROVEEDOR` adjunta el informe de evaluación comparado | Revisión del PR | Bloqueante | RFC-0009 |
+| A-8 | El `model_id` persistido es el usado, no el configurado | CA-7 | Mayor | RFC-0005 |
+| A-9 | `streaming=True` en las tres ramas | CA-11 | Mayor | RFC-0013 (este PR) |
+| A-10 | El rol IAM de PROD no conserva permisos de Bedrock si `PROVEEDOR` no es `bedrock` | No verificable en el alcance vigente: no hay Terraform desplegado (ADR-0006) | Mayor | Diferido con PROD (ADR-0006) |
+
+Se reescribe A-10 porque una comprobación de auditoría que no se puede ejecutar no es un gate,
+es ruido, y el contrato de auditoría debe ser una lista cerrada y ejecutable.
