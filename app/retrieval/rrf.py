@@ -41,6 +41,4 @@ def fuse_rrf(
         )
         for c in candidates
     ]
-    # CA-4 (par siguiente) anade el desempate por id ante empate de score;
-    # este commit solo ordena por score, que es lo unico que CA-3 exige.
-    return sorted(results, key=lambda r: -r.score)
+    return sorted(results, key=lambda r: (-r.score, r.id))
