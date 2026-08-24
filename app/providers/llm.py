@@ -18,8 +18,10 @@ def build_model(settings: Settings) -> Model:
     uno nuevo se hace aqui y en Settings (RFC-0013 4); en ningun otro
     sitio (CA-6, RFC-0004).
     """
-    proveedor = settings.proveedor
+    return _construir(settings, settings.proveedor)
 
+
+def _construir(settings: Settings, proveedor: str) -> Model:
     if proveedor == "bedrock":
         from botocore.config import Config  # type: ignore[import-untyped]
         from strands.models import BedrockModel
