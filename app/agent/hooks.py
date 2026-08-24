@@ -37,3 +37,11 @@ class ToolCallCapHook(HookProvider):
             )
             return
         event.invocation_state[_COUNTER_KEY] = conteo + 1
+
+
+class ToolErrorPropagationHook(HookProvider):
+    """RFC-0004 10, A-12: un fallo de herramienta corta el turno -- nunca
+    se le entrega al modelo como texto de resultado (10, tabla)."""
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        pass  # RFC-0004 10: cuerpo pendiente de su propio ciclo

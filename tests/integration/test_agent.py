@@ -8,12 +8,14 @@ cada funcion lleva su propia marca (`unit` o `integration`) segun si necesita
 
 import pytest
 from strands import Agent
+from strands.types.exceptions import EventLoopException
 
-from app.agent.hooks import ToolCallCapHook
+from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook
 from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION
 from tests.integration.agent_fixtures import (
     ScriptedModel,
     llamada_herramienta,
+    make_failing_search_cv_spy,
     make_list_cv_sections_spy,
     make_search_cv_spy,
     texto,
@@ -30,7 +32,7 @@ def _agente_de_prueba(modelo: ScriptedModel, *, search_cv=None, list_cv_sections
         model=modelo,
         tools=[search_cv, list_cv_sections],
         system_prompt=SYSTEM_PROMPT.format(persona="Test"),
-        hooks=[ToolCallCapHook()],
+        hooks=[ToolCallCapHook(), ToolErrorPropagationHook()],
     )
 
 
@@ -99,3 +101,25 @@ def test_tool_call_cap() -> None:
     agent("Dame todo lo que tengas")
 
     assert len(search_cv.calls) == 2
+
+
+@pytest.mark.unit
+def test_tool_error_propagates() -> None:
+    """CA-10: ningun error de herramienta llega al modelo como texto de
+    resultado -- corta el turno (RFC-0004 10, A-12)."""
+    modelo = ScriptedModel([llamada_herramienta("t1", "search_cv", {"query": "x"})])
+    search_cv = make_failing_search_cv_spy(ConnectionError("timeout de retrieval"))
+    agent = _agente_de_prueba(modelo, search_cv=search_cv)
+
+    # Strands envuelve cualquier excepcion que corta el bucle en
+    # EventLoopException (event_loop.py), preservando la original en
+    # .original_exception -- ahi es donde una capa superior (RFC-0005,
+    # fuera de alcance) clasificaria por clase, no por texto (10).
+    with pytest.raises(EventLoopException) as excinfo:
+        agent("¿Que hizo en su ultimo puesto?")
+
+    assert isinstance(excinfo.value.original_exception, ConnectionError)
+    assert str(excinfo.value.original_exception) == "timeout de retrieval"
+    # El modelo no recibio un segundo turno con el error como texto: el
+    # guion (un solo elemento) no se agoto, la excepcion corto el turno.
+    assert len(modelo.stream_calls) == 1

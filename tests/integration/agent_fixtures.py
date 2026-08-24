@@ -123,6 +123,29 @@ def make_search_cv_spy(respuesta: str = "<contexto_cv></contexto_cv>"):
     return search_cv
 
 
+def make_failing_search_cv_spy(excepcion: Exception):
+    """Doble de search_cv que siempre falla -- RFC-0004 10: para probar que
+    el fallo corta el turno en vez de llegar al modelo como texto."""
+
+    @tool
+    async def search_cv(query: str, chunk_types: list[str] | None = None) -> str:
+        """Busca en el CV de la persona y devuelve los fragmentos más relevantes.
+
+        Args:
+            query: La pregunta o los términos a buscar, en lenguaje natural.
+            chunk_types: Filtro opcional. Valores válidos: "experiencia", "proyecto",
+                "habilidad", "educacion", "faq", "perfil". Úsalo solo si la pregunta
+                se limita claramente a una de esas categorías.
+
+        Returns:
+            Un bloque <contexto_cv> con los fragmentos relevantes, o un aviso de que
+            no se encontró información.
+        """
+        raise excepcion
+
+    return search_cv
+
+
 def make_list_cv_sections_spy(respuesta: str = "indice vacio"):
     """Doble de list_cv_sections (RFC-0004 5.2): misma firma, sin base de datos."""
     llamadas: list[dict[str, Any]] = []
