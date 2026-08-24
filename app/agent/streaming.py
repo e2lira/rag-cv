@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 _SOURCES_KEY = "rfc0004_sources"
 _MAX_ITERATIONS = 4  # RFC-0004 8: corta bucles de razonamiento
 _TURN_TIMEOUT_SECONDS = 45.0  # RFC-0004 8: cancelacion limpia -> HTTP 504 (RFC-0005)
+_INPUT_TOKEN_BUDGET = 8000  # RFC-0004 8: auditado y registrado, no corta el turno
+_CARACTERES_POR_TOKEN = 4  # aproximacion -- igual criterio que app/agent/memory.py
+
+
+def _estimar_tokens_entrada(agent: Agent, message: str) -> int:
+    system_prompt = agent.system_prompt or ""
+    return (len(system_prompt) + len(message)) // _CARACTERES_POR_TOKEN
 
 
 async def stream_turn(
@@ -33,6 +40,14 @@ async def stream_turn(
     no es un evento de callback (hooks.py). Los marca ToolStreamMarkersHook
     en invocation_state[TOOL_EVENTS_KEY]; esta funcion drena esa cola en
     cada vuelta, antes de procesar el evento de modelo que la desperto."""
+    tokens_estimados = _estimar_tokens_entrada(agent, message)
+    if tokens_estimados > _INPUT_TOKEN_BUDGET:
+        logger.warning(
+            "Turno excede el presupuesto de tokens de entrada: %s > %s",
+            tokens_estimados,
+            _INPUT_TOKEN_BUDGET,
+        )
+
     invocation_state: dict[str, Any] = {}
     marcadores_vistos = 0
 
