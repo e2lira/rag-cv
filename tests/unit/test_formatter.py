@@ -29,6 +29,7 @@ def _chunk(**overrides: object) -> RetrievedChunk:
         "score": 0.03,
         "sem_rank": 1,
         "lex_rank": None,
+        "degraded": False,
     }
     base.update(overrides)
     return RetrievedChunk(**base)  # type: ignore[arg-type]

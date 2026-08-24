@@ -65,6 +65,7 @@ class RetrievedChunk:
     score: float
     sem_rank: int | None
     lex_rank: int | None
+    degraded: bool
 
 
 def _format_vector(vector: list[float]) -> str:
@@ -143,6 +144,7 @@ async def hybrid_search(
             score=f.score,
             sem_rank=f.sem_rank,
             lex_rank=f.lex_rank,
+            degraded=False,
         )
         for f in fused
     ]
