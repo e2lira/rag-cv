@@ -18,6 +18,14 @@ from datetime import UTC, datetime
 # si distingue un digest de una clave en claro, que es lo que importa.
 _SHA256_HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 
+# `admin` incluye lo de `read` (RFC-0005 6.3). En minusculas y sin
+# variantes: aceptar `READ` invitaria a que dos despliegues discrepen sobre
+# que significa una clave.
+_ROLES: dict[str, tuple[str, ...]] = {
+    "read": ("read",),
+    "admin": ("read", "admin"),
+}
+
 
 @dataclass(frozen=True)
 class ApiKey:
@@ -114,5 +122,13 @@ def verify_api_key(presented: str | None, keys: tuple[ApiKey, ...]) -> ApiKey | 
 
 
 def has_role(key: ApiKey, required: str) -> bool:
-    """Rol suficiente para la ruta -- RFC-0005 6.3. `admin` incluye `read`."""
-    raise NotImplementedError  # RFC-0005 6.3: pendiente de su propio ciclo
+    """Rol suficiente para la ruta -- RFC-0005 6.3. `admin` incluye `read`.
+
+    No mira vigencia: eso es de `verify_api_key` (6.2). Separar las dos
+    preguntas es lo que permite responder 401 y 403 de forma distinta -- si
+    una clave expirada diera 403, filtraria que existio.
+    """
+    # `.get(rol, ())` y no `[rol]`: un rol desconocido no alcanza nada, pero
+    # tampoco revienta. Un KeyError aqui seria un 500 en vez de un 403, y un
+    # secreto mal escrito no debe tumbar la API.
+    return required in _ROLES.get(key.role, ())
