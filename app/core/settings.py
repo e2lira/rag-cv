@@ -4,7 +4,8 @@ Contrato normativo: docs/rfc/RFC-0011-entorno-dev-windows-nativo.md #4.5,
 docs/rfc/RFC-0017-embeddings-sin-aws-openai.md #5,
 docs/rfc/RFC-0021-arranque-validado-de-la-aplicacion.md #4,
 docs/rfc/RFC-0002-ingesta-y-chunking.md #6,
-docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md #8.
+docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md #8,
+docs/rfc/RFC-0003-retrieval-hibrido-rrf.md #5.
 """
 
 from pathlib import Path
@@ -46,3 +47,16 @@ class Settings(BaseSettings):
     watcher_heartbeat_max_age_seconds: int = Field(
         alias="WATCHER_HEARTBEAT_MAX_AGE_SECONDS", default=900
     )
+
+    # Recuperacion hibrida (RFC-0003 5, 3.4).
+    retrieval_candidates: int = Field(alias="RETRIEVAL_CANDIDATES", default=20)
+    retrieval_top_k: int = Field(alias="RETRIEVAL_TOP_K", default=5)
+    retrieval_ef_search: int = Field(alias="RETRIEVAL_EF_SEARCH", default=40)
+    rrf_k: int = Field(alias="RRF_K", default=60)
+    retrieval_min_score: float = Field(alias="RETRIEVAL_MIN_SCORE", default=0.016)
+    retrieval_timeout_ms: int = Field(alias="RETRIEVAL_TIMEOUT_MS", default=2000)
+    retrieval_context_budget: int = Field(alias="RETRIEVAL_CONTEXT_BUDGET", default=2500)
+    # Palanca de ajuste mas barata ante sesgo hacia una rama (RFC-0003 3.4).
+    # Cambiarlos exige volver a correr la suite de evaluacion (RFC-0009).
+    rrf_weight_semantic: float = Field(alias="RRF_WEIGHT_SEMANTIC", default=1.0)
+    rrf_weight_lexical: float = Field(alias="RRF_WEIGHT_LEXICAL", default=1.0)
