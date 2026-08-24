@@ -8,7 +8,6 @@ recibe el modelo ya construido por build_model() y nunca ve una credencial
 
 from strands import Agent
 
-from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook, ToolStreamMarkersHook
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.tools import list_cv_sections, search_cv
 from app.core.settings import Settings
@@ -20,5 +19,4 @@ def build_agent(settings: Settings, persona: str) -> Agent:
         model=build_model(settings),
         tools=[search_cv, list_cv_sections],
         system_prompt=SYSTEM_PROMPT.format(persona=persona),
-        hooks=[ToolCallCapHook(), ToolErrorPropagationHook(), ToolStreamMarkersHook()],
     )
