@@ -231,3 +231,34 @@ async def test_contract_matches_rfc0005(database_url: str) -> None:
     assert isinstance(results[0].id, int)
     assert isinstance(results[0].unit, str)
     assert results[0].unit
+
+
+@pytest.mark.asyncio
+async def test_below_threshold_returns_empty(database_url: str) -> None:
+    """CA-6 / A-3: una consulta sin relacion con el corpus devuelve [].
+
+    Se fuerza subiendo min_score muy por encima del score maximo posible
+    (1/61 + 1/61 =~ 0.033 con k=60): asi la prueba no depende de que la
+    consulta REALMENTE no tenga relacion (fragil con FakeEmbedder, que no
+    tiene nocion de "sin relacion"), sino de que el umbral se aplique de
+    verdad sobre cualquier resultado, por bueno que sea."""
+    embedder = FakeEmbedder(1536)
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, embedder)
+
+        results = await hybrid_search(conn, embedder, "Banorte", min_score=0.5)
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_threshold_does_not_reject_a_good_match(database_url: str) -> None:
+    """El umbral por defecto (0.016) no descarta una coincidencia real --
+    si lo hiciera, CA-1 pasaria por casualidad en vez de por la logica."""
+    embedder = FakeEmbedder(1536)
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, embedder)
+
+        results = await hybrid_search(conn, embedder, "Banorte")
+
+    assert results
