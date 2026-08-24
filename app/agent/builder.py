@@ -8,10 +8,15 @@ recibe el modelo ya construido por build_model() y nunca ve una credencial
 
 from strands import Agent
 
+from app.agent.prompts import SYSTEM_PROMPT
+from app.agent.tools import list_cv_sections, search_cv
 from app.core.settings import Settings
 from app.providers.llm import build_model
 
 
 def build_agent(settings: Settings, persona: str) -> Agent:
-    build_model(settings)  # referencia real -- ver RFC-0004 6, cuerpo pendiente de su ciclo
-    raise NotImplementedError
+    return Agent(
+        model=build_model(settings),
+        tools=[search_cv, list_cv_sections],
+        system_prompt=SYSTEM_PROMPT.format(persona=persona),
+    )
