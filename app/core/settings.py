@@ -10,7 +10,7 @@ docs/rfc/RFC-0003-retrieval-hibrido-rrf.md #5.
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,7 +18,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
-    anthropic_api_key: SecretStr = Field(alias="ANTHROPIC_API_KEY", min_length=1)
+    # Condicional a PROVEEDOR=anthropic (RFC-0013 4), no incondicional como
+    # antes de este RFC: un despliegue con PROVEEDOR=bedrock u
+    # openai_compatible no tiene por que traer esta clave.
+    anthropic_api_key: SecretStr | None = Field(alias="ANTHROPIC_API_KEY", default=None)
 
     # Sin valor por defecto y a proposito (RFC-0021 4): una URL de base por
     # defecto es una invitacion a arrancar apuntando sin querer a la base
@@ -60,3 +63,46 @@ class Settings(BaseSettings):
     # Cambiarlos exige volver a correr la suite de evaluacion (RFC-0009).
     rrf_weight_semantic: float = Field(alias="RRF_WEIGHT_SEMANTIC", default=1.0)
     rrf_weight_lexical: float = Field(alias="RRF_WEIGHT_LEXICAL", default=1.0)
+
+    # Capa de proveedores de modelo (RFC-0013 4). El valor por defecto es
+    # anthropic, no el bedrock de RFC-0013 4: RFC-0018 3 lo sustituye para
+    # esta PoC, y los dos RFC aterrizan juntos en este PR.
+    proveedor: str = Field(alias="PROVEEDOR", default="anthropic")
+    llm_temperature: float = Field(alias="LLM_TEMPERATURE", default=0.3)
+    llm_max_tokens: int = Field(alias="LLM_MAX_TOKENS", default=1024)
+
+    aws_region: str | None = Field(alias="AWS_REGION", default=None)
+    bedrock_model_id: str | None = Field(alias="BEDROCK_MODEL_ID", default=None)
+
+    # RFC-0018 3: el modelo designado para la PoC, version con fecha (no el
+    # alias) por ADR-0012.
+    anthropic_model_id: str = Field(alias="ANTHROPIC_MODEL_ID", default="claude-haiku-4-5-20251001")
+
+    openai_compatible_api_key: str | None = Field(alias="OPENAI_COMPATIBLE_API_KEY", default=None)
+    openai_compatible_base_url: str | None = Field(alias="OPENAI_COMPATIBLE_BASE_URL", default=None)
+    openai_compatible_model_id: str | None = Field(alias="OPENAI_COMPATIBLE_MODEL_ID", default=None)
+
+    # Apagado por defecto (RFC-0013 6.1, ADR-0005): un despliegue habla con
+    # un proveedor salvo designacion explicita de uno secundario.
+    proveedor_fallback: str = Field(alias="PROVEEDOR_FALLBACK", default="")
+
+    @model_validator(mode="after")
+    def _validar_proveedor(self) -> "Settings":
+        """RFC-0013 4: exige las variables de la rama de PROVEEDOR activa.
+
+        Un PROVEEDOR desconocido no se rechaza aqui -- lo hace build_model
+        (RFC-0013 9, CA-2), asi que .get(..., []) lo deja pasar sin
+        comprobar nada en vez de lanzar KeyError."""
+        requeridas = {
+            "bedrock": ["aws_region", "bedrock_model_id"],
+            "anthropic": ["anthropic_api_key", "anthropic_model_id"],
+            "openai_compatible": [
+                "openai_compatible_api_key",
+                "openai_compatible_base_url",
+                "openai_compatible_model_id",
+            ],
+        }.get(self.proveedor, [])
+        faltantes = [c for c in requeridas if getattr(self, c, None) in (None, "")]
+        if faltantes:
+            raise ValueError(f"PROVEEDOR={self.proveedor} exige: {', '.join(faltantes)}")
+        return self
