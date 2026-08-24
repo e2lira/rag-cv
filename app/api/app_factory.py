@@ -7,6 +7,7 @@ construir dos veces con entornos distintos.
 
 from fastapi import FastAPI
 
+from app.api import health
 from app.api.errors import install_error_handling
 from app.core.settings import Settings
 
@@ -27,4 +28,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     install_error_handling(app)
+
+    # El SHA se lee de la configuracion, que lo recibe del artefacto de la
+    # release (RFC-0020 6): el VPS no tiene el repositorio, asi que no hay
+    # `git` que consultar en tiempo de ejecucion.
+    app.state.commit_sha = settings.commit_sha
+    app.include_router(health.router)
     return app

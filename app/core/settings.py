@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # RFC-0001 4: dev | qa | prod. RFC-0005 9 lo usa para apagar /docs en
     # PROD; el valor por defecto es el de DEV (RFC-0011 4.5, .env.example).
     app_env: str = Field(alias="APP_ENV", default="dev")
+    # El commit desplegado, que /readyz publica (RFC-0005 3.1, RFC-0020 CA-5).
+    # Lo inyecta el despliegue en el artefacto de la release; en DEV va
+    # vacio y el campo sale null -- no se inventa un valor, porque existe
+    # justo para comprobar que corre lo que se dijo que corre.
+    commit_sha: str = Field(alias="COMMIT_SHA", default="")
 
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
     # Condicional a PROVEEDOR=anthropic (RFC-0013 4), no incondicional como
