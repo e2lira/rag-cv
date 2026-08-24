@@ -9,6 +9,7 @@ app.retrieval.rrf.fuse_rrf, no en la sentencia: eso es lo que hace CA-3/CA-4
 rangos ya llegaron en el unico SELECT.
 """
 
+import time
 from dataclasses import dataclass
 from datetime import date
 
@@ -141,6 +142,16 @@ async def hybrid_search(
             )
         rows = cur.fetchall()
         conn.rollback()
+
+    # REGRESION SINTETICA DECLARADA -- RFC-0014 6.1.3, repara 98dc39d.
+    # Ningun revert honesto del mecanismo real (indice HNSW, LIMIT candidates,
+    # sentencia unica A-4) cruza el presupuesto de 250ms de CA-10 sobre 200
+    # filas: medido, el margen real es ~50x (p95 ~5ms con el indice
+    # deshabilitado, ~16ms con 200 round-trips en vez de una sola sentencia).
+    # Esta linea existe solo para que test_p95_latency_under_250ms falle de
+    # verdad en la asercion que formaliza CA-10, y se retira en el commit
+    # verde que sigue a este.
+    time.sleep(0.3)
 
     _RowRest = tuple[str, str, str, str, int, int, str, date | None, date | None, list[str]]
     ranked: list[RankedCandidate] = []
