@@ -10,7 +10,7 @@ hace falta resetearlo entre turnos distintos aunque el `Agent` se reutilice
 
 from typing import Any
 
-from strands.hooks import BeforeToolCallEvent, HookProvider, HookRegistry
+from strands.hooks import AfterToolCallEvent, BeforeToolCallEvent, HookProvider, HookRegistry
 
 _COUNTER_KEY = "rfc0004_tool_call_count"
 
@@ -41,7 +41,17 @@ class ToolCallCapHook(HookProvider):
 
 class ToolErrorPropagationHook(HookProvider):
     """RFC-0004 10, A-12: un fallo de herramienta corta el turno -- nunca
-    se le entrega al modelo como texto de resultado (10, tabla)."""
+    se le entrega al modelo como texto de resultado (10, tabla). Strands,
+    por defecto, atrapa la excepcion y la convierte en un ToolResult de
+    error que se reenvia como si la herramienta hubiera respondido eso; el
+    modelo lo leeria como dato y podria fundamentar una respuesta inventada
+    (13). `HookRegistry.invoke_callbacks` propaga cualquier excepcion que
+    lance un callback, asi que relanzarla aqui corta la invocacion completa
+    de `agent()` en vez de alimentar el bucle."""
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
-        pass  # RFC-0004 10: cuerpo pendiente de su propio ciclo
+        registry.add_callback(AfterToolCallEvent, self._reraise)
+
+    def _reraise(self, event: AfterToolCallEvent) -> None:
+        if event.exception is not None:
+            raise event.exception
