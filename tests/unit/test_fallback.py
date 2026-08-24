@@ -13,7 +13,10 @@ from unittest.mock import patch
 import anthropic
 import httpx
 import pytest
-from botocore.exceptions import EndpointConnectionError  # type: ignore[import-untyped]
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    ClientError,
+    EndpointConnectionError,
+)
 from openai import APIConnectionError as OpenAIConnectionError
 from strands.models import RoutingCandidate, RoutingContext
 from strands.models.routing.strategy import RoutingAttempt
@@ -26,6 +29,21 @@ _PETICION_SINTETICA = httpx.Request("POST", "https://api.anthropic.com/v1/messag
 
 def _con_status(status_code: int) -> httpx.Response:
     return httpx.Response(status_code, request=_PETICION_SINTETICA)
+
+
+def _client_error(code: str, http_status: int) -> ClientError:
+    """ClientError real de botocore, con la misma forma que boto3 genera
+    dinamicamente para bedrock-runtime (ThrottlingException,
+    InternalServerException, ModelNotReadyException, ...) -- todas heredan
+    de ClientError y exponen .response['ResponseMetadata']['HTTPStatusCode'],
+    no un .status_code plano como anthropic/openai."""
+    return ClientError(
+        error_response={
+            "Error": {"Code": code, "Message": "boom"},
+            "ResponseMetadata": {"HTTPStatusCode": http_status},
+        },
+        operation_name="Converse",
+    )
 
 
 pytestmark = pytest.mark.unit
@@ -71,12 +89,21 @@ class _ErrorDeValidacion(Exception):
         TimeoutError("se agoto el tiempo de espera"),
         anthropic.APIStatusError("server error", response=_con_status(500), body=None),
         anthropic.RateLimitError("rate limited", response=_con_status(429), body=None),
+        _client_error("InternalServerException", 500),
+        _client_error("ModelNotReadyException", 429),
+        _client_error("ServiceUnavailableException", 503),
     ],
 )
 def test_availability_failures_are_recognized(excepcion: Exception) -> None:
-    """CA-8: throttling, caida de conexion, timeout, y 429/5xx reales del
-    SDK de Anthropic (via status_code) se clasifican como disponibilidad
-    -- las formas concretas que RFC-0013 9 nombra."""
+    """CA-8: throttling, caida de conexion, timeout, 429/5xx reales del SDK
+    de Anthropic (via status_code), y los ClientError reales que boto3
+    genera para bedrock-runtime (via response.ResponseMetadata.HTTPStatusCode)
+    se clasifican como disponibilidad -- las formas concretas que RFC-0013 9
+    nombra. InternalServerException y ModelNotReadyException son los dos
+    codigos de error reales de bedrock-runtime (verificado contra
+    boto3.client('bedrock-runtime')._service_model.shape_names) que un
+    matching por fragmento de nombre de clase no reconocia -- ninguno
+    contiene "Timeout", "ConnectionError" ni "ServiceUnavailable"."""
     assert es_fallo_de_disponibilidad(excepcion) is True
 
 
@@ -85,13 +112,16 @@ def test_availability_failures_are_recognized(excepcion: Exception) -> None:
     [
         _ErrorDeValidacion("contenido rechazado"),
         anthropic.BadRequestError("prompt invalido", response=_con_status(400), body=None),
+        _client_error("ValidationException", 400),
+        _client_error("AccessDeniedException", 403),
     ],
 )
 def test_validation_error_is_not_a_availability_failure(excepcion: Exception) -> None:
-    """CA-9: un error sin marca de disponibilidad -- incluido un 400 real
-    con status_code, para ejercitar la rama "no es 429 ni >=500" -- no
-    conmuta. El default es conservador (no oculta un problema real), no
-    permisivo."""
+    """CA-9: un error sin marca de disponibilidad -- incluidos 400/403
+    reales, de Anthropic y de Bedrock, para ejercitar la rama "no es 429
+    ni >=500" en ambos mecanismos de clasificacion (status_code plano y
+    response.ResponseMetadata.HTTPStatusCode) -- no conmuta. El default
+    es conservador (no oculta un problema real), no permisivo."""
     assert es_fallo_de_disponibilidad(excepcion) is False
 
 
