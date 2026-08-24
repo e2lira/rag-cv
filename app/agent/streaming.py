@@ -6,6 +6,7 @@ lo consumen y lo traducen a su propio formato -- esa traduccion no es
 trabajo de esta capa.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -40,23 +41,32 @@ async def stream_turn(
         return nuevos
 
     try:
-        async for evento in agent.stream_async(
-            message, invocation_state=invocation_state, limits={"turns": _MAX_ITERATIONS}
-        ):
-            for marcador in _drenar_marcadores():
-                yield marcador
-
-            if "data" in evento:
-                yield {"type": "token", "text": evento["data"]}
-                continue
-
-            if "result" in evento:
+        async with asyncio.timeout(timeout_seconds):
+            async for evento in agent.stream_async(
+                message, invocation_state=invocation_state, limits={"turns": _MAX_ITERATIONS}
+            ):
                 for marcador in _drenar_marcadores():
                     yield marcador
-                fuentes = invocation_state.get(_SOURCES_KEY)
-                if fuentes:
-                    yield {"type": "sources", "chunks": fuentes}
-                yield {"type": "done"}
-                continue
+
+                if "data" in evento:
+                    yield {"type": "token", "text": evento["data"]}
+                    continue
+
+                if "result" in evento:
+                    for marcador in _drenar_marcadores():
+                        yield marcador
+                    fuentes = invocation_state.get(_SOURCES_KEY)
+                    if fuentes:
+                        yield {"type": "sources", "chunks": fuentes}
+                    yield {"type": "done"}
+                    continue
+    except TimeoutError:
+        # RFC-0004 8: cancelacion limpia -> HTTP 504 (RFC-0005, fuera de
+        # alcance); code distingue este caso de un fallo generico.
+        yield {
+            "type": "error",
+            "code": "timeout",
+            "message": f"El turno excedio {timeout_seconds}s y fue cancelado",
+        }
     except Exception as exc:  # noqa: BLE001 -- RFC-0004 9: cualquier fallo cierra el flujo con `error`
         yield {"type": "error", "message": str(exc)}
