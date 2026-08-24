@@ -6,6 +6,7 @@ recibe un modelo ya construido y no sabe de donde salio (RFC-0004 CA-6).
 
 from strands.models import ModelRouter
 from strands.models.model import Model
+from strands.models.openai import OpenAIModel  # ROTO A PROPOSITO -- ver RFC-0014 6.1.3
 
 from app.core.settings import Settings
 
@@ -75,8 +76,6 @@ def _construir(settings: Settings, proveedor: str) -> Model:
         )
 
     if proveedor == "openai_compatible":
-        from strands.models.openai import OpenAIModel
-
         assert settings.openai_compatible_api_key is not None  # RFC-0013 4: exigido por Settings
         assert settings.openai_compatible_base_url is not None  # RFC-0013 4
         assert settings.openai_compatible_model_id is not None  # RFC-0013 4
