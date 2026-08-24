@@ -136,15 +136,23 @@ léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cos
 | CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5-20251001.json` — **el nombre lleva la versión**, no el alias: dos versiones distintas no pueden compartir línea base sin que una sobrescriba a la otra, que es el fallo que ADR-0012 evita | `python evals/run_eval.py --suite full --label anthropic-claude-haiku-4-5-20251001` (RFC-0013 §8: el script es la invocación canónica; `invoke evals` no reenvía `--label`) | RFC-0009 |
 | CA-4 | La calibración del juez sobre los 15 casos de veredicto humano se ejecutó y publicó **antes** de usarlo como gate | Informe de calibración (RFC-0009 §4.1) | RFC-0009 |
 | CA-5 | El costo medio por caso y por conversación queda dentro de RNF-5 y del umbral de RFC-0009 | `usage.cost_usd` agregado en la corrida | RFC-0009 |
-| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM | RFC-0018 (este PR) |
-| CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` | RFC-0018 (este PR) |
+| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM | Despliegue en QA (operativo) |
+| CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` | RFC-0004 |
 | CA-8 | El *fallback* entre proveedores sigue apagado por defecto | `test_llm_factory.py::test_fallback_disabled_by_default` | RFC-0018 (este PR) |
 
-Tres de los ocho criterios (CA-3, CA-4, CA-5) miden la corrida de evaluación, que es el
-entregable de RFC-0009 (punto 10 del plan de ejecución). Hasta entonces no hay conjunto dorado,
-ni juez, ni línea base contra la que comparar; el directorio `evals/` no existe. Se declaran
-diferidos con su RFC nombrado; el punto 7 entrega la configuración del proveedor, no su
-validación empírica.
+Cinco de los ocho criterios quedan fuera de este PR, por dos razones distintas. **CA-3, CA-4 y
+CA-5** miden la corrida de evaluación, que es el entregable de RFC-0009 (punto 10 del plan de
+ejecución): hasta entonces no hay conjunto dorado, ni juez, ni línea base contra la que
+comparar, y el directorio `evals/` no existe. **CA-7** verifica `app/agent/prompts.py`, que no
+existe hasta RFC-0004 — es el mismo caso que CA-10 de RFC-0013 (el prompt es agnóstico del
+proveedor), solo que planteado desde este RFC. **CA-6** es distinto de los otros cuatro: no es
+un criterio que un RFC futuro vaya a implementar y auditar, porque no hay código que lo
+satisfaga. Es una acción operativa sobre una máquina que todavía no está provisionada bajo la
+topología vigente (RFC-0020, punto 11 del plan, no implementado) — se ejecuta y se verifica en
+el momento del despliegue a QA, con `pytest` fuera de la conversación. Los cinco se declaran
+diferidos con su destino nombrado; el punto 7 entrega la configuración del proveedor
+(CA-1, CA-2, CA-8), no su validación empírica ni la limpieza de una infraestructura que aún no
+existe.
 
 ## 9. Riesgos
 
@@ -174,6 +182,12 @@ RFC. Son las que deciden si Haiku 4.5 sostiene los umbrales, y ninguna unitaria 
 Ninguna prueba automatizada de este RFC consume tokens de pago; el gasto ocurre solo en las
 corridas de evaluación de RFC-0009, acotado por ADR-0012.
 
+**CA-6 no tiene prueba automatizada, y no es un hueco de cobertura.** Verifica un estado del
+VPS (ningún usuario IAM ni clave de AWS), no una propiedad del código de este repositorio; no
+hay función que probar ni rama que cubrir. Se ejecuta como paso del despliegue a QA y lo
+verifica el Auditor por lectura directa, igual que hoy verifica `gitleaks` o la ausencia de
+secretos — una comprobación fuera de `pytest` con la misma exigibilidad que una dentro.
+
 ## Contrato de auditoría (gate ADU)
 
 | # | Comprobación | Cómo se verifica | Severidad si falla | Aterriza en |
@@ -185,6 +199,6 @@ corridas de evaluación de RFC-0009, acotado por ADR-0012.
 | A-5 | Existe la línea base publicada en `evals/baselines/` | CA-3 | Bloqueante | RFC-0009 |
 | A-6 | La calibración del juez se ejecutó antes de usarlo como gate | CA-4 | Mayor | RFC-0009 |
 | A-7 | El *fallback* está apagado por defecto | CA-8 | Mayor | RFC-0018 (este PR) |
-| A-8 | El prompt de sistema es agnóstico del proveedor | CA-7 | Mayor | RFC-0018 (este PR) |
-| A-9 | El usuario IAM `rag-cv-qa-invoker` fue eliminado | CA-6 | Mayor | RFC-0018 (este PR) |
+| A-8 | El prompt de sistema es agnóstico del proveedor | CA-7 | Mayor | RFC-0004 |
+| A-9 | El usuario IAM `rag-cv-qa-invoker` fue eliminado | CA-6 | Mayor | Despliegue en QA (operativo) |
 | A-10 | El costo por caso y por conversación está dentro de umbral | CA-5 | Mayor | RFC-0009 |
