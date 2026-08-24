@@ -17,6 +17,7 @@ from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook, ToolStrea
 from app.agent.memory import load_history, record_turn
 from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION
 from app.agent.streaming import stream_turn
+from app.core.settings import Settings
 from tests.integration.agent_fixtures import (
     ScriptedModel,
     crear_conversacion,
@@ -40,6 +41,15 @@ def _agente_de_prueba(modelo: ScriptedModel, *, search_cv=None, list_cv_sections
         system_prompt=SYSTEM_PROMPT.format(persona="Test"),
         hooks=[ToolCallCapHook(), ToolErrorPropagationHook(), ToolStreamMarkersHook()],
     )
+
+
+def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
+    monkeypatch.setenv("PROVEEDOR", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.delenv("ANTHROPIC_MODEL_ID", raising=False)
+    return Settings(_env_file=None)
 
 
 @pytest.mark.unit
@@ -308,3 +318,54 @@ async def test_input_token_budget_silent_when_within_range() -> None:
         [_ async for _ in stream_turn(agent, "Hola")]
 
     mock_logger.warning.assert_not_called()
+
+
+@pytest.mark.unit
+def test_build_agent_enforces_tool_call_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A-5/TDD-3: el tope de herramientas se prueba a traves del ENSAMBLAJE
+    real de build_agent() -- no de un Agent doble construido aparte. Si se
+    revierte hooks=[...] en builder.py, esta prueba (y no otra) lo detecta."""
+    settings = _settings(monkeypatch)
+    modelo = ScriptedModel(
+        [
+            llamada_herramienta("t1", "search_cv", {"query": "a"}),
+            llamada_herramienta("t2", "search_cv", {"query": "b"}),
+            llamada_herramienta("t3", "search_cv", {"query": "c"}),
+            texto("No consta evidencia suficiente."),
+        ]
+    )
+    search_cv = make_search_cv_spy()
+
+    with (
+        patch("app.agent.builder.build_model", return_value=modelo),
+        patch("app.agent.builder.search_cv", search_cv),
+    ):
+        from app.agent.builder import build_agent
+
+        agent = build_agent(settings, persona="Test")
+
+    agent("Dame todo lo que tengas")
+
+    assert len(search_cv.calls) == 2
+
+
+@pytest.mark.unit
+def test_build_agent_propagates_tool_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A-5/A-12/TDD-3: la propagacion de errores se prueba a traves del
+    ensamblaje real de build_agent(), no de un Agent doble."""
+    settings = _settings(monkeypatch)
+    modelo = ScriptedModel([llamada_herramienta("t1", "search_cv", {"query": "x"})])
+    search_cv = make_failing_search_cv_spy(ConnectionError("timeout de retrieval"))
+
+    with (
+        patch("app.agent.builder.build_model", return_value=modelo),
+        patch("app.agent.builder.search_cv", search_cv),
+    ):
+        from app.agent.builder import build_agent
+
+        agent = build_agent(settings, persona="Test")
+
+    with pytest.raises(EventLoopException) as excinfo:
+        agent("¿Que hizo en su ultimo puesto?")
+
+    assert isinstance(excinfo.value.original_exception, ConnectionError)
