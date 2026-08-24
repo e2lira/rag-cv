@@ -33,3 +33,22 @@ def test_repr_does_not_expose_the_database_password(monkeypatch: pytest.MonkeyPa
 
     assert "SUPERSECRETA" not in repr(settings)
     assert "SUPERSECRETA" not in str(settings)
+
+
+def test_repr_does_not_expose_the_openai_compatible_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RFC-0013 CA-4: las tres claves de proveedor son SecretStr, no solo
+    ANTHROPIC_API_KEY y OPENAI_API_KEY. openai_compatible_api_key es la
+    unica de las tres que todavia no lo era (RFC-0013 3: PROVEEDOR=bedrock
+    no trae una clave propia, la resuelve el rol IAM o boto_session)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("PROVEEDOR", "openai_compatible")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "sk-deepseek-real-secret-value")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("OPENAI_COMPATIBLE_MODEL_ID", "deepseek-chat")
+
+    settings = Settings(_env_file=None)
+
+    assert "sk-deepseek-real-secret-value" not in repr(settings)
+    assert "sk-deepseek-real-secret-value" not in str(settings)
