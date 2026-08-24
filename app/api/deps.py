@@ -63,8 +63,16 @@ def enforce_body_limit(request: Request) -> None:
 
     Como dependencia, corre ANTES del handler: el agente no se invoca y el
     gasto de tokens no ocurre.
+
+    Se mira `Content-Length` y no el cuerpo ya leido: leerlo para medirlo
+    obligaria a traerlo entero a memoria, que es justo lo que el tope
+    intenta evitar. Sin cabecera no se puede decidir por adelantado, asi
+    que se deja pasar -- nginx corta antes por `client_max_body_size`
+    (RFC-0020 7.1) y el esquema de 4 acota `message` a 2 000 caracteres.
     """
-    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+    declarado = request.headers.get("content-length")
+    if declarado is not None and declarado.isdigit() and int(declarado) > MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=PAYLOAD_TOO_LARGE_MESSAGE)
 
 
 def current_key(request: Request) -> ApiKey:
