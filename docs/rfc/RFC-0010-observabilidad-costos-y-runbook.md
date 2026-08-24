@@ -61,6 +61,13 @@ instrumentación adicional en el cliente.
 
 ## 5. Métricas (namespace CloudWatch `RagCV`)
 
+> **Nota (ADR-0014, 2026-08-24, fuera de alcance de este RFC hasta que le toque implementarse):**
+> esta sección entera asume CloudWatch/EMF. ADR-0007, ADR-0008, RFC-0016, RFC-0018 y RFC-0020 ya
+> sacaron AWS por completo del alcance de la PoC — no hay ningún componente que llame a AWS. Quien
+> implemente este RFC (Fase 3, punto 10 del plan de ejecución) no debe dar por buena la referencia
+> a CloudWatch sin revisarla primero: el mecanismo de métricas real para esta PoC todavía no está
+> decidido.
+
 | Métrica | Tipo | Dimensiones | Para qué |
 | :--- | :--- | :--- | :--- |
 | `Requests` | Contador | `env`, `route`, `status_code` | Tráfico y tasa de error |
