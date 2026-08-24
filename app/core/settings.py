@@ -17,6 +17,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # RFC-0001 4: dev | qa | prod. RFC-0005 9 lo usa para apagar /docs en
+    # PROD; el valor por defecto es el de DEV (RFC-0011 4.5, .env.example).
+    app_env: str = Field(alias="APP_ENV", default="dev")
+
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
     # Condicional a PROVEEDOR=anthropic (RFC-0013 4), no incondicional como
     # antes de este RFC: un despliegue con PROVEEDOR=bedrock u
