@@ -7,9 +7,18 @@ codigo HTTP y cabeceras.
 """
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
+from app.core.rate_buckets import (
+    DAY,
+    MINUTE,
+    RateLimitDecision,
+    decide,
+    increment_rate_bucket,
+    window_start,
+)
 from app.core.security import ApiKey, has_role, verify_api_key
 
 # RFC-0005 6.2: un unico 401 para toda causa. No se distingue clave
@@ -95,7 +104,7 @@ async def enforce_body_limit(request: Request) -> None:
 RATE_LIMITED_MESSAGE = "Has superado el limite de peticiones."
 
 
-def rate_limiter(key_id: str) -> Callable[[Request], None]:
+def rate_limiter(key_id: str) -> Callable[[Request, Response], None]:
     """Dependencia de cuota: incrementa las dos cubetas y traduce el
     veredicto a `429` con las cabeceras de RFC-0005 7.
 
@@ -103,7 +112,43 @@ def rate_limiter(key_id: str) -> Callable[[Request], None]:
     tambien donde la clave ya se resolvio; la decision la toma
     `app/core/rate_buckets.py` (RFC-0001 62: aqui no hay logica ni SQL).
     """
-    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+
+    def dependencia(request: Request, response: Response) -> None:
+        estado = request.app.state
+        ahora = datetime.now(UTC)
+
+        # Las dos, siempre (RFC-0005 7): si solo se incrementara la que se
+        # consulta, la cubeta de dia nunca llegaria a su tope.
+        with estado.db_pool.connection() as conn:
+            counts = {
+                kind: increment_rate_bucket(
+                    conn, key_id=key_id, window_kind=kind, window_start=window_start(kind, ahora)
+                )
+                for kind in (MINUTE, DAY)
+            }
+
+        veredicto = decide(
+            counts,
+            now=ahora,
+            per_minute=estado.rate_limit_per_minute,
+            per_day=estado.rate_limit_per_day,
+        )
+        cabeceras = _cabeceras_de_cuota(veredicto)
+        if not veredicto.allowed:
+            cabeceras["Retry-After"] = str(veredicto.retry_after_seconds)
+            raise HTTPException(status_code=429, detail=RATE_LIMITED_MESSAGE, headers=cabeceras)
+
+        response.headers.update(cabeceras)
+
+    return dependencia
+
+
+def _cabeceras_de_cuota(veredicto: RateLimitDecision) -> dict[str, str]:
+    return {
+        "X-RateLimit-Limit": str(veredicto.limit),
+        "X-RateLimit-Remaining": str(veredicto.remaining),
+        "X-RateLimit-Reset": str(int(veredicto.reset_at.timestamp())),
+    }
 
 
 def current_key(request: Request) -> ApiKey:

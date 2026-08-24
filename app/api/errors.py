@@ -9,6 +9,7 @@ incidente es el `request_id`, que ademas viaja en todos los logs del turno.
 """
 
 import logging
+from collections.abc import Mapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -116,12 +117,17 @@ def _instalar_filtro_de_correlacion() -> None:
             handler.addFilter(RequestIdFilter())
 
 
-def _respuesta(request: Request, status: int, message: str) -> JSONResponse:
+def _respuesta(
+    request: Request, status: int, message: str, extra_headers: Mapping[str, str] | None = None
+) -> JSONResponse:
     identificador = current_request_id(request)
+    # Las cabeceras del `HTTPException` viajan con la respuesta: el `429` de
+    # RFC-0005 7 no sirve de nada sin `Retry-After` y `X-RateLimit-*`.
+    cabeceras = {**(extra_headers or {}), REQUEST_ID_HEADER: identificador}
     return JSONResponse(
         status_code=status,
         content=error_body(_CODES.get(status, "internal_error"), message, identificador),
-        headers={REQUEST_ID_HEADER: identificador},
+        headers=cabeceras,
     )
 
 
@@ -135,7 +141,7 @@ def install_error_handling(app: FastAPI) -> None:
     async def _http(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         # `detail` lo escribimos nosotros al lanzar el HTTPException, o lo
         # pone Starlette ("Not Found"): en ningun caso trae interno.
-        return _respuesta(request, exc.status_code, str(exc.detail))
+        return _respuesta(request, exc.status_code, str(exc.detail), exc.headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validacion(request: Request, exc: RequestValidationError) -> JSONResponse:
