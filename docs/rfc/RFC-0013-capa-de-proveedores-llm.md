@@ -5,7 +5,7 @@
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0004 |
 | **Supersede** | RFC-0004 §3 y §6 (construcción del modelo) |
-| **ADRs** | ADR-0005 |
+| **ADRs** | ADR-0005, ADR-0013 |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -90,16 +90,28 @@ def build_model(settings: Settings) -> Model:
 
 Notas de implementación que el Desarrollador debe respetar:
 
-- Los `import` van **dentro de cada rama**: así un despliegue con `PROVEEDOR=openai_compatible`
-  no necesita tener instalados `boto3` ni el SDK de Anthropic, y un fallo de dependencia de un
-  proveedor no usado no tumba el arranque.
+- Los `import` van **dentro de cada rama**: ninguna rama carga el SDK cliente de otra rama, y un
+  fallo de dependencia de un proveedor no usado no tumba el arranque.
 - Los extras de instalación son por proveedor: `strands-agents[anthropic]`,
   `strands-agents[openai]`. Se instalan **todos** en la imagen (son ligeros) para que cambiar de
   proveedor no exija reconstruir, pero se importan solo los que se usan.
 - Las claves se tipan como `SecretStr` de Pydantic: no aparecen en un `repr()` accidental ni en
   un volcado de configuración en los logs.
-- `streaming=True` es obligatorio en todas las ramas (RNF-1 depende de ello). Si un proveedor no
-  lo soporta, no es candidato.
+- `streaming=True` se declara en las ramas `bedrock` y `openai_compatible` (RNF-1 depende de
+  ello). La rama `anthropic` no lleva ningún parámetro de streaming: el SDK transmite siempre, sin
+  flag que lo desactive.
+
+> **Por qué esta sección decía lo contrario de lo que es cierto, en dos puntos.** La versión
+> anterior afirmaba que los imports por rama evitaban instalar `boto3` en un despliegue sin
+> Bedrock, y que `streaming=True` era un parámetro válido en las tres ramas. Ninguna de las dos
+> se verificó contra el paquete real. `strands/models/__init__.py` importa `BedrockModel` (y por
+> tanto `boto3`) de forma incondicional al importarse — Python ejecuta el `__init__.py` de un
+> paquete padre antes de cualquiera de sus submódulos, así que ni siquiera acceder solo a la rama
+> `anthropic` evita `boto3` (ADR-0013, aceptado como deuda con condición de revisión). Y
+> `AnthropicModel.AnthropicConfig` no tiene ningún campo `streaming` ni `stream` — a diferencia de
+> `BedrockConfig`/`OpenAIConfig`, que sí los tienen. Lo que sigue siendo cierto, y lo que CA-5
+> verifica, es más estrecho que la redacción original: ninguna rama importa el SDK cliente de la
+> otra.
 
 ## 4. Contrato de variables de entorno
 
@@ -259,13 +271,13 @@ justamente lo que el reto pide demostrar.
 | CA-2 | `PROVEEDOR` desconocido lanza `ValueError` con los valores válidos | `test_llm_factory.py::test_unknown_provider` | RFC-0013 (este PR) |
 | CA-3 | Falta una variable de la rama activa ⇒ no arranca | `test_config.py::test_provider_required_vars` (los tres casos) | RFC-0013 (este PR) |
 | CA-4 | Las claves son `SecretStr` y no aparecen en `repr(settings)` ni en logs | `test_config.py::test_secrets_not_leaked` | RFC-0013 (este PR) |
-| CA-5 | Los imports de proveedor están dentro de las ramas | `test_llm_factory.py::test_lazy_imports` (simula ausencia de `boto3`) | RFC-0013 (este PR) |
+| CA-5 | Ninguna rama importa el SDK cliente de otra rama (no: "sin `boto3` instalado" — ADR-0013) | `tests/unit/test_llm_factory_lazy_imports.py` | RFC-0013 (este PR) |
 | CA-6 | `app/agent/` no menciona ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados | RFC-0004 |
 | CA-7 | El `model_id` realmente usado se persiste en cada turno | `test_conversation.py::test_model_id_recorded` | RFC-0005 |
 | CA-8 | Con fallback activo, una caída del primario conmuta y emite `ProviderFallbacks` | `test_fallback.py::test_switch_on_unavailability` | RFC-0013 (este PR) |
 | CA-9 | Con fallback activo, un error de validación **no** conmuta | `test_fallback.py::test_no_switch_on_validation_error` | RFC-0013 (este PR) |
 | CA-10 | El mismo prompt de sistema se usa con los tres proveedores | `test_agent.py::test_prompt_is_provider_agnostic` | RFC-0004 |
-| CA-11 | `streaming` está activo en las tres ramas | `test_llm_factory.py::test_streaming_enabled` | RFC-0013 (este PR) |
+| CA-11 | `streaming` está activo donde el SDK expone el parámetro (`bedrock`, `openai_compatible`); `anthropic` no lo expone y transmite siempre | `test_llm_factory.py::test_streaming_enabled`, `test_anthropic_has_no_streaming_flag_to_pass` | RFC-0013 (este PR) |
 
 **Criterios diferidos, y por qué no es una excepción encubierta.** El plan de ejecución coloca
 RFC-0013 en el punto 7 y RFC-0004 en el punto 8 a propósito, porque RFC-0004 delega la
@@ -311,12 +323,12 @@ Ninguna prueba de este RFC llama a una API de pago, en línea con ADR-0012.
 | A-1 | `app/providers/llm.py` es el único módulo que nombra proveedores concretos | CA-6 + `grep` global | Bloqueante | RFC-0013 (este PR) |
 | A-2 | El validador de `Settings` exige las variables de la rama activa | CA-3 | Bloqueante | RFC-0013 (este PR) |
 | A-3 | Las claves son `SecretStr` y no se registran nunca | CA-4 + revisión de logs de prueba | Bloqueante | RFC-0013 (este PR) |
-| A-4 | Los imports son perezosos, dentro de cada rama | CA-5 | Mayor | RFC-0013 (este PR) |
+| A-4 | Ninguna rama importa el SDK cliente de otra rama (no exige ausencia de `boto3` — ADR-0013) | CA-5 | Mayor | RFC-0013 (este PR) |
 | A-5 | El prompt de sistema no se bifurca por proveedor | CA-10 | Mayor | RFC-0004 |
 | A-6 | El fallback está apagado por defecto y solo conmuta por indisponibilidad | CA-8, CA-9 | Mayor | RFC-0013 (este PR) |
 | A-7 | El PR que cambia `PROVEEDOR` adjunta el informe de evaluación comparado | Revisión del PR | Bloqueante | RFC-0009 |
 | A-8 | El `model_id` persistido es el usado, no el configurado | CA-7 | Mayor | RFC-0005 |
-| A-9 | `streaming=True` en las tres ramas | CA-11 | Mayor | RFC-0013 (este PR) |
+| A-9 | `streaming=True` donde el SDK expone el parámetro; `anthropic` documentado como excepción | CA-11 | Mayor | RFC-0013 (este PR) |
 | A-10 | El rol IAM de PROD no conserva permisos de Bedrock si `PROVEEDOR` no es `bedrock` | No verificable en el alcance vigente: no hay Terraform desplegado (ADR-0006) | Mayor | Diferido con PROD (ADR-0006) |
 
 Se reescribe A-10 porque una comprobación de auditoría que no se puede ejecutar no es un gate,
