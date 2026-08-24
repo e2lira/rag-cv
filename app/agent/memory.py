@@ -9,6 +9,8 @@ arrastraria contexto obsoleto tras una reindexacion.
 
 from psycopg import Connection
 
+_CARACTERES_POR_TOKEN = 4  # aproximacion -- RFC-0004 7 no exige un tokenizer exacto aqui
+
 
 def load_history(
     conn: Connection,
@@ -21,7 +23,25 @@ def load_history(
     mas antiguo al mas reciente. Si excede token_budget se recortan los
     turnos mas antiguos primero -- este metodo solo trae historial PREVIO,
     nunca el turno actual, asi que ese nunca se recorta (RFC-0004 7)."""
-    raise NotImplementedError  # RFC-0004 7: implementacion pendiente de su propio ciclo
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT role, content FROM messages "
+            "WHERE conversation_id = %(conversation_id)s "
+            "ORDER BY created_at DESC LIMIT %(limite)s",
+            {"conversation_id": conversation_id, "limite": max_turns * 2},
+        )
+        filas = cur.fetchall()
+        conn.rollback()
+
+    mensajes = [{"role": role, "content": content} for role, content in reversed(filas)]
+
+    presupuesto_caracteres = token_budget * _CARACTERES_POR_TOKEN
+    total = sum(len(m["content"]) for m in mensajes)
+    while len(mensajes) > 1 and total > presupuesto_caracteres:
+        descartado = mensajes.pop(0)
+        total -= len(descartado["content"])
+
+    return mensajes
 
 
 def record_turn(
@@ -37,4 +57,28 @@ def record_turn(
     """Persiste el par usuario/asistente de un turno -- RFC-0004 7. La
     version del prompt viaja en el mensaje del asistente (CA-9): es su
     respuesta la que se genero con esa version, no la pregunta."""
-    raise NotImplementedError  # RFC-0004 7 9: implementacion pendiente de su propio ciclo
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO messages (conversation_id, role, content, status) "
+            "VALUES (%(conversation_id)s, 'user', %(texto)s, 'ok')",
+            {"conversation_id": conversation_id, "texto": user_text},
+        )
+        cur.execute(
+            "INSERT INTO messages "
+            "(conversation_id, role, content, prompt_version, source_chunk_ids, status) "
+            "VALUES "
+            "(%(conversation_id)s, 'assistant', %(texto)s, %(version)s, %(chunks)s, %(status)s)",
+            {
+                "conversation_id": conversation_id,
+                "texto": assistant_text,
+                "version": prompt_version,
+                "chunks": source_chunk_ids or [],
+                "status": status,
+            },
+        )
+        cur.execute(
+            "UPDATE conversations SET last_seen_at = now(), turns = turns + 1 "
+            "WHERE id = %(conversation_id)s",
+            {"conversation_id": conversation_id},
+        )
+    conn.commit()
