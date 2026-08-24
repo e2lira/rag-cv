@@ -240,3 +240,17 @@ async def test_iteration_cap_stops_runaway_reasoning() -> None:
     [_ async for _ in stream_turn(agent, "Dame todo lo que tengas")]
 
     assert len(modelo.stream_calls) <= 4
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_turn_timeout_cancels_and_emits_error() -> None:
+    """RFC-0004 8: tiempo total del turno acotado -- cancelacion limpia,
+    error con codigo que una capa superior (RFC-0005) mapea a HTTP 504."""
+    modelo = ScriptedModel([texto("respuesta lenta")], demora=0.3)
+    agent = _agente_de_prueba(modelo)
+
+    eventos = [evento async for evento in stream_turn(agent, "Hola", timeout_seconds=0.05)]
+
+    assert eventos[-1] == {"type": "error", "code": "timeout", "message": eventos[-1]["message"]}
+    assert "done" not in [e["type"] for e in eventos]

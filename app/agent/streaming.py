@@ -15,9 +15,12 @@ from app.agent.hooks import TOOL_EVENTS_KEY
 
 _SOURCES_KEY = "rfc0004_sources"
 _MAX_ITERATIONS = 4  # RFC-0004 8: corta bucles de razonamiento
+_TURN_TIMEOUT_SECONDS = 45.0  # RFC-0004 8: cancelacion limpia -> HTTP 504 (RFC-0005)
 
 
-async def stream_turn(agent: Agent, message: str) -> AsyncIterator[dict[str, Any]]:
+async def stream_turn(
+    agent: Agent, message: str, *, timeout_seconds: float = _TURN_TIMEOUT_SECONDS
+) -> AsyncIterator[dict[str, Any]]:
     """Traduce strands al vocabulario propio. El evento sources llega
     ANTES de done (9): se arma con lo acumulado en invocation_state por
     las herramientas (bajo _SOURCES_KEY), no re-parseando su texto.

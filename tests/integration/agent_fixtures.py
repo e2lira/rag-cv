@@ -7,6 +7,7 @@ modelo lee para decidir), registrando cuantas veces y con que argumentos
 se llamaron.
 """
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -63,9 +64,10 @@ class ScriptedModel(Model):
     guion, en orden. Agotar el guion es un error de la prueba (el agente
     llamo al modelo mas veces de las previstas), no un fallo silencioso."""
 
-    def __init__(self, script: list[list[dict[str, Any]]]) -> None:
+    def __init__(self, script: list[list[dict[str, Any]]], *, demora: float = 0) -> None:
         self._script = list(script)
         self.stream_calls: list[dict[str, Any]] = []
+        self._demora = demora
 
     def update_config(self, **model_config: Any) -> None:
         pass
@@ -89,6 +91,8 @@ class ScriptedModel(Model):
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         self.stream_calls.append({"messages": messages, "tool_specs": tool_specs})
+        if self._demora:
+            await asyncio.sleep(self._demora)
         if not self._script:
             raise AssertionError(
                 "ScriptedModel: guion agotado -- el agente llamo al modelo mas "
