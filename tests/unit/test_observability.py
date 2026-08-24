@@ -1,12 +1,18 @@
-"""RFC-0005 8, CA-12: `X-Request-ID` en la respuesta y en los logs del turno.
+"""RFC-0005 8, CA-12: `X-Request-ID` en la respuesta y en **todas** las
+lineas de log del turno.
 
 Es el unico identificador que se le pide a un usuario para investigar un
-incidente: si no aparece en las dos partes, no sirve para correlacionar.
+incidente: si una sola linea del turno sale sin el, la correlacion se rompe
+justo cuando hace falta.
 
-La captura de logs usa un handler propio, no `caplog`: en este repositorio
-`caplog` ya demostro no ser reproducible con la suite completa (PR #73, el
-par de CA-8/CA-9 de RFC-0013). Un handler adjuntado y retirado por el propio
-test no depende del estado de logging compartido.
+Por eso lo que se prueba es que la correlacion sea **automatica**. Un test
+que pasara `extra={"request_id": ...}` a mano probaria que el test sabe
+pasarlo, no que el sistema lo ponga: cualquier logger de produccion que se
+olvidara del `extra` quedaria sin correlacionar y la prueba seguiria verde.
+
+La captura usa un handler propio, no `caplog`: en este repositorio `caplog`
+ya demostro no ser reproducible con la suite completa (PR #73, el par de
+CA-8/CA-9 de RFC-0013).
 """
 
 import logging
@@ -15,11 +21,12 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from app.api.errors import REQUEST_ID_HEADER, current_request_id, install_error_handling
+from app.api.errors import REQUEST_ID_HEADER, install_error_handling
 
 pytestmark = pytest.mark.unit
 
-_LOGGER = "app.api.prueba"
+# Un logger cualquiera de la aplicacion, que NO sabe nada de request_id.
+_LOGGER = "app.dominio.cualquiera"
 
 
 class _Capturador(logging.Handler):
@@ -39,7 +46,10 @@ def cliente() -> TestClient:
 
     @app.get("/ok")
     async def ok(request: Request) -> dict[str, str]:
-        logger.info("turno atendido", extra={"request_id": current_request_id(request)})
+        # Sin `extra`: es el punto. Un logger corriente no deberia tener que
+        # saber que existe un request_id para que sus lineas lo lleven.
+        logger.info("primera linea del turno")
+        logger.info("segunda linea del turno")
         return {"status": "ok"}
 
     @app.get("/revienta")
@@ -50,7 +60,7 @@ def cliente() -> TestClient:
 
 
 @pytest.fixture
-def capturador() -> _Capturador:
+def capturador():  # noqa: ANN201 -- generador de pytest
     handler = _Capturador()
     logger = logging.getLogger(_LOGGER)
     logger.addHandler(handler)
@@ -62,7 +72,6 @@ def capturador() -> _Capturador:
 
 
 def test_request_id_header_present_on_success(cliente: TestClient) -> None:
-    """CA-12: la cabecera viaja tambien cuando todo sale bien."""
     assert cliente.get("/ok").headers[REQUEST_ID_HEADER]
 
 
@@ -79,17 +88,43 @@ def test_request_id_matches_the_error_body(cliente: TestClient) -> None:
 
 
 def test_request_id_is_unique_per_request(cliente: TestClient) -> None:
-    """Sin esto, correlacionar es imposible: dos incidentes distintos
-    compartirian identificador."""
     primero = cliente.get("/ok").headers[REQUEST_ID_HEADER]
     segundo = cliente.get("/ok").headers[REQUEST_ID_HEADER]
 
     assert primero != segundo
 
 
-def test_request_id_reaches_the_logs(cliente: TestClient, capturador: _Capturador) -> None:
-    """CA-12: el mismo identificador aparece en el log del turno."""
+def test_every_log_line_carries_the_request_id(
+    cliente: TestClient, capturador: _Capturador
+) -> None:
+    """CA-12, el criterio real: **todas** las lineas, sin que el logger haga
+    nada. Con dos lineas basta para distinguir "se correlaciona" de "el test
+    correlaciono una"."""
     respuesta = cliente.get("/ok")
 
+    esperado = respuesta.headers[REQUEST_ID_HEADER]
+    assert len(capturador.registros) == 2
+    assert [getattr(r, "request_id", None) for r in capturador.registros] == [esperado, esperado]
+
+
+def test_two_requests_do_not_share_the_identifier(
+    cliente: TestClient, capturador: _Capturador
+) -> None:
+    """Si el contexto se filtrara entre peticiones, correlacionar seria peor
+    que no tener nada: apuntaria al incidente equivocado."""
+    primera = cliente.get("/ok").headers[REQUEST_ID_HEADER]
+    segunda = cliente.get("/ok").headers[REQUEST_ID_HEADER]
+
+    identificadores = [getattr(r, "request_id", None) for r in capturador.registros]
+    assert identificadores == [primera, primera, segunda, segunda]
+
+
+def test_a_log_outside_any_request_still_formats(capturador: _Capturador) -> None:
+    """Un log fuera de una peticion (arranque, cron) no debe reventar por
+    falta de contexto: lleva el campo vacio, no ausente. Un formateador que
+    espere `%(request_id)s` fallaria con un `KeyError` si el atributo no
+    existiera, y un fallo de logging tumbaria el arranque."""
+    logging.getLogger(_LOGGER).info("linea de arranque")
+
     (registro,) = capturador.registros
-    assert registro.request_id == respuesta.headers[REQUEST_ID_HEADER]
+    assert getattr(registro, "request_id", None) == ""
