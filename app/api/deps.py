@@ -54,6 +54,19 @@ def require_role(required: str) -> Callable[[Request], ApiKey]:
     return dependencia
 
 
+MAX_BODY_BYTES = 8 * 1024
+PAYLOAD_TOO_LARGE_MESSAGE = "El cuerpo de la peticion supera el maximo permitido."
+
+
+def enforce_body_limit(request: Request) -> None:
+    """Rechaza con 413 un cuerpo por encima del tope (RFC-0005 7, CA-7).
+
+    Como dependencia, corre ANTES del handler: el agente no se invoca y el
+    gasto de tokens no ocurre.
+    """
+    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+
+
 def current_key(request: Request) -> ApiKey:
     """La clave ya verificada para esta peticion."""
     clave: ApiKey | None = getattr(request.state, _KEY_STATE, None)
