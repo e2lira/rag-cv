@@ -106,6 +106,13 @@ es un test de integración o una evaluación, y va a otra carpeta con otro marca
 Un test unitario que tarde más de 100 ms es sospechoso: casi siempre significa que está tocando
 algo que debería estar doblado.
 
+**Los dos últimos niveles son de RFC-0009, no de cada RFC que los invoque** (ADR-0015). La suite
+adversarial se define en RFC-0009 §5 —ocho familias, corpus envenenado, juez calibrado— y su
+marcador `adversarial` lo declara RFC-0009 en `pyproject.toml` al implementarla; hoy no está
+declarado, y **un marcador no declarado no falla: se ignora en silencio**. Ningún otro RFC escribe
+pruebas en `tests/adversarial/`: si un criterio suyo necesita esa suite, lo delega a RFC-0009 con su
+identificador, como hizo RFC-0004 §11.1.
+
 ## 6. Cómo se demuestra que los tests se escribieron primero
 
 Esta sección existe porque "hicimos TDD" no es verificable por afirmación, y el Auditor no puede
@@ -438,12 +445,20 @@ Sobre **P-9**: cambiar un test es legítimo **solo** cuando el criterio de acept
 cambiado, y entonces el RFC se modifica primero. Un test modificado en el mismo commit que la
 implementación que estaba fallando es un hallazgo Bloqueante automático.
 
-Sobre **P-11**: la excepción es la **suite de evaluación** (RFC-0009), cuya razón de ser es medir
-el sistema real y que por eso sí gasta — a mano o en el *job* nocturno, nunca en el bucle de
-desarrollo. La barrera es estructural además de normativa: el CI **no tiene credenciales de ningún
-proveedor**, así que una prueba que llame de verdad no puede pasar. Añadir una clave a los
-*secrets* del repositorio para "poder probar de verdad" desactiva esa barrera sin que nadie lo
-note, y es lo que ADR-0012 existe para impedir.
+Sobre **P-11**: la excepción es **RFC-0009 y todo lo que RFC-0009 define**, lo que incluye la suite
+adversarial de su §5 además de `evals/` — las dos miden el sistema real y por eso sí gastan, con
+presupuesto declarado en RFC-0009 §6. La excepción es **por dueño, no por directorio**: una prueba
+que llame a una API de pago desde cualquier otro RFC sigue siendo Bloqueante, aunque la ponga en
+`tests/adversarial/`.
+
+> **Esta redacción decía «la suite de evaluación (RFC-0009) […] a mano o en el *job* nocturno, nunca
+> en el bucle de desarrollo», y se leyó —razonablemente— como que la suite adversarial quedaba
+> fuera de la excepción.** Costó tres rondas de auditoría en PR #78 (ADR-0015). Queda además una
+> contradicción **sin resolver** que este pase no aborda: ADR-0012 fija que la evaluación nunca
+> corre en el bucle de desarrollo y que **el CI no tiene credenciales de ningún proveedor**,
+> mientras que RFC-0009 §6 corre la suite `pr` en **cada PR** como job de RFC-0008 —lo que exige
+> exactamente esas credenciales—. Las dos no pueden ser ciertas a la vez. **Dueño: RFC-0009, punto
+> 10**; es parte de su Definition of Ready y se decide entonces si se enmienda ADR-0012 o RFC-0009 §6.
 
 ## 8. Cobertura
 
