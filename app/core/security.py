@@ -6,6 +6,8 @@ no se distingue inexistente de revocada o expirada, porque distinguirlos es
 un oraculo para un atacante (6.2).
 """
 
+import hashlib
+import hmac
 import json
 import re
 from dataclasses import dataclass, field
@@ -91,8 +93,24 @@ def _construir(entrada: dict[str, object]) -> ApiKey:
 
 
 def verify_api_key(presented: str | None, keys: tuple[ApiKey, ...]) -> ApiKey | None:
-    """Devuelve la clave que corresponde, o None -- RFC-0005 6.2, CA-4."""
-    raise NotImplementedError  # RFC-0005 6.2: pendiente de su propio ciclo
+    """Devuelve la clave que corresponde, o None -- RFC-0005 6.2, CA-4.
+
+    Recorre **todas** las claves aunque ya haya coincidencia: cortar en la
+    primera filtra por posicion en la lista lo que `compare_digest` protege
+    por contenido.
+    """
+    if not presented:
+        return None
+
+    presentado = hashlib.sha256(presented.encode()).hexdigest()
+    encontrada: ApiKey | None = None
+    for clave in keys:
+        # El hash cargado puede venir en mayusculas (6.1 acepta las dos
+        # formas); compare_digest es sensible a mayusculas, asi que se
+        # normaliza antes de comparar, no despues.
+        if hmac.compare_digest(presentado, clave.hash.lower()) and clave.is_usable():
+            encontrada = clave
+    return encontrada
 
 
 def has_role(key: ApiKey, required: str) -> bool:
