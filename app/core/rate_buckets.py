@@ -8,8 +8,9 @@ La decision vive aqui y no en `app/api/` porque RFC-0001 62 prohibe logica
 de negocio en la capa de API; alli solo se traduce a `429` y cabeceras.
 """
 
+import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 
@@ -37,7 +38,10 @@ def window_start(kind: str, now: datetime) -> datetime:
     cambiaria de tamano dos veces al año, y una cuota que dura 23 o 25 horas
     segun el mes no es un contrato.
     """
-    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+    en_utc = now.astimezone(UTC)
+    if kind == DAY:
+        return en_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    return en_utc.replace(second=0, microsecond=0)
 
 
 def decide(
@@ -48,7 +52,43 @@ def decide(
     Puro: recibe los conteos y no toca la base. Eso es lo que permite
     probar la aritmetica de `Retry-After` sin PostgreSQL.
     """
-    raise NotImplementedError  # RFC-0005 7: pendiente de su propio ciclo
+    topes = {MINUTE: per_minute, DAY: per_day}
+    # De dia a minuto: si las dos estan excedidas manda la de dia, porque es
+    # la que sigue bloqueando cuando la de minuto ya cerro (RFC-0005 7).
+    for kind in (DAY, MINUTE):
+        if counts.get(kind, 0) > topes[kind]:
+            cierre = window_start(kind, now) + _DURACION[kind]
+            return RateLimitDecision(
+                allowed=False,
+                limit=topes[kind],
+                remaining=0,
+                reset_at=cierre,
+                retry_after_seconds=_segundos_hasta(cierre, now),
+            )
+
+    # Permitida: se informa la cubeta con menos margen, que es la que va a
+    # rechazar primero. Publicar las dos exigiria cabeceras que 7 no define.
+    kind = min(topes, key=lambda k: topes[k] - counts.get(k, 0))
+    restante = topes[kind] - counts.get(kind, 0)
+    cierre = window_start(kind, now) + _DURACION[kind]
+    return RateLimitDecision(
+        allowed=True,
+        limit=topes[kind],
+        remaining=restante,
+        reset_at=cierre,
+        retry_after_seconds=0,
+    )
+
+
+def _segundos_hasta(cierre: datetime, now: datetime) -> int:
+    """Redondeo hacia ARRIBA, y nunca cero.
+
+    Truncar haria que el cliente reintentara antes de que la cubeta cerrara
+    y se comiera un segundo 429; un `Retry-After: 0` es una invitacion a
+    reintentar en bucle.
+    """
+    faltan = (cierre - now.astimezone(UTC)).total_seconds()
+    return max(1, math.ceil(faltan))
 
 
 def increment_rate_bucket(
