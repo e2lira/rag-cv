@@ -10,6 +10,8 @@ riesgo."""
 
 from unittest.mock import patch
 
+import anthropic
+import httpx
 import pytest
 from botocore.exceptions import EndpointConnectionError  # type: ignore[import-untyped]
 from openai import APIConnectionError as OpenAIConnectionError
@@ -18,6 +20,13 @@ from strands.models.routing.strategy import RoutingAttempt
 from strands.types.exceptions import ModelThrottledException
 
 from app.providers.fallback import AvailabilityFallbackStrategy, es_fallo_de_disponibilidad
+
+_PETICION_SINTETICA = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+
+
+def _con_status(status_code: int) -> httpx.Response:
+    return httpx.Response(status_code, request=_PETICION_SINTETICA)
+
 
 pytestmark = pytest.mark.unit
 
@@ -60,19 +69,30 @@ class _ErrorDeValidacion(Exception):
         EndpointConnectionError(endpoint_url="https://bedrock.us-east-2.amazonaws.com"),
         OpenAIConnectionError(request=None),  # type: ignore[arg-type]
         TimeoutError("se agoto el tiempo de espera"),
+        anthropic.APIStatusError("server error", response=_con_status(500), body=None),
+        anthropic.RateLimitError("rate limited", response=_con_status(429), body=None),
     ],
 )
 def test_availability_failures_are_recognized(excepcion: Exception) -> None:
-    """CA-8: throttling, caida de conexion y timeout se clasifican como
-    fallos de disponibilidad -- las cuatro formas concretas que RFC-0013 9
-    nombra (429, 5xx, timeout de conexion)."""
+    """CA-8: throttling, caida de conexion, timeout, y 429/5xx reales del
+    SDK de Anthropic (via status_code) se clasifican como disponibilidad
+    -- las formas concretas que RFC-0013 9 nombra."""
     assert es_fallo_de_disponibilidad(excepcion) is True
 
 
-def test_validation_error_is_not_a_availability_failure() -> None:
-    """CA-9: un error sin marca de disponibilidad no conmuta -- el default
-    es conservador (no oculta un problema real), no permisivo."""
-    assert es_fallo_de_disponibilidad(_ErrorDeValidacion("contenido rechazado")) is False
+@pytest.mark.parametrize(
+    "excepcion",
+    [
+        _ErrorDeValidacion("contenido rechazado"),
+        anthropic.BadRequestError("prompt invalido", response=_con_status(400), body=None),
+    ],
+)
+def test_validation_error_is_not_a_availability_failure(excepcion: Exception) -> None:
+    """CA-9: un error sin marca de disponibilidad -- incluido un 400 real
+    con status_code, para ejercitar la rama "no es 429 ni >=500" -- no
+    conmuta. El default es conservador (no oculta un problema real), no
+    permisivo."""
+    assert es_fallo_de_disponibilidad(excepcion) is False
 
 
 @pytest.mark.asyncio
