@@ -6,6 +6,7 @@ no se distingue inexistente de revocada o expirada, porque distinguirlos es
 un oraculo para un atacante (6.2).
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -40,7 +41,35 @@ class ApiKeysConfigError(RuntimeError):
 
 def load_api_keys(raw: str | None) -> tuple[ApiKey, ...]:
     """Carga y valida `API_KEYS_JSON` (RFC-0005 6.1, CA-25)."""
-    raise NotImplementedError  # RFC-0005 6.1: pendiente de su propio ciclo
+    if raw is None or not raw.strip():
+        raise ApiKeysConfigError("API_KEYS_JSON esta ausente o vacio")
+
+    try:
+        documento = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ApiKeysConfigError("API_KEYS_JSON no es JSON valido") from exc
+
+    entradas = documento.get("keys") if isinstance(documento, dict) else None
+    if not entradas:
+        raise ApiKeysConfigError("API_KEYS_JSON no declara ninguna clave en 'keys'")
+
+    claves = tuple(_construir(entrada) for entrada in entradas)
+    if not any(clave.is_usable() for clave in claves):
+        # Una API cuyo unico efecto posible es 401 no esta lista (RFC-0005 10).
+        raise ApiKeysConfigError("API_KEYS_JSON no tiene ninguna clave activa y sin expirar")
+    return claves
+
+
+def _construir(entrada: dict[str, object]) -> ApiKey:
+    expira = entrada.get("expires_at")
+    return ApiKey(
+        id=str(entrada["id"]),
+        hash=str(entrada["hash"]),
+        role=str(entrada["role"]),
+        label=str(entrada.get("label", "")),
+        expires_at=datetime.fromisoformat(str(expira)) if expira else None,
+        active=bool(entrada.get("active", False)),
+    )
 
 
 def verify_api_key(presented: str | None, keys: tuple[ApiKey, ...]) -> ApiKey | None:
