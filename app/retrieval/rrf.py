@@ -31,4 +31,16 @@ def fuse_rrf(
     w_sem: float = 1.0,
     w_lex: float = 1.0,
 ) -> list[FusedResult]:
-    raise NotImplementedError
+    results = [
+        FusedResult(
+            id=c.id,
+            score=(w_sem / (k + c.sem_rank) if c.sem_rank is not None else 0.0)
+            + (w_lex / (k + c.lex_rank) if c.lex_rank is not None else 0.0),
+            sem_rank=c.sem_rank,
+            lex_rank=c.lex_rank,
+        )
+        for c in candidates
+    ]
+    # CA-4 (par siguiente) anade el desempate por id ante empate de score;
+    # este commit solo ordena por score, que es lo unico que CA-3 exige.
+    return sorted(results, key=lambda r: -r.score)
