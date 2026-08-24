@@ -6,14 +6,17 @@ cada funcion lleva su propia marca (`unit` o `integration`) segun si necesita
 `database_url` o no -- no se declara una marca nueva (RFC-0004 12).
 """
 
+import psycopg
 import pytest
 from strands import Agent
 from strands.types.exceptions import EventLoopException
 
 from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook
+from app.agent.memory import load_history, record_turn
 from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION
 from tests.integration.agent_fixtures import (
     ScriptedModel,
+    crear_conversacion,
     llamada_herramienta,
     make_failing_search_cv_spy,
     make_list_cv_sections_spy,
@@ -123,3 +126,49 @@ def test_tool_error_propagates() -> None:
     # El modelo no recibio un segundo turno con el error como texto: el
     # guion (un solo elemento) no se agoto, la excepcion corto el turno.
     assert len(modelo.stream_calls) == 1
+
+
+@pytest.mark.integration
+def test_no_context_bleed(database_url: str) -> None:
+    """CA-5: dos conversaciones distintas no comparten historial."""
+    with psycopg.connect(database_url) as conn:
+        conversacion_a = crear_conversacion(conn)
+        conversacion_b = crear_conversacion(conn)
+        record_turn(
+            conn, conversacion_a, user_text="Hola A", assistant_text="Respuesta A", prompt_version=1
+        )
+        record_turn(
+            conn, conversacion_b, user_text="Hola B", assistant_text="Respuesta B", prompt_version=1
+        )
+
+        historial_a = load_history(conn, conversacion_a)
+
+    contenidos = [mensaje["content"] for mensaje in historial_a]
+    assert "Hola A" in contenidos
+    assert "Respuesta A" in contenidos
+    assert "Hola B" not in contenidos
+    assert "Respuesta B" not in contenidos
+
+
+@pytest.mark.integration
+def test_prompt_version_recorded(database_url: str) -> None:
+    """CA-9: SYSTEM_PROMPT_VERSION se persiste en cada turno."""
+    with psycopg.connect(database_url) as conn:
+        conversacion = crear_conversacion(conn)
+        record_turn(
+            conn,
+            conversacion,
+            user_text="Hola",
+            assistant_text="Hola, ¿en qué te ayudo?",
+            prompt_version=SYSTEM_PROMPT_VERSION,
+        )
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT prompt_version FROM messages "
+                "WHERE conversation_id = %s AND role = 'assistant'",
+                (conversacion,),
+            )
+            (version,) = cur.fetchone()
+
+    assert version == SYSTEM_PROMPT_VERSION
