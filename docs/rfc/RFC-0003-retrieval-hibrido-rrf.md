@@ -203,6 +203,7 @@ class RetrievedChunk:
     score: float
     sem_rank: int | None
     lex_rank: int | None
+    degraded: bool               # §6: true si esta llamada corrio sin rama vectorial
 
 async def hybrid_search(
     conn: psycopg.Connection,
@@ -223,6 +224,15 @@ aprobado.
 `conn` y `embedder` se reciben explícitos, como en `index_corpus` (RFC-0002) y en las
 comprobaciones de arranque (RFC-0021): hace la función verificable sin tocar `Settings` ni una
 base real.
+
+**`degraded` no es una columna de `cv_chunks`.** Es metadato de la llamada, no del fragmento: si el
+embedder falla, TODOS los elementos de la lista devuelta llevan `degraded=true`, en igual valor.
+La versión anterior de §4 y §6 daba por hecho un canal —«log» y «metadatos de la respuesta»— que
+no existe: no hay módulo de *logging* (RFC-0010, punto 13) ni envoltorio de respuesta (RFC-0005,
+punto 9) en el momento en que este RFC se implementa. El campo en `RetrievedChunk` es el único
+canal que la firma documentada de `hybrid_search` puede sostener hoy sin cambiar su tipo de
+retorno; cuando RFC-0005 exista, lee este campo para poblar `"degraded"` en su envoltorio (§1,
+línea de ejemplo), y cuando RFC-0010 exista, lo emite también al log estructurado.
 
 ### 4.1 Formato devuelto al agente
 
@@ -269,7 +279,7 @@ dos sitios (ADU-PROCESO §5).
 
 | Fallo | Detección | Comportamiento |
 | :--- | :--- | :--- |
-| El embedder no responde | Timeout/excepción | Se ejecuta **solo la rama léxica** y se marca `degraded=true` en el log y en los metadatos de la respuesta |
+| El embedder no responde | Timeout/excepción | Se ejecuta **solo la rama léxica** y cada `RetrievedChunk` devuelto lleva `degraded=true` (§4) |
 | PostgreSQL no responde | Timeout | La herramienta devuelve error controlado; el agente responde 503 vía la capa de servicio, sin inventar |
 | `websearch_to_tsquery` produce consulta vacía (p. ej. solo *stop words*) | `tsquery` vacío | La rama léxica se omite; solo vectorial |
 | Ambas ramas vacías | 0 filas | Devuelve `[]`; el agente aplica RF-4 |
@@ -360,7 +370,7 @@ El SQL de `conversacion_aws_bedrock.md` fue el punto de partida. Cambios y su mo
 | A-2 | El SQL está parametrizado; no hay interpolación de cadenas | Búsqueda de f-strings/`%` en SQL: 0 resultados | Bloqueante |
 | A-3 | Existe umbral mínimo y devuelve `[]` cuando no se alcanza | CA-6 | Mayor |
 | A-4 | Las dos ramas y la carga final se resuelven en **una sola sentencia**, de modo que comparten `snapshot`. Ninguna reindexación concurrente puede intercalarse entre ellas | Lectura del SQL + CA-5 | Bloqueante |
-| A-5 | El fallo del embedder degrada a léxica y lo registra, no lanza 500 | CA-7 | Mayor |
+| A-5 | El fallo del embedder degrada a léxica; `degraded` llega en `RetrievedChunk`, no se traga en un `except` amplio ni se registra solo en un log inexistente | CA-7 | Mayor |
 | A-6 | El error de BD **no** se devuelve al modelo como texto de resultado | Lectura de `app/retrieval/hybrid.py` | Bloqueante |
 | A-7 | La conexión sale del *pool* de `build_pool`, no se abre por llamada | Lectura de `app/core/engine.py` y de la herramienta | Mayor |
 | A-8 | El bloque de contexto delimita el contenido como datos (I-2) | CA-9 | Bloqueante |
