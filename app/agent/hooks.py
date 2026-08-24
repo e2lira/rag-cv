@@ -55,3 +55,17 @@ class ToolErrorPropagationHook(HookProvider):
     def _reraise(self, event: AfterToolCallEvent) -> None:
         if event.exception is not None:
             raise event.exception
+
+
+TOOL_EVENTS_KEY = "rfc0004_tool_events"
+
+
+class ToolStreamMarkersHook(HookProvider):
+    """RFC-0004 9: marca tool_start/tool_end para el streaming (streaming.py).
+
+    `ToolResultEvent` no es un evento de callback (`is_callback_event =
+    False`), asi que `agent.stream_async()` nunca lo entrega -- no hay otra
+    forma de saber, desde fuera, cuando empieza y termina cada llamada."""
+
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        pass  # RFC-0004 9: cuerpo pendiente de su propio ciclo

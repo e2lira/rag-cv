@@ -11,9 +11,10 @@ import pytest
 from strands import Agent
 from strands.types.exceptions import EventLoopException
 
-from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook
+from app.agent.hooks import ToolCallCapHook, ToolErrorPropagationHook, ToolStreamMarkersHook
 from app.agent.memory import load_history, record_turn
 from app.agent.prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_VERSION
+from app.agent.streaming import stream_turn
 from tests.integration.agent_fixtures import (
     ScriptedModel,
     crear_conversacion,
@@ -35,7 +36,7 @@ def _agente_de_prueba(modelo: ScriptedModel, *, search_cv=None, list_cv_sections
         model=modelo,
         tools=[search_cv, list_cv_sections],
         system_prompt=SYSTEM_PROMPT.format(persona="Test"),
-        hooks=[ToolCallCapHook(), ToolErrorPropagationHook()],
+        hooks=[ToolCallCapHook(), ToolErrorPropagationHook(), ToolStreamMarkersHook()],
     )
 
 
@@ -172,3 +173,52 @@ def test_prompt_version_recorded(database_url: str) -> None:
             (version,) = cur.fetchone()
 
     assert version == SYSTEM_PROMPT_VERSION
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sse_sources_before_done() -> None:
+    """CA-8: el flujo SSE emite sources antes de done en toda respuesta con
+    busqueda -- el cliente puede mostrar la procedencia mientras el texto
+    todavia se escribe (RFC-0004 9)."""
+    modelo = ScriptedModel(
+        [
+            llamada_herramienta("t1", "search_cv", {"query": "banca"}),
+            texto("Tiene experiencia en banca [F1]."),
+        ]
+    )
+    search_cv = make_search_cv_spy(
+        respuesta="<contexto_cv>[F1] banca</contexto_cv>",
+        fuentes=[{"chunk_id": 42, "unit": "Banorte -- Ingeniera de Datos Senior"}],
+    )
+    agent = _agente_de_prueba(modelo, search_cv=search_cv)
+
+    eventos = [evento async for evento in stream_turn(agent, "¿Tiene experiencia en banca?")]
+
+    tipos = [e["type"] for e in eventos]
+    assert "token" in tipos
+    assert "tool_start" in tipos
+    assert "tool_end" in tipos
+    assert tipos[-1] == "done"
+    assert tipos.index("sources") < tipos.index("done")
+
+    (evento_fuentes,) = [e for e in eventos if e["type"] == "sources"]
+    esperado = [{"chunk_id": 42, "unit": "Banorte -- Ingeniera de Datos Senior"}]
+    assert evento_fuentes["chunks"] == esperado
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_stream_emits_error_and_stops_on_failure() -> None:
+    """RFC-0004 9: un fallo a mitad del flujo emite error y cierra el
+    flujo -- no se deja colgado."""
+    modelo = ScriptedModel([llamada_herramienta("t1", "search_cv", {"query": "x"})])
+    search_cv = make_failing_search_cv_spy(ConnectionError("timeout de retrieval"))
+    agent = _agente_de_prueba(modelo, search_cv=search_cv)
+
+    eventos = [evento async for evento in stream_turn(agent, "¿Que hizo en su ultimo puesto?")]
+
+    tipos = [e["type"] for e in eventos]
+    assert tipos[-1] == "error"
+    assert "done" not in tipos
+    assert "timeout de retrieval" in eventos[-1]["message"]

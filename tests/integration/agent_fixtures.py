@@ -14,6 +14,7 @@ from typing import Any
 import psycopg
 from strands import tool
 from strands.models.model import Model
+from strands.types.tools import ToolContext
 
 
 def crear_conversacion(conn: psycopg.Connection, *, key_id: str = "test") -> str:
@@ -98,12 +99,25 @@ class ScriptedModel(Model):
             yield evento
 
 
-def make_search_cv_spy(respuesta: str = "<contexto_cv></contexto_cv>"):
-    """Doble de search_cv (RFC-0004 5.1): misma firma, sin base de datos."""
+SOURCES_KEY = "rfc0004_sources"
+
+
+def make_search_cv_spy(
+    respuesta: str = "<contexto_cv></contexto_cv>",
+    fuentes: list[dict[str, Any]] | None = None,
+):
+    """Doble de search_cv (RFC-0004 5.1): misma firma, sin base de datos.
+
+    Escribe en invocation_state[SOURCES_KEY] igual que hara la implementacion
+    real -- es el canal por el que el streaming (9) arma el evento sources
+    sin tener que re-parsear el bloque <contexto_cv> de vuelta a chunks.
+    """
     llamadas: list[dict[str, Any]] = []
 
-    @tool
-    async def search_cv(query: str, chunk_types: list[str] | None = None) -> str:
+    @tool(context=True)
+    async def search_cv(
+        query: str, tool_context: ToolContext, chunk_types: list[str] | None = None
+    ) -> str:
         """Busca en el CV de la persona y devuelve los fragmentos más relevantes.
 
         Args:
@@ -117,6 +131,8 @@ def make_search_cv_spy(respuesta: str = "<contexto_cv></contexto_cv>"):
             no se encontró información.
         """
         llamadas.append({"query": query, "chunk_types": chunk_types})
+        if fuentes:
+            tool_context.invocation_state.setdefault(SOURCES_KEY, []).extend(fuentes)
         return respuesta
 
     search_cv.calls = llamadas  # type: ignore[attr-defined]
