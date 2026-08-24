@@ -32,4 +32,13 @@ def cost_usd(
     prices: dict[str, ModelPrice] | None = None,
 ) -> float | None:
     """Coste del turno, o `None` si el modelo no tiene precio (RFC-0005 4)."""
-    raise NotImplementedError  # RFC-0005 4: pendiente de su propio ciclo
+    tarifa = (PRICES if prices is None else prices).get(model_id)
+    if tarifa is None:
+        # None y no 0.0: cero afirmaria que el turno fue gratis, y esa
+        # mentira contaminaria la metrica de coste de RFC-0009 4 sin que
+        # nada fallara.
+        return None
+
+    return (
+        input_tokens * tarifa.input_per_million + output_tokens * tarifa.output_per_million
+    ) / 1_000_000
