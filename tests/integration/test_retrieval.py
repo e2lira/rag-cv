@@ -147,9 +147,13 @@ async def test_single_statement_snapshot(
     original_execute = psycopg.Cursor.execute
 
     def _spy(self: psycopg.Cursor, query: object, *args: object, **kwargs: object) -> object:
-        text = query if isinstance(query, str) else str(query)
-        if not text.strip().upper().startswith("SET"):
-            read_statements.append(text)
+        # SET LOCAL se compone con psycopg.sql (sql.Composed), no con texto
+        # plano, precisamente porque SET no acepta parametros ligados. Todo
+        # lo que SI lee datos en este modulo es una cadena Python literal
+        # (_HYBRID_SQL); distinguir por tipo es mas fiable que inspeccionar
+        # el texto compuesto.
+        if isinstance(query, str) and not query.strip().upper().startswith("SET"):
+            read_statements.append(query)
         return original_execute(self, query, *args, **kwargs)  # type: ignore[arg-type]
 
     with psycopg.connect(database_url) as conn:
