@@ -10,6 +10,7 @@ decide esa distincion y delega en FallbackStrategy solo cuando corresponde
 conmutar."""
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from strands.models import RoutingCandidate, RoutingContext
@@ -18,19 +19,42 @@ from strands.types.exceptions import ModelThrottledException
 
 logger = logging.getLogger(__name__)
 
-# Fragmentos del nombre de clase que denotan un fallo transitorio de
-# disponibilidad en las jerarquias de excepciones de botocore (generadas
-# dinamicamente por codigo de error de AWS, sin una clase base comun util
-# aqui) y del cliente HTTP subyacente de los SDKs de Anthropic/OpenAI.
-_NOMBRES_DE_DISPONIBILIDAD = (
-    "Timeout",
-    "ConnectionError",
-    "ConnectTimeoutError",
-    "ReadTimeoutError",
-    "EndpointConnectionError",
-    "ServiceUnavailable",
-    "ThrottlingException",
-)
+# Solo para excepciones sin codigo HTTP estructurado que extraer -- el
+# transporte crudo de httpx (ConnectTimeout, ReadTimeout, ConnectError),
+# que ni anthropic ni openai envuelven siempre antes de que escape, y que
+# no es subclase de TimeoutError/ConnectionError de Python ni tiene
+# .status_code o .response. Ver _status_code: cualquier excepcion con
+# codigo estructurado (anthropic/openai/botocore) se clasifica por ese
+# codigo, nunca por aqui.
+_NOMBRES_DE_DISPONIBILIDAD = ("Timeout", "ConnectError", "ConnectionError")
+
+
+def _status_code(exc: BaseException) -> int | None:
+    """Codigo HTTP real del proveedor, si lo expone -- dos formas:
+
+    anthropic.APIStatusError / openai.APIStatusError (y subclases como
+    RateLimitError, BadRequestError): exc.status_code, plano.
+
+    botocore.exceptions.ClientError -- y las subclases que boto3 genera
+    dinamicamente por codigo de error de AWS (ThrottlingException,
+    InternalServerException, ModelNotReadyException, ...), todas heredan
+    de ClientError: exc.response['ResponseMetadata']['HTTPStatusCode'].
+    Un match por fragmento del NOMBRE de esas subclases es fragil por
+    partida doble -- no cubre todo codigo de error real (InternalServerException
+    y ModelNotReadyException de bedrock-runtime no contienen "Timeout" ni
+    "ConnectionError"), y el nombre de clase real en produccion depende de
+    que el codigo capture la subclase dinamica en vez del ClientError
+    generico. El status HTTP estructurado no tiene ninguno de los dos
+    problemas."""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status
+    response = getattr(exc, "response", None)
+    if isinstance(response, Mapping):
+        status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if isinstance(status, int):
+            return status
+    return None
 
 
 def es_fallo_de_disponibilidad(exc: BaseException) -> bool:
@@ -39,8 +63,8 @@ def es_fallo_de_disponibilidad(exc: BaseException) -> bool:
     lo es, y el error real surge sin que el fallback lo oculte."""
     if isinstance(exc, ModelThrottledException | TimeoutError | ConnectionError):
         return True
-    status = getattr(exc, "status_code", None)
-    if isinstance(status, int):
+    status = _status_code(exc)
+    if status is not None:
         return status == 429 or status >= 500
     nombre = type(exc).__name__
     return any(fragmento in nombre for fragmento in _NOMBRES_DE_DISPONIBILIDAD)
