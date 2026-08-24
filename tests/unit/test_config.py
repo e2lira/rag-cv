@@ -173,3 +173,26 @@ def test_provider_defaults_to_anthropic(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert settings.proveedor == "anthropic"
     assert settings.anthropic_model_id == "claude-haiku-4-5-20251001"
+
+
+@pytest.mark.parametrize(
+    ("variable", "valor_excedido"),
+    [("LLM_TEMPERATURE", "1.0"), ("LLM_MAX_TOKENS", "2048")],
+)
+def test_inference_params_cannot_exceed_rfc0004_limits(
+    monkeypatch: pytest.MonkeyPatch, variable: str, valor_excedido: str
+) -> None:
+    """RFC-0004 3 y A-8: `temperature <= 0.3` y `max_tokens = 1024` son el
+    contrato, no un valor por defecto sugerido. Sin cota superior, un
+    despliegue puede excederlos por configuracion y salirse del envolvente
+    de estabilidad y coste aprobado (RF-10, RNF-5) sin que nada falle.
+
+    Se acota por arriba, no por igualdad exacta: lo que A-8 protege es
+    EXCEDER el limite -- un valor menor no compromete ni la estabilidad ni
+    el coste."""
+    monkeypatch.delenv("PROVEEDOR", raising=False)
+    _settings_env(monkeypatch)
+    monkeypatch.setenv(variable, valor_excedido)
+
+    with pytest.raises(Exception, match=variable.lower()):
+        Settings(_env_file=None)
