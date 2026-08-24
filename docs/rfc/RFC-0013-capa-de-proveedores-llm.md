@@ -5,7 +5,7 @@
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0004 |
 | **Supersede** | RFC-0004 §3 y §6 (construcción del modelo) |
-| **ADRs** | ADR-0005, ADR-0013 |
+| **ADRs** | ADR-0005, ADR-0013, ADR-0014 |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -188,15 +188,22 @@ Cambiar de proveedor es un cambio de configuración + un despliegue, y pasa por 
 
 ### 6.1 Fallback: disponible, apagado por defecto
 
-Se implementa un `FallbackModel` que envuelve un proveedor primario y uno secundario, activable
-con `PROVEEDOR_FALLBACK`. Vacío por defecto. Cuando está activo:
+Se envuelve un proveedor primario y uno secundario, activable con `PROVEEDOR_FALLBACK`. Vacío por
+defecto. Cuando está activo:
 
 - Solo conmuta ante fallos **de disponibilidad** (throttling agotado, 5xx del proveedor,
   timeout de conexión). Nunca ante un error de validación o de contenido: eso indicaría un
   problema real que el fallback ocultaría.
-- Cada conmutación emite la métrica `ProviderFallbacks` y una línea de log de nivel `WARNING`
-  con ambos proveedores. Un fallback silencioso es peor que una caída.
+- Cada conmutación registra una línea de log de nivel `WARNING` con ambos proveedores. Un
+  fallback silencioso es peor que una caída. La métrica `ProviderFallbacks` queda diferida
+  (ADR-0014, CA-8).
 - El turno persistido guarda el `model_id` **realmente usado**, no el configurado.
+
+> **Por qué esta sección ya no nombra `FallbackModel`.** La versión anterior asumía construir esa
+> clase desde cero. `strands-agents==1.53.0` ya trae `ModelRouter`/`FallbackStrategy` nativos, y
+> `FallbackStrategy` sola no distingue disponibilidad de validación — conmutaría ante cualquier
+> fallo no reintentado internamente. `AvailabilityFallbackStrategy` (`app/providers/fallback.py`)
+> es la pieza que decide esa selectividad y delega en `FallbackStrategy` solo cuando corresponde.
 
 ## 7. Comparativa de proveedores
 
@@ -274,7 +281,7 @@ justamente lo que el reto pide demostrar.
 | CA-5 | Ninguna rama importa el SDK cliente de otra rama (no: "sin `boto3` instalado" — ADR-0013) | `tests/unit/test_llm_factory_lazy_imports.py` | RFC-0013 (este PR) |
 | CA-6 | `app/agent/` no menciona ningún proveedor concreto | `grep -rn "Bedrock\|Anthropic\|OpenAI" app/agent/` sin resultados | RFC-0004 |
 | CA-7 | El `model_id` realmente usado se persiste en cada turno | `test_conversation.py::test_model_id_recorded` | RFC-0005 |
-| CA-8 | Con fallback activo, una caída del primario conmuta y emite `ProviderFallbacks` | `test_fallback.py::test_switch_on_unavailability` | RFC-0013 (este PR) |
+| CA-8 | Con fallback activo, una caída del primario conmuta y registra `WARNING` con ambos proveedores (la métrica `ProviderFallbacks` queda diferida — ADR-0014) | `test_fallback.py::test_switch_on_unavailability` | RFC-0013 (este PR); métrica → RFC-0010 |
 | CA-9 | Con fallback activo, un error de validación **no** conmuta | `test_fallback.py::test_no_switch_on_validation_error` | RFC-0013 (este PR) |
 | CA-10 | El mismo prompt de sistema se usa con los tres proveedores | `test_agent.py::test_prompt_is_provider_agnostic` | RFC-0004 |
 | CA-11 | `streaming` está activo donde el SDK expone el parámetro (`bedrock`, `openai_compatible`); `anthropic` no lo expone y transmite siempre | `test_llm_factory.py::test_streaming_enabled`, `test_anthropic_has_no_streaming_flag_to_pass` | RFC-0013 (este PR) |
