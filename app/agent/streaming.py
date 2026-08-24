@@ -14,6 +14,7 @@ from strands import Agent
 from app.agent.hooks import TOOL_EVENTS_KEY
 
 _SOURCES_KEY = "rfc0004_sources"
+_MAX_ITERATIONS = 4  # RFC-0004 8: corta bucles de razonamiento
 
 
 async def stream_turn(agent: Agent, message: str) -> AsyncIterator[dict[str, Any]]:
@@ -36,7 +37,9 @@ async def stream_turn(agent: Agent, message: str) -> AsyncIterator[dict[str, Any
         return nuevos
 
     try:
-        async for evento in agent.stream_async(message, invocation_state=invocation_state):
+        async for evento in agent.stream_async(
+            message, invocation_state=invocation_state, limits={"turns": _MAX_ITERATIONS}
+        ):
             for marcador in _drenar_marcadores():
                 yield marcador
 
