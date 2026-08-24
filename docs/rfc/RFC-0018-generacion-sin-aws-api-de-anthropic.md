@@ -4,7 +4,7 @@
 | :--- | :--- |
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0013, RFC-0009, RFC-0016 |
-| **Supersede** | RFC-0013 §5 (valor por defecto de `PROVEEDOR`); RFC-0007 §5.2 (credenciales de AWS en QA), que queda **derogado** para la PoC |
+| **Supersede** | RFC-0013 §4 (valor por defecto de `PROVEEDOR`); RFC-0007 §5.2 (credenciales de AWS en QA), que queda **derogado** para la PoC |
 | **ADRs** | ADR-0008 |
 | **Fecha** | 2026-08-22 |
 
@@ -20,7 +20,7 @@ Lo que no cambia:
 - **La fábrica `build_model` no se toca.** La rama `anthropic` ya existe (RFC-0013 §3), con su
   `import` dentro de la rama y su extra de instalación propio.
 - **`Settings` no se toca.** Ya valida por rama: `PROVEEDOR=anthropic` exige `ANTHROPIC_API_KEY`
-  y `ANTHROPIC_MODEL_ID` (RFC-0013 §5).
+  y `ANTHROPIC_MODEL_ID` (RFC-0013 §4).
 - **El prompt de sistema no se toca.** Es único y agnóstico del proveedor (RFC-0004 §4), que es lo
   que hace que una comparativa mida el modelo y no dos prompts distintos.
 - **El *fallback* sigue apagado por defecto** (ADR-0005). Este RFC no lo enciende.
@@ -41,7 +41,7 @@ de sistema (RFC-0004), los embeddings (RFC-0017).
 
 | Variable | Valor en la PoC | Nota |
 | :--- | :--- | :--- |
-| `PROVEEDOR` | `anthropic` | Sustituye al `bedrock` por defecto de RFC-0013 §5 |
+| `PROVEEDOR` | `anthropic` | Sustituye al `bedrock` por defecto de RFC-0013 §4 |
 | `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5-20251001` | **El mismo modelo** que designaba ADR-0005; cambia el camino, no el modelo. **Versión con fecha, no el alias `claude-haiku-4-5`** (ADR-0012): un alias avanza solo, y entonces la línea base de `evals/baselines/` deja de corresponder al modelo que responde — sin que nada falle |
 | `ANTHROPIC_API_KEY` | secreto | `$RAG_CV_HOME/.env`, permisos `600` (RFC-0016 §8.1) |
 | `AWS_REGION`, `BEDROCK_MODEL_ID` | **ausentes** | No vacías: ausentes (RFC-0016 §7) |
@@ -117,11 +117,11 @@ absorber una desviación.
 
 | Fallo | Detección | Comportamiento |
 | :--- | :--- | :--- |
-| API de Anthropic caída o con timeout | Cliente del proveedor | Reintentos y fallo explícito (RFC-0013 §7). Sin *fallback* silencioso |
+| API de Anthropic caída o con timeout | Cliente del proveedor | Reintentos y fallo explícito (RFC-0013 §9). Sin *fallback* silencioso |
 | Clave inválida o revocada | Arranque / primera llamada | `/readyz` en rojo. No sirve tráfico con un proveedor que no responde |
 | Límite de tasa del proveedor | Respuesta 429 | Retroceso y reintento; si agota, error explícito al cliente con `degraded` registrado |
-| `PROVEEDOR` desconocido | Fábrica | No arranca, listando los valores válidos (RFC-0013 §7) |
-| Falta `ANTHROPIC_API_KEY` | `Settings` | No arranca (validación por rama, RFC-0013 §5) |
+| `PROVEEDOR` desconocido | Fábrica | No arranca, listando los valores válidos (RFC-0013 §9) |
+| Falta `ANTHROPIC_API_KEY` | `Settings` | No arranca (validación por rama, RFC-0013 §4) |
 
 La caída del generador **no** coincide ya con la del embedder: son **proveedores distintos**
 (RFC-0016 §9). Una caída de Anthropic deja el retrieval intacto; una de OpenAI degrada a rama
@@ -129,16 +129,22 @@ léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cos
 
 ## 8. Criterios de aceptación
 
-| # | Criterio | Verificación |
-| :--- | :--- | :--- |
-| CA-1 | `PROVEEDOR=anthropic` construye el modelo correcto y arranca sin ninguna variable `AWS_*` | `test_llm_factory.py` parametrizado + CA-2 de RFC-0016 |
-| CA-2 | `PROVEEDOR=anthropic` sin `ANTHROPIC_API_KEY` impide el arranque | `test_config.py::test_provider_required_vars` |
-| CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5-20251001.json` — **el nombre lleva la versión**, no el alias: dos versiones distintas no pueden compartir línea base sin que una sobrescriba a la otra, que es el fallo que ADR-0012 evita | `invoke evals --suite full` |
-| CA-4 | La calibración del juez sobre los 15 casos de veredicto humano se ejecutó y publicó **antes** de usarlo como gate | Informe de calibración (RFC-0009 §4.1) |
-| CA-5 | El costo medio por caso y por conversación queda dentro de RNF-5 y del umbral de RFC-0009 | `usage.cost_usd` agregado en la corrida |
-| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM |
-| CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` |
-| CA-8 | El *fallback* entre proveedores sigue apagado por defecto | `test_llm_factory.py::test_fallback_disabled_by_default` |
+| # | Criterio | Verificación | Aterriza en |
+| :--- | :--- | :--- | :--- |
+| CA-1 | `PROVEEDOR=anthropic` construye el modelo correcto y arranca sin ninguna variable `AWS_*` | `test_llm_factory.py` parametrizado + CA-2 de RFC-0016 | RFC-0018 (este PR) |
+| CA-2 | `PROVEEDOR=anthropic` sin `ANTHROPIC_API_KEY` impide el arranque | `test_config.py::test_provider_required_vars` | RFC-0018 (este PR) |
+| CA-3 | La suite completa de RFC-0009 se ejecuta contra este proveedor y se publica como línea base en `evals/baselines/anthropic-claude-haiku-4-5-20251001.json` — **el nombre lleva la versión**, no el alias: dos versiones distintas no pueden compartir línea base sin que una sobrescriba a la otra, que es el fallo que ADR-0012 evita | `python evals/run_eval.py --suite full --label anthropic-claude-haiku-4-5-20251001` (RFC-0013 §8: el script es la invocación canónica; `invoke evals` no reenvía `--label`) | RFC-0009 |
+| CA-4 | La calibración del juez sobre los 15 casos de veredicto humano se ejecutó y publicó **antes** de usarlo como gate | Informe de calibración (RFC-0009 §4.1) | RFC-0009 |
+| CA-5 | El costo medio por caso y por conversación queda dentro de RNF-5 y del umbral de RFC-0009 | `usage.cost_usd` agregado en la corrida | RFC-0009 |
+| CA-6 | No queda ningún usuario IAM ni clave de AWS en el VPS | Lectura de `$RAG_CV_HOME/.env` + inventario de IAM | RFC-0018 (este PR) |
+| CA-7 | El prompt de sistema es idéntico al de cualquier otro proveedor | `git diff` sobre `app/agent/prompts.py` | RFC-0018 (este PR) |
+| CA-8 | El *fallback* entre proveedores sigue apagado por defecto | `test_llm_factory.py::test_fallback_disabled_by_default` | RFC-0018 (este PR) |
+
+Tres de los ocho criterios (CA-3, CA-4, CA-5) miden la corrida de evaluación, que es el
+entregable de RFC-0009 (punto 10 del plan de ejecución). Hasta entonces no hay conjunto dorado,
+ni juez, ni línea base contra la que comparar; el directorio `evals/` no existe. Se declaran
+diferidos con su RFC nombrado; el punto 7 entrega la configuración del proveedor, no su
+validación empírica.
 
 ## 9. Riesgos
 
@@ -151,17 +157,34 @@ léxica sin afectar a la generación. Era imposible cuando Bedrock era ambas cos
 | Residencia de datos: los fragmentos del CV salen hacia un tercero | Declarado en ADR-0008. Reabre la decisión si aparece un requisito de cumplimiento |
 | Alguien enciende el *fallback* "por si acaso" y las métricas dejan de ser comparables | CA-8 + ADR-0005, que ya lo decidió |
 
+## 10. Estrategia de pruebas
+
+**Unitarias.** La rama `anthropic` de la fábrica y el validador por rama de `Settings`, con las
+mismas reglas de RFC-0013 §12: sin red, sin clave real, con dobles locales. CA-8 (fallback
+apagado por defecto) es unitaria: se comprueba el valor por defecto de la configuración, no una
+conmutación real.
+
+**Integración.** La única de este RFC es el arranque sin ninguna variable `AWS_*` presente
+(CA-1, que se apoya en CA-2 de RFC-0016). Verifica ausencia de variables, no una llamada al
+proveedor.
+
+**Evaluación.** CA-3, CA-4 y CA-5 son corridas de la suite de RFC-0009 y se ejecutan con ese
+RFC. Son las que deciden si Haiku 4.5 sostiene los umbrales, y ninguna unitaria las sustituye.
+
+Ninguna prueba automatizada de este RFC consume tokens de pago; el gasto ocurre solo en las
+corridas de evaluación de RFC-0009, acotado por ADR-0012.
+
 ## Contrato de auditoría (gate ADU)
 
-| # | Comprobación | Cómo se verifica | Severidad si falla |
-| :--- | :--- | :--- | :--- |
-| A-1 | La aplicación arranca y genera sin ninguna credencial de AWS | CA-1, CA-6 | Bloqueante |
-| A-2 | `app/providers/llm.py` sigue siendo el único módulo que menciona proveedores concretos | Lectura + `rg -n "anthropic\|bedrock" app/` | Bloqueante |
-| A-3 | `Settings` valida por rama y la clave es `SecretStr` | CA-2 + lectura | Bloqueante |
-| A-4 | El modelo designado es `claude-haiku-4-5-20251001` —la **versión con fecha**, no el alias (§5, ADR-0012)—; cualquier otro exige la comparativa de RFC-0013 §8 adjunta | Lectura del `.env` + PR | Bloqueante |
-| A-5 | Existe la línea base publicada en `evals/baselines/` | CA-3 | Bloqueante |
-| A-6 | La calibración del juez se ejecutó antes de usarlo como gate | CA-4 | Mayor |
-| A-7 | El *fallback* está apagado por defecto | CA-8 | Mayor |
-| A-8 | El prompt de sistema es agnóstico del proveedor | CA-7 | Mayor |
-| A-9 | El usuario IAM `rag-cv-qa-invoker` fue eliminado | CA-6 | Mayor |
-| A-10 | El costo por caso y por conversación está dentro de umbral | CA-5 | Mayor |
+| # | Comprobación | Cómo se verifica | Severidad si falla | Aterriza en |
+| :--- | :--- | :--- | :--- | :--- |
+| A-1 | La aplicación arranca y genera sin ninguna credencial de AWS | CA-1, CA-6 | Bloqueante | RFC-0018 (este PR) |
+| A-2 | `app/providers/llm.py` sigue siendo el único módulo que menciona proveedores concretos | Lectura + `rg -n "anthropic\|bedrock" app/` | Bloqueante | RFC-0018 (este PR) |
+| A-3 | `Settings` valida por rama y la clave es `SecretStr` | CA-2 + lectura | Bloqueante | RFC-0018 (este PR) |
+| A-4 | El modelo designado es `claude-haiku-4-5-20251001` —la **versión con fecha**, no el alias (§3, ADR-0012)—; cualquier otro exige la comparativa de RFC-0013 §8 adjunta | Lectura del `.env` + PR | Bloqueante | RFC-0018 (este PR) |
+| A-5 | Existe la línea base publicada en `evals/baselines/` | CA-3 | Bloqueante | RFC-0009 |
+| A-6 | La calibración del juez se ejecutó antes de usarlo como gate | CA-4 | Mayor | RFC-0009 |
+| A-7 | El *fallback* está apagado por defecto | CA-8 | Mayor | RFC-0018 (este PR) |
+| A-8 | El prompt de sistema es agnóstico del proveedor | CA-7 | Mayor | RFC-0018 (este PR) |
+| A-9 | El usuario IAM `rag-cv-qa-invoker` fue eliminado | CA-6 | Mayor | RFC-0018 (este PR) |
+| A-10 | El costo por caso y por conversación está dentro de umbral | CA-5 | Mayor | RFC-0009 |
