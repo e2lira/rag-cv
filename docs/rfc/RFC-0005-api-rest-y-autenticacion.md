@@ -30,6 +30,7 @@ límites de tasa, formato de error, streaming SSE, versionado, CORS y documentac
 | `GET` | `/readyz` | No | Preparación: BD accesible, corpus indexado, config válida |
 | `POST` | `/v1/chat` | `read` | Turno de conversación, respuesta completa |
 | `POST` | `/v1/chat/stream` | `read` | Turno con respuesta en streaming (SSE) |
+| `POST` | `/v1/responses` | `read` | Mismo turno, en el contrato **Open Responses** (§13). Es lo que registra una plataforma de agentes externa |
 | `GET` | `/v1/conversations/{id}` | `read` | Historial de una conversación (solo de la propia API Key) |
 | `POST` | `/v1/admin/reindex` | `admin` | Lanza la reindexación del corpus. `202` con `job_id` |
 | `GET` | `/v1/admin/jobs/{job_id}` | `admin` | Estado de una reindexación |
@@ -156,7 +157,7 @@ data: {"usage":{...},"grounded":true}
 
 | Rol | Permisos |
 | :--- | :--- |
-| `read` | `/v1/chat`, `/v1/chat/stream`, `/v1/conversations/{id}` (solo las propias), `/v1/meta` |
+| `read` | `/v1/chat`, `/v1/chat/stream`, `/v1/responses`, `/v1/conversations/{id}` (solo las propias), `/v1/meta` |
 | `admin` | Todo lo anterior + `/v1/admin/*` |
 
 Una conversación pertenece a la `key_id` que la creó. Otra clave que solicite ese
@@ -244,6 +245,12 @@ recursos internos (invariante I-6).
 | CA-10 | `/docs` devuelve 404 con `APP_ENV=prod` | `test_docs_disabled.py` |
 | CA-11 | El flujo SSE emite `start`, ≥1 `token`, `sources`, `done` en orden | `test_stream.py::test_event_order` |
 | CA-12 | `X-Request-ID` aparece en la respuesta y en todas las líneas de log del turno | `test_observability.py` |
+| CA-14 | `POST /v1/responses` con `{"model","input"}` devuelve un objeto `response` con `output[0].content[0].type == "output_text"` y `status == "completed"` | `tests/integration/test_responses_api.py::test_minimal_contract` |
+| CA-15 | `Authorization: Bearer <clave>` autentica `/v1/responses`; sin cabecera → 401 con el mismo cuerpo genérico que CA-1 | `test_responses_api.py::test_auth_bearer` |
+| CA-16 | El `model` de la petición se ignora y la respuesta reporta el modelo **realmente usado** (§13.2) | `test_responses_api.py::test_model_is_reported_not_honoured` |
+| CA-17 | Las citas viajan en `output[0].content[0].annotations`, con el mismo `chunk_id` que `sources` de §4 para la misma pregunta | `test_responses_api.py::test_annotations_match_sources` |
+| CA-18 | Con `"stream": true` la respuesta es `text/event-stream` y emite `response.output_text.delta` ≥1 vez y `response.completed` al final | `test_responses_api.py::test_stream_event_order` |
+| CA-19 | `previous_response_id` continúa la conversación: el segundo turno ve el primero | `test_responses_api.py::test_conversation_continuity` |
 
 > **CA-13 se movió a RFC-0021.** Exigía que el `lifespan` invocara las cinco comprobaciones de
 > RFC-0006 §7. Alojarlo aquí lo dejaba detrás de la capa de agente —este RFC declara `Depende de:
@@ -269,7 +276,138 @@ curl -N https://api.ejemplo.com/v1/chat/stream \
 # Reindexación (admin)
 curl -sS -X POST https://api.ejemplo.com/v1/admin/reindex \
   -H "X-API-Key: $RAG_CV_ADMIN_KEY" -d '{"force":false}'
+
+# Open Responses (§13) — lo que registra una plataforma de agentes externa
+curl -sS https://api.ejemplo.com/v1/responses \
+  -H "Authorization: Bearer $RAG_CV_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"rag-cv","input":"¿Qué experiencia tiene en AWS?"}'
 ```
+
+## 13. Contrato Open Responses (`POST /v1/responses`)
+
+Una plataforma de agentes externa registra este servicio dando **la URL pública del endpoint y
+una API Key**, y luego conversa con él. El protocolo que espera es
+[Open Responses](https://www.openresponses.org/specification) — la especificación abierta
+construida sobre la Responses API de OpenAI, donde la generación vive en `POST /v1/responses`.
+
+**Esto no es un segundo agente ni un segundo motor.** Es un **adaptador de transporte** sobre el
+mismo `Agent` que construye `build_agent()` y que sirve a §4 y §5 (RFC-0004 §6) — construido una
+sola vez por proceso en el `lifespan`, con el historial pasado por invocación (RFC-0004 §6, §7).
+Cualquier diferencia de comportamiento entre
+`/v1/chat` y `/v1/responses` para la misma pregunta es un defecto, no una variante.
+
+### 13.1 Petición
+
+```json
+POST /v1/responses
+Authorization: Bearer rcv_live_xxxxxxxxxxxxxxxxxxxxxxxx
+Content-Type: application/json
+
+{
+  "model": "rag-cv",
+  "input": "¿Qué experiencia tiene desplegando en AWS?",
+  "stream": false,
+  "previous_response_id": "resp_9d2f..."
+}
+```
+
+| Campo | Tipo | Tratamiento |
+| :--- | :--- | :--- |
+| `model` | `str` | **Se acepta y se ignora su valor.** Ver §13.2 |
+| `input` | `str` \| `array` | Obligatorio. Como `str`, es el mensaje del turno. Como *array* de *items*, se toma el último `message` de rol `user`; las mismas restricciones de `message` en §4 (1–2 000 caracteres) |
+| `stream` | `bool` | Por defecto `false`. Con `true`, §13.4 |
+| `previous_response_id` | `str` \| `null` | Continúa la conversación. Mapea al `conversation_id` de §4, con el mismo aislamiento por `key_id` de §6.3 |
+| `instructions`, `tools`, `tool_choice`, `truncation`, `service_tier` | — | **Fuera de alcance.** Se aceptan sin error y se ignoran: el prompt de sistema y las herramientas los fija RFC-0004, no el cliente |
+
+**Autenticación:** cabecera `Authorization`, ya soportada por §6.2 sin cambios. Rol `read`,
+límites de tasa de §7 y tope de cuerpo de 8 KB idénticos al resto de `/v1/*`.
+
+### 13.2 Por qué `model` se ignora en lugar de rechazarse
+
+El campo es obligatorio en la especificación, así que la plataforma **siempre** mandará algo. Hay
+tres tratamientos posibles y dos son incorrectos:
+
+| Tratamiento | Por qué no |
+| :--- | :--- |
+| Honrar el valor y enrutar a ese modelo | Es enrutado dinámico por petición, que **RFC-0013 §6 prohíbe explícitamente**: rompe la comparabilidad de las métricas de RFC-0009, la reproducibilidad de incidentes y la previsibilidad del coste (RNF-5) |
+| Rechazar con `400` si no coincide con el configurado | La plataforma no puede conocer nuestro identificador interno antes de registrarnos. Un `400` en el primer contacto hace el endpoint inservible |
+| **Aceptar, ignorar, y reportar el real** (elegido) | Cumple la especificación sin mentir: el `model` de la respuesta es el que de verdad generó el turno, exactamente lo que `meta.model_id` ya hace en §4 |
+
+La respuesta **nunca devuelve el `model` que el cliente pidió**. Devuelve el que se usó. Un cliente
+que compare ambos ve la diferencia y sabe a qué atenerse; devolverle su propio valor sería
+afirmar algo falso sobre qué modelo respondió.
+
+### 13.3 Respuesta `200` (sin *streaming*)
+
+```json
+{
+  "id": "resp_9d2f...",
+  "object": "response",
+  "created_at": 1756900000,
+  "status": "completed",
+  "model": "claude-haiku-4-5-20251001",
+  "output": [
+    {
+      "id": "msg_4a7c...",
+      "type": "message",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Ha desplegado servicios en AWS desde 2021 [F1], principalmente ...",
+          "annotations": [
+            {"type": "file_citation", "index": 0, "file_id": "42",
+             "filename": "Banorte — Ingeniero de Datos Senior"}
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {"input_tokens": 2140, "output_tokens": 173, "total_tokens": 2313}
+}
+```
+
+- `status` es `"completed"` en un turno normal e `"incomplete"` si se agotó el límite de
+  ejecución de RFC-0004 §8.
+- **`annotations` transporta las citas.** Es el único campo del contrato donde caben, y mantiene
+  la trazabilidad que §4 publica en `sources`: `file_id` lleva el `chunk_id` y `filename` la
+  `unit`. CA-17 exige que coincidan con `sources` para la misma pregunta — si divergen, una de
+  las dos superficies está mintiendo sobre de dónde salió la respuesta.
+- Una **abstención** (`grounded: false` en §4) es una respuesta `completed` normal con
+  `annotations` vacío. No es un error: el agente sabe decir "no consta".
+- `usage` no incluye `cost_usd`: no es parte del contrato Open Responses. Se sigue registrando
+  internamente (RFC-0010) y en `/v1/chat`.
+
+### 13.4 *Streaming* (`"stream": true`)
+
+`Content-Type: text/event-stream`, con las mismas cabeceras anti-*buffering* de §5. Los nombres de
+evento son los de Open Responses, **no** los de §5:
+
+```text
+data: {"type":"response.created","response":{"id":"resp_9d2f...","status":"in_progress"}}
+
+data: {"type":"response.output_text.delta","sequence_number":1,"item_id":"msg_4a7c...","output_index":0,"content_index":0,"delta":"Ha desplegado "}
+
+data: {"type":"response.completed","response":{"id":"resp_9d2f...","status":"completed","output":[...],"usage":{...}}}
+```
+
+`response.completed` carga el objeto completo de §13.3, para que un cliente que solo escuche ese
+evento tenga la respuesta entera con sus `annotations`.
+
+### 13.5 Errores
+
+Mismo formato y códigos que §8, con una salvedad: la especificación exige un objeto de error con
+`type`, `code` y `message`. Se emite ese objeto **además** del cuerpo de §8, no en su lugar, para
+no romper a un cliente que ya lea el formato propio.
+
+### 13.6 Fuera de alcance, declarado
+
+`tools`/`tool_choice` del cliente (las herramientas las fija RFC-0004 §5), `instructions` del
+cliente (el prompt de sistema es único y versionado, RFC-0004 §4), `/responses/compact`,
+transporte WebSocket, y entradas de imagen. Un campo fuera de alcance **no produce error**: se
+ignora en silencio, porque un `400` ante un campo opcional que la plataforma manda por defecto
+haría el endpoint inservible por una razón cosmética.
 
 ## Contrato de auditoría (gate ADU)
 
@@ -286,6 +424,11 @@ curl -sS -X POST https://api.ejemplo.com/v1/admin/reindex \
 | A-9 | El aislamiento de conversaciones por `key_id` está probado | CA-8 | Bloqueante |
 | A-10 | El proceso no arranca si no puede cargar las API Keys en QA/PROD | Prueba de arranque con secreto inaccesible | Mayor |
 | A-11 | El esquema OpenAPI generado coincide con §4 y §5 | Comparación con el contrato | Menor |
+| A-12 | `/v1/responses` exige autenticación y rol `read`, como el resto de `/v1/*` | CA-15 + recorrer el router | Bloqueante |
+| A-13 | `/v1/responses` **no** enruta a un modelo elegido por el cliente: el `model` de la petición se ignora (RFC-0013 §6) | CA-16 + lectura del adaptador | Bloqueante |
+| A-14 | `/v1/responses` y `/v1/chat` responden desde el mismo `Agent` de `build_agent()`, sin lógica de agente duplicada | Lectura: el adaptador no llama a `build_agent` ni arma prompt propio | Mayor |
+| A-15 | Las citas de `annotations` coinciden con las de `sources` para la misma pregunta | CA-17 | Mayor |
+| A-16 | El límite de tasa y el tope de cuerpo se aplican a `/v1/responses` antes de invocar al agente | Orden de las dependencias en el router | Mayor |
 
 > **Había dos filas `A-11`.** La que exigía las cinco comprobaciones invocadas en el `lifespan`
 > —Bloqueante— se agregó en #30 sin verificar que el identificador estuviera libre, y convivió con

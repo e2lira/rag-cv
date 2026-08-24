@@ -242,7 +242,7 @@ sin un solo error en los registros.
 Directivas obligatorias en la ubicación del *stream*:
 
 ```nginx
-location /v1/chat/stream {
+location ~ ^/v1/(chat/stream|responses)$ {
     proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
@@ -252,6 +252,18 @@ location /v1/chat/stream {
     proxy_read_timeout 300s;      # el defecto de 60s corta respuestas largas
 }
 ```
+
+> **Por qué la ubicación dejó de ser una ruta literal.** La versión anterior era
+> `location /v1/chat/stream`, escrita cuando ese era el único endpoint que transmitía. RFC-0005 §13
+> agregó `/v1/responses`, que con `"stream": true` también responde `text/event-stream` —y es
+> **el endpoint que registra la plataforma de agentes externa**, así que es justo el que no puede
+> permitirse el búfer. Con la ruta literal caía en la ubicación genérica, con `proxy_buffering`
+> activo: el mismo fallo silencioso descrito arriba, en el camino que más importa. La expresión
+> regular cubre los dos y falla de forma visible si alguien agrega un tercero sin actualizarla.
+>
+> `/v1/responses` sin `stream` responde JSON normal; que pase por esta ubicación no le hace daño
+> —`proxy_buffering off` sobre una respuesta corta no cambia nada observable—, y evita tener que
+> enrutar por cuerpo de petición, que nginx no puede hacer.
 
 **Defensa que no depende de la configuración: la aplicación emite `X-Accel-Buffering: no`** en la
 respuesta SSE. nginx honra esa cabecera y desactiva el búfer para esa respuesta aunque el
@@ -331,6 +343,7 @@ de la existencia del compose.
 | CA-16 | La base `ragcv` de QA está creada con proveedor ICU y configuración regional `es-MX`, y la búsqueda léxica encuentra un término acentuado escribiéndolo sin tilde | `SELECT datlocprovider, datcollate FROM pg_database WHERE datname='ragcv'` devuelve `i` y `es-MX`; y la consulta de RFC-0006 §3.1 devuelve `true` **ejecutada contra el VPS**. Cierra A-3b de RFC-0006 para QA |
 | CA-17 | El sondeo de RFC-0019 está en el `crontab` del usuario de operación, se ejecuta sin `sudo`, y no existe ninguna regla `NOPASSWD` que lo sostenga | `crontab -l` + `sudo -l` + latido tras un ciclo |
 | CA-18 | La bitácora del sondeo rota y no crece sin límite | Ejecutar la rotación + `ls -l` sobre `$RAG_CV_HOME/logs/` |
+| CA-19 | Lo mismo que CA-13 sobre `/v1/responses` con `"stream": true` — el endpoint que registra la plataforma externa (RFC-0005 §13), y por tanto el que no puede bufferear | `curl -N https://reto.qrimapp.com/v1/responses -H "Authorization: Bearer $KEY" -d '{"model":"rag-cv","input":"...","stream":true}'` midiendo el tiempo hasta el primer `response.output_text.delta` |
 
 **CA-17 y CA-18 llegan de RFC-0019.** Ese RFC define el `cron` y la rotación como contrato (§7);
 *instalarlos* es aprovisionamiento, y el aprovisionamiento es de este RFC. Estaban entre sus

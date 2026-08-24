@@ -57,7 +57,7 @@ cuando el archivo cambia.
 | 6 | **RFC-0003** Recuperación híbrida | HNSW + PostgreSQL FTS + fusión RRF, degradación a rama léxica | La degradación cubre ahora la caída del **proveedor de embeddings** |
 | 7 | **RFC-0013 + RFC-0018** Proveedores LLM | Fábrica `build_model`, validación por rama, `PROVEEDOR=anthropic` con `claude-haiku-4-5` | Valor por defecto `bedrock` **sustituido**. RFC-0007 §5.2 (usuario IAM en QA) **derogado** |
 | 8 | **RFC-0004** Capa de agente | Agente Strands, prompt de sistema versionado, herramienta de recuperación | La construcción del modelo la delega en RFC-0013 |
-| 9 | **RFC-0005** API REST | Contrato HTTP, autenticación por API Key, límite de tasa, `/healthz` y `/readyz` | `/readyz` **expone el SHA de commit desplegado** (RFC-0020 §6, CA-5). **CA-13 ya no es suya**: el `lifespan` validado se entregó en el punto 3b (RFC-0021) |
+| 9 | **RFC-0005** API REST | Contrato HTTP, autenticación por API Key, límite de tasa, `/healthz` y `/readyz` | `/readyz` **expone el SHA de commit desplegado** (RFC-0020 §6, CA-5). **CA-13 ya no es suya**: el `lifespan` validado se entregó en el punto 3b (RFC-0021). **Incluye `/v1/responses`** (§13): el adaptador Open Responses que registra la plataforma de agentes externa — es el endpoint del que depende la demostración de la PoC |
 
 ### Fase 3 — Calidad · *el gate que decide si funciona*
 
