@@ -194,5 +194,7 @@ def test_inference_params_cannot_exceed_rfc0004_limits(
     _settings_env(monkeypatch)
     monkeypatch.setenv(variable, valor_excedido)
 
-    with pytest.raises(Exception, match=variable.lower()):
+    # pydantic identifica el campo por su ALIAS en el mensaje de error
+    # (LLM_MAX_TOKENS), no por el nombre del atributo (llm_max_tokens).
+    with pytest.raises(Exception, match=variable):
         Settings(_env_file=None)
