@@ -78,7 +78,12 @@ class Settings(BaseSettings):
     # alias) por ADR-0012.
     anthropic_model_id: str = Field(alias="ANTHROPIC_MODEL_ID", default="claude-haiku-4-5-20251001")
 
-    openai_compatible_api_key: str | None = Field(alias="OPENAI_COMPATIBLE_API_KEY", default=None)
+    # SecretStr (CA-4), a diferencia de bedrock_model_id/aws_region: es la
+    # unica clave de las tres ramas que todavia no lo era -- bedrock no
+    # tiene clave propia, la resuelve el rol IAM o boto_session.
+    openai_compatible_api_key: SecretStr | None = Field(
+        alias="OPENAI_COMPATIBLE_API_KEY", default=None
+    )
     openai_compatible_base_url: str | None = Field(alias="OPENAI_COMPATIBLE_BASE_URL", default=None)
     openai_compatible_model_id: str | None = Field(alias="OPENAI_COMPATIBLE_MODEL_ID", default=None)
 
