@@ -10,6 +10,7 @@ decide esa distincion y delega en FallbackStrategy solo cuando corresponde
 conmutar."""
 
 import logging
+from typing import Any
 
 from strands.models import RoutingCandidate, RoutingContext
 from strands.models.routing.fallback_strategy import FallbackStrategy
@@ -53,7 +54,7 @@ class AvailabilityFallbackStrategy:
     def __init__(self) -> None:
         self._siguiente = FallbackStrategy()
 
-    async def select(self, context: RoutingContext) -> RoutingCandidate | None:
+    async def select(self, context: RoutingContext, **kwargs: Any) -> RoutingCandidate | None:
         if not context.attempts:
             return context.candidates[0]
 
@@ -61,7 +62,7 @@ class AvailabilityFallbackStrategy:
         if ultimo.exception is None or not es_fallo_de_disponibilidad(ultimo.exception):
             return None
 
-        siguiente = await self._siguiente.select(context)
+        siguiente = await self._siguiente.select(context, **kwargs)
         if siguiente is not None:
             logger.warning(
                 "de=<%s>, a=<%s>, error=<%s> | conmutacion de proveedor por indisponibilidad",

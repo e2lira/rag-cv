@@ -4,6 +4,7 @@ Unico modulo que menciona un proveedor concreto (RFC-0013 A-1): app/agent/
 recibe un modelo ya construido y no sabe de donde salio (RFC-0004 CA-6).
 """
 
+from strands.models import ModelRouter
 from strands.models.model import Model
 
 from app.core.settings import Settings
@@ -11,14 +12,35 @@ from app.core.settings import Settings
 _PROVEEDORES_VALIDOS = ("bedrock", "anthropic", "openai_compatible")
 
 
-def build_model(settings: Settings) -> Model:
+def build_model(settings: Settings) -> Model | ModelRouter:
     """Construye el proveedor de generacion designado por PROVEEDOR.
 
     Es el unico punto del codigo que conoce proveedores concretos. Anadir
     uno nuevo se hace aqui y en Settings (RFC-0013 4); en ningun otro
     sitio (CA-6, RFC-0004).
+
+    Con PROVEEDOR_FALLBACK configurado (vacio por defecto -- ADR-0005),
+    envuelve el primario y el secundario en un ModelRouter con
+    AvailabilityFallbackStrategy (RFC-0013 6.1, app/providers/fallback.py):
+    conmuta solo ante un fallo de disponibilidad, nunca ante un error de
+    validacion o de contenido.
     """
-    return _construir(settings, settings.proveedor)
+    primario = _construir(settings, settings.proveedor)
+    if not settings.proveedor_fallback:
+        return primario
+
+    from strands.models import RoutingCandidate
+
+    from app.providers.fallback import AvailabilityFallbackStrategy
+
+    secundario = _construir(settings, settings.proveedor_fallback)
+    return ModelRouter(
+        [
+            RoutingCandidate(model=primario, name=settings.proveedor),
+            RoutingCandidate(model=secundario, name=settings.proveedor_fallback),
+        ],
+        strategy=AvailabilityFallbackStrategy(),
+    )
 
 
 def _construir(settings: Settings, proveedor: str) -> Model:
