@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.api.deps import rate_limiter
 from app.api.errors import install_error_handling
+from app.core.engine import build_pool
 
 pytestmark = pytest.mark.integration
 
@@ -22,7 +23,10 @@ pytestmark = pytest.mark.integration
 def _app(database_url: str, *, por_minuto: int, por_dia: int) -> TestClient:
     app = FastAPI()
     install_error_handling(app)
-    app.state.database_url = database_url
+    # Pool y no una conexion por peticion: la cuota corre en CADA peticion,
+    # y abrir un TCP mas autenticar cada vez se comeria el presupuesto de
+    # latencia de RNF-2. `build_pool` existe justo para esto (RFC-0006 6).
+    app.state.db_pool = build_pool(database_url, min_size=1, max_size=2)
     app.state.rate_limit_per_minute = por_minuto
     app.state.rate_limit_per_day = por_dia
 
@@ -66,7 +70,7 @@ def test_the_quota_is_per_key(database_url: str) -> None:
     agotaria la cuota de todas las demas."""
     app = FastAPI()
     install_error_handling(app)
-    app.state.database_url = database_url
+    app.state.db_pool = build_pool(database_url, min_size=1, max_size=2)
     app.state.rate_limit_per_minute = 1
     app.state.rate_limit_per_day = 100
 
