@@ -222,3 +222,21 @@ async def test_stream_emits_error_and_stops_on_failure() -> None:
     assert tipos[-1] == "error"
     assert "done" not in tipos
     assert "timeout de retrieval" in eventos[-1]["message"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_iteration_cap_stops_runaway_reasoning() -> None:
+    """RFC-0004 8: 4 iteraciones como maximo -- corta bucles de razonamiento
+    aunque el tope de herramientas (2) solo cancele, no termine el turno."""
+    # 10 turnos de tool_use: el tope de herramientas cancela desde la 3ra,
+    # pero el bucle seguiria pidiendo turnos al modelo sin un limite propio
+    # de iteraciones -- por eso el guion no incluye un turno final de texto.
+    modelo = ScriptedModel(
+        [llamada_herramienta(f"t{i}", "search_cv", {"query": f"q{i}"}) for i in range(10)]
+    )
+    agent = _agente_de_prueba(modelo)
+
+    [_ async for _ in stream_turn(agent, "Dame todo lo que tengas")]
+
+    assert len(modelo.stream_calls) <= 4
