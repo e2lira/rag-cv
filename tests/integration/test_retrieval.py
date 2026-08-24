@@ -264,6 +264,31 @@ async def test_threshold_does_not_reject_a_good_match(database_url: str) -> None
     assert results
 
 
+@pytest.mark.asyncio
+async def test_below_threshold_returns_empty_at_production_default(database_url: str) -> None:
+    """CA-6 / A-3, auditoria PR #68 (M-1): el umbral de PRODUCCION (0.016,
+    sin forzar) tambien devuelve [] ante una consulta realmente sin
+    relacion -- no solo ante un min_score elevado artificialmente.
+
+    test_below_threshold_returns_empty ya prueba que el umbral SE APLICA
+    (con min_score=0.5), pero no que el valor por defecto alcance para
+    cortar una consulta genuinamente irrelevante. No se puede probar eso
+    con la rama semantica: FakeEmbedder no tiene nocion de "sin relacion"
+    (siempre asigna algun rango por distancia de hash), asi que cualquier
+    consulta, por ajena que sea, entra con sem_rank=1 y score ~=1/61 por
+    encima de 0.016 (medido). Se aisla la rama lexica real (CA-7,
+    _EmbedderFailsOnQuery) para que la ausencia de coincidencia en tsv sea
+    la unica fuente de la lista vacia, no un min_score inflado."""
+    seeder = FakeEmbedder(1536)
+    with psycopg.connect(database_url) as conn:
+        await seed_corpus(conn, seeder)
+
+        failing = _EmbedderFailsOnQuery(1536)
+        results = await hybrid_search(conn, failing, "xilofono marciano cuantico")
+
+    assert results == []
+
+
 class _EmbedderFailsOnQuery:
     """Simula la caida del proveedor -- embed_query lanza, embed_documents
     (sembrado) funciona: RuntimeError de dominio, no AssertionError."""
