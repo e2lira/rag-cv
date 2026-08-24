@@ -80,19 +80,26 @@ def test_embed_max_tokens_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("proveedor", "faltante", "resto"),
+    ("proveedor", "env_faltante", "campo_faltante", "resto"),
     [
         (
             "bedrock",
             "AWS_REGION",
+            "aws_region",
             {"BEDROCK_MODEL_ID": "us.anthropic.claude-haiku-4-5-20251001-v1:0"},
         ),
-        ("bedrock", "BEDROCK_MODEL_ID", {"AWS_REGION": "us-east-2"}),
-        ("anthropic", "ANTHROPIC_API_KEY", {}),
-        ("anthropic", "ANTHROPIC_MODEL_ID", {"ANTHROPIC_API_KEY": "sk-ant-test"}),
+        ("bedrock", "BEDROCK_MODEL_ID", "bedrock_model_id", {"AWS_REGION": "us-east-2"}),
+        ("anthropic", "ANTHROPIC_API_KEY", "anthropic_api_key", {}),
+        (
+            "anthropic",
+            "ANTHROPIC_MODEL_ID",
+            "anthropic_model_id",
+            {"ANTHROPIC_API_KEY": "sk-ant-test"},
+        ),
         (
             "openai_compatible",
             "OPENAI_COMPATIBLE_API_KEY",
+            "openai_compatible_api_key",
             {
                 "OPENAI_COMPATIBLE_BASE_URL": "https://api.deepseek.com",
                 "OPENAI_COMPATIBLE_MODEL_ID": "deepseek-chat",
@@ -101,11 +108,13 @@ def test_embed_max_tokens_default(monkeypatch: pytest.MonkeyPatch) -> None:
         (
             "openai_compatible",
             "OPENAI_COMPATIBLE_BASE_URL",
+            "openai_compatible_base_url",
             {"OPENAI_COMPATIBLE_API_KEY": "sk-test", "OPENAI_COMPATIBLE_MODEL_ID": "deepseek-chat"},
         ),
         (
             "openai_compatible",
             "OPENAI_COMPATIBLE_MODEL_ID",
+            "openai_compatible_model_id",
             {
                 "OPENAI_COMPATIBLE_API_KEY": "sk-test",
                 "OPENAI_COMPATIBLE_BASE_URL": "https://api.deepseek.com",
@@ -114,26 +123,33 @@ def test_embed_max_tokens_default(monkeypatch: pytest.MonkeyPatch) -> None:
     ],
 )
 def test_provider_required_vars(
-    monkeypatch: pytest.MonkeyPatch, proveedor: str, faltante: str, resto: dict[str, str]
+    monkeypatch: pytest.MonkeyPatch,
+    proveedor: str,
+    env_faltante: str,
+    campo_faltante: str,
+    resto: dict[str, str],
 ) -> None:
     """RFC-0013 CA-3 / RFC-0018 CA-2: falta una variable de la rama activa de
-    PROVEEDOR => Settings() no arranca, nombrando la variable que falta.
+    PROVEEDOR => Settings() no arranca, nombrando el campo que falta.
 
-    ANTHROPIC_MODEL_ID tiene valor por defecto (RFC-0018 3), asi que el caso
-    "anthropic sin ANTHROPIC_MODEL_ID" no puede fallar por esa via -- se
-    fuerza vaciandolo explicitamente en vez de simplemente no fijarlo."""
+    RFC-0013 4 nombra el campo (snake_case) en el mensaje, no el alias de
+    entorno -- ``', '.join(faltantes)`` sobre las claves del propio
+    diccionario ``requeridas``. ANTHROPIC_MODEL_ID tiene valor por defecto
+    (RFC-0018 3), asi que el caso "anthropic sin ANTHROPIC_MODEL_ID" no
+    puede fallar por esa via -- se fuerza vaciandolo explicitamente en vez
+    de simplemente no fijarlo."""
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://test/test")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("PROVEEDOR", proveedor)
-    if faltante == "ANTHROPIC_MODEL_ID":
+    if env_faltante == "ANTHROPIC_MODEL_ID":
         monkeypatch.setenv("ANTHROPIC_MODEL_ID", "")
     else:
         monkeypatch.delenv("ANTHROPIC_MODEL_ID", raising=False)
     for k, v in resto.items():
         monkeypatch.setenv(k, v)
 
-    with pytest.raises(Exception, match=faltante):
+    with pytest.raises(Exception, match=campo_faltante):
         Settings(_env_file=None)
 
 
@@ -141,8 +157,16 @@ def test_provider_defaults_to_anthropic(monkeypatch: pytest.MonkeyPatch) -> None
     """RFC-0018 3 / RFC-0011 4.5: el valor por defecto de PROVEEDOR en este
     repositorio es anthropic, no el bedrock de RFC-0013 4 -- RFC-0018 lo
     sustituye, y ambos RFC aterrizan en el mismo PR, asi que no tiene sentido
-    implementar primero un valor que se reemplaza en el commit siguiente."""
+    implementar primero un valor que se reemplaza en el commit siguiente.
+
+    delenv de PROVEEDOR y ANTHROPIC_MODEL_ID, no solo el primero: un .env
+    real de DEV puede fijar ANTHROPIC_MODEL_ID, y tests/conftest.py llama
+    load_dotenv() a nivel de modulo -- se filtra a os.environ incluso con
+    _env_file=None, que solo desactiva la lectura propia de
+    pydantic-settings. Sin aislar los dos, esta prueba pasa o falla segun
+    el .env de quien la corra, no segun el valor por defecto real."""
     monkeypatch.delenv("PROVEEDOR", raising=False)
+    monkeypatch.delenv("ANTHROPIC_MODEL_ID", raising=False)
     _settings_env(monkeypatch)
 
     settings = Settings(_env_file=None)
