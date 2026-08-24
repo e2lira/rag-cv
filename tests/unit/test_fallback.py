@@ -8,10 +8,10 @@ el ciclo de un Agent para probar una decision que vive en un solo metodo
 seria doblar el propio sujeto bajo prueba con mas pasos, no menos
 riesgo."""
 
-import logging
+from unittest.mock import patch
 
 import pytest
-from botocore.exceptions import EndpointConnectionError
+from botocore.exceptions import EndpointConnectionError  # type: ignore[import-untyped]
 from openai import APIConnectionError as OpenAIConnectionError
 from strands.models import RoutingCandidate, RoutingContext
 from strands.models.routing.strategy import RoutingAttempt
@@ -76,23 +76,30 @@ def test_validation_error_is_not_a_availability_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_switches_on_availability_failure(caplog: pytest.LogCaptureFixture) -> None:
+async def test_switches_on_availability_failure() -> None:
     """CA-8: ante un fallo de disponibilidad, select() devuelve el
     candidato siguiente (no None) y registra un WARNING con ambos
-    proveedores."""
+    proveedores.
+
+    Intercepta logger.warning() directamente en vez de usar caplog: con la
+    suite completa (no solo este archivo), caplog no capturaba el record
+    de forma reproducible -- confirmado que no era un problema de nivel
+    de logging ni de propagacion (ambos correctos en un test de depuracion
+    aislado), asi que la causa probable es interaccion entre caplog y
+    pytest-asyncio a esa escala. Interceptar la llamada no depende de
+    ningun estado compartido de logging."""
     candidatos = _candidatos()
     contexto = _contexto(candidatos, ModelThrottledException("429"))
     estrategia = AvailabilityFallbackStrategy()
 
-    with caplog.at_level(logging.WARNING):
+    with patch("app.providers.fallback.logger") as mock_logger:
         elegido = await estrategia.select(contexto)
 
     assert elegido is candidatos[1]
-    assert any(
-        "anthropic" in r.message and "bedrock" in r.message
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-    )
+    mock_logger.warning.assert_called_once()
+    args = mock_logger.warning.call_args.args
+    assert "anthropic" in args
+    assert "bedrock" in args
 
 
 @pytest.mark.asyncio
