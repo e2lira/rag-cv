@@ -7,8 +7,14 @@ un oraculo para un atacante (6.2).
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+
+# 64 digitos hexadecimales: la forma de sha256().hexdigest(). Se valida el
+# formato y no el contenido porque un hash no se puede "verificar" -- pero
+# si distingue un digest de una clave en claro, que es lo que importa.
+_SHA256_HEX = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 @dataclass(frozen=True)
@@ -62,9 +68,21 @@ def load_api_keys(raw: str | None) -> tuple[ApiKey, ...]:
 
 def _construir(entrada: dict[str, object]) -> ApiKey:
     expira = entrada.get("expires_at")
+    digest = str(entrada["hash"])
+    if not _SHA256_HEX.match(digest):
+        # RFC-0005 6.1: el servidor guarda sha256(clave), nunca la clave.
+        # Sin esta comprobacion, un secreto mal escrito deja la clave en
+        # claro en memoria -- y ademas queda roto en silencio, porque
+        # verify_api_key compara un digest contra algo que no lo es y la
+        # clave legitima nunca autentica. El id (no el valor) va en el
+        # mensaje: es lo unico que se puede publicar (6.2).
+        raise ApiKeysConfigError(
+            f"La clave {entrada['id']!r} no trae un SHA-256 en 'hash'. "
+            "Se guarda el hash de la clave, nunca la clave."
+        )
     return ApiKey(
         id=str(entrada["id"]),
-        hash=str(entrada["hash"]),
+        hash=digest,
         role=str(entrada["role"]),
         label=str(entrada.get("label", "")),
         expires_at=datetime.fromisoformat(str(expira)) if expira else None,
