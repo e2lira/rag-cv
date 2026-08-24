@@ -116,7 +116,16 @@ async def hybrid_search(
         rows_by_id[cid] = row[1:11]
         ranked.append(RankedCandidate(id=cid, sem_rank=row[11], lex_rank=row[12]))
 
-    fused = fuse_rrf(ranked, k=rrf_k, w_sem=w_sem, w_lex=w_lex)[:top_k]
+    fused = fuse_rrf(ranked, k=rrf_k, w_sem=w_sem, w_lex=w_lex)
+
+    # RFC-0003 3.6: preferible que el agente diga "no consta" a que
+    # fundamente una respuesta en ruido. Se mira solo el mejor score: si el
+    # top-1 no alcanza el umbral, ninguno de los demas (peor rankeados) lo
+    # alcanzaria tampoco.
+    if not fused or fused[0].score < min_score:
+        return []
+
+    fused = fused[:top_k]
 
     return [
         RetrievedChunk(
