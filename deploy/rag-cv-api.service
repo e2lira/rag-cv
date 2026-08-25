@@ -1,0 +1,102 @@
+# Unidad de USUARIO -- RFC-0020 §5. Se instala en:
+#   ~/.config/systemd/user/rag-cv-api.service
+#
+# Se gestiona sin `sudo` (RFC-0016 §8.1):
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rag-cv-api
+#   systemctl --user restart rag-cv-api
+#   journalctl --user -u rag-cv-api -f
+#
+# Requiere `loginctl enable-linger qrimapp-reto` hecho una vez (§4, paso 5).
+# Sin linger, las unidades de usuario mueren al cerrar la sesion SSH y no
+# arrancan al iniciar el host: el VPS se reinicia de madrugada y por la
+# mañana no hay servicio, sin ningun error que lo explique (CA-2).
+
+[Unit]
+Description=rag-cv API (RFC-0020)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=/opt/rag-cv/current
+
+# El secreto lo lee la unidad, nunca el perfil del usuario (§8): en
+# `.bashrc` entraria en el entorno de cualquier proceso de esa cuenta,
+# incluidas las sesiones SSH y todo lo que lancen desde ellas.
+EnvironmentFile=/opt/rag-cv/.env
+
+# --host 127.0.0.1 y NO todas las interfaces: RFC-0020 §7 llama a eso "el
+# fallo grave de esta topologia" porque saltaria nginx y con el el TLS. Un
+# `--host` copiado de un tutorial no falla: el servicio responde igual, y
+# solo se ve sondeando desde fuera del host (CA-4).
+#
+# --proxy-headers con --forwarded-allow-ips: sin ellos la aplicacion
+# registra 127.0.0.1 como cliente de TODAS las peticiones y construye URLs
+# con esquema http (§7.1).
+ExecStart=/opt/rag-cv/current/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --workers 2 \
+    --proxy-headers \
+    --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=2
+
+# --- Limites de recurso (§5) -------------------------------------------
+# Sin contenedor no hay limites por servicio de forma implicita. Existen
+# como red de seguridad, no como ajuste fino: una fuga en la aplicacion
+# degrada su propio servicio antes que tumbar PostgreSQL (CA-8).
+MemoryMax=1G
+CPUWeight=100
+
+# --- Endurecimiento (§5.1) ---------------------------------------------
+# RFC-0015 §10 enumeraba diez medidas que el contenedor daba casi gratis y
+# que se perdieron todas al diferirlo (ADR-0010). Estas son las
+# equivalencias nativas. El vector realista contra esta topologia no es el
+# robo de la cuenta SSH: es la EJECUCION REMOTA DE CODIGO a traves de la
+# API, que es el unico proceso expuesto a internet.
+
+# #2 raiz de solo lectura. `logs` es la unica ruta escribible.
+ProtectSystem=strict
+ReadWritePaths=/opt/rag-cv/logs
+
+# La que el contenedor NO daba, y aqui es la que mas importa: impide que un
+# proceso comprometido de la API lea /home/qrimapp-reto/.ssh/. Es el salto
+# de una ejecucion remota de codigo a robar la clave SSH del host (CA-11).
+#
+# Por esto la aplicacion vive en /opt y no en el directorio personal:
+# ProtectHome=yes y una aplicacion bajo /home son INCOMPATIBLES -- la
+# directiva le esconderia al servicio su propio directorio de trabajo.
+ProtectHome=yes
+
+# #3 capacidades eliminadas
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+
+# #4 no-new-privileges
+NoNewPrivileges=yes
+
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Solo IPv4/IPv6 y bucle local: la API no necesita otras familias.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+# default.target y no multi-user.target: es una unidad de USUARIO. Con
+# linger habilitado, esto es lo que la levanta al arrancar el host sin que
+# nadie abra una sesion (CA-2).
+WantedBy=default.target
