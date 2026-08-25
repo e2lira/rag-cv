@@ -29,6 +29,27 @@ def _estimar_tokens_entrada(agent: Agent, message: str) -> int:
     return (len(system_prompt) + len(message)) // _CARACTERES_POR_TOKEN
 
 
+def _consumo(resultado: Any) -> dict[str, Any]:
+    """Tokens y llamadas a herramienta del turno, del resultado de strands.
+
+    Se lee defensivamente: el contrato de `AgentResult.metrics` es del SDK,
+    no nuestro, y un turno sin metricas vale cero -- no rompe el turno. Cero
+    aqui es la verdad (no hubo consumo medible), a diferencia de `cost_usd`,
+    donde cero seria mentira (RFC-0005 4).
+    """
+    metricas = getattr(resultado, "metrics", None)
+    uso = getattr(metricas, "accumulated_usage", None) or {}
+    herramientas = getattr(metricas, "tool_metrics", None) or {}
+    return {
+        "usage": {
+            "input_tokens": int(uso.get("inputTokens", 0)),
+            "output_tokens": int(uso.get("outputTokens", 0)),
+            "tool_calls": sum(getattr(m, "call_count", 0) for m in herramientas.values()),
+        },
+        "stop_reason": getattr(resultado, "stop_reason", None),
+    }
+
+
 async def stream_turn(
     agent: Agent, message: str, *, timeout_seconds: float = _TURN_TIMEOUT_SECONDS
 ) -> AsyncIterator[dict[str, Any]]:
@@ -76,7 +97,11 @@ async def stream_turn(
                     fuentes = invocation_state.get(_SOURCES_KEY)
                     if fuentes:
                         yield {"type": "sources", "chunks": fuentes}
-                    yield {"type": "done"}
+                    # `done` carga el consumo del turno porque es el unico
+                    # punto donde existe: los transportes de RFC-0005 (4 y 5)
+                    # lo publican en `usage`, y sin el tendrian que volver a
+                    # pedirle al agente algo que ya paso.
+                    yield {"type": "done", **_consumo(evento["result"])}
                     continue
     except TimeoutError:
         # RFC-0004 8: cancelacion limpia -> HTTP 504 (RFC-0005, fuera de

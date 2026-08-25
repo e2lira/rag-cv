@@ -53,10 +53,27 @@ def record_turn(
     prompt_version: int,
     source_chunk_ids: list[int] | None = None,
     status: str = "ok",
-) -> None:
+    grounded: bool | None = None,
+    model_id: str | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    tool_calls: int | None = None,
+    cost_usd: float | None = None,
+    latency_ms: int | None = None,
+    request_id: str | None = None,
+) -> str:
     """Persiste el par usuario/asistente de un turno -- RFC-0004 7. La
     version del prompt viaja en el mensaje del asistente (CA-9): es su
-    respuesta la que se genero con esa version, no la pregunta."""
+    respuesta la que se genero con esa version, no la pregunta.
+
+    Devuelve el id del mensaje del asistente, que RFC-0005 4 publica como
+    `message_id`: es el identificador que un usuario aporta para investigar
+    un incidente, asi que tiene que ser el de la fila real y no uno nuevo.
+
+    Los campos de medicion son opcionales porque RFC-0004 no los conoce --
+    los aporta el turno de RFC-0005, que es quien mide-- y un turno sin
+    ellos sigue siendo un turno valido.
+    """
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO messages (conversation_id, role, content, status) "
@@ -65,20 +82,36 @@ def record_turn(
         )
         cur.execute(
             "INSERT INTO messages "
-            "(conversation_id, role, content, prompt_version, source_chunk_ids, status) "
+            "(conversation_id, role, content, prompt_version, source_chunk_ids, status, "
+            " grounded, model_id, input_tokens, output_tokens, tool_calls, cost_usd, "
+            " latency_ms, request_id) "
             "VALUES "
-            "(%(conversation_id)s, 'assistant', %(texto)s, %(version)s, %(chunks)s, %(status)s)",
+            "(%(conversation_id)s, 'assistant', %(texto)s, %(version)s, %(chunks)s, %(status)s, "
+            " %(grounded)s, %(model_id)s, %(input_tokens)s, %(output_tokens)s, %(tool_calls)s, "
+            " %(cost_usd)s, %(latency_ms)s, %(request_id)s) "
+            "RETURNING id",
             {
                 "conversation_id": conversation_id,
                 "texto": assistant_text,
                 "version": prompt_version,
                 "chunks": source_chunk_ids or [],
                 "status": status,
+                "grounded": grounded,
+                "model_id": model_id,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "tool_calls": tool_calls,
+                "cost_usd": cost_usd,
+                "latency_ms": latency_ms,
+                "request_id": request_id,
             },
         )
+        fila = cur.fetchone()
         cur.execute(
             "UPDATE conversations SET last_seen_at = now(), turns = turns + 1 "
             "WHERE id = %(conversation_id)s",
             {"conversation_id": conversation_id},
         )
     conn.commit()
+    assert fila is not None  # RETURNING de un INSERT que no fallo
+    return str(fila[0])
