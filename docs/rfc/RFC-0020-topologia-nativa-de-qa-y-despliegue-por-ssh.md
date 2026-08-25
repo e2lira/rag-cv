@@ -5,7 +5,7 @@
 | **Estado** | Aprobado |
 | **Depende de** | RFC-0016, RFC-0007, RFC-0008, RFC-0017, RFC-0019 |
 | **Supersede** | RFC-0007 §5.1 y §5.3 (topología y despliegue de QA, incluido Caddy como terminador TLS) y RFC-0015 §7 (composición de QA), para el alcance de la PoC |
-| **ADRs** | ADR-0010 |
+| **ADRs** | ADR-0010, ADR-0019 |
 | **Fecha** | 2026-08-22 |
 
 ---
@@ -340,7 +340,7 @@ de la existencia del compose.
 | CA-14 | La configuración de nginx sobrevive a una actualización del panel, y el certificado sigue renovando | Revisión tras actualizar + fecha de expiración |
 | CA-15 | El `.env` tiene permisos `600` desde su creación y el secreto no está en el panel ni en el perfil del usuario | `ls -l`, `stat`, revisión del panel y de `~/.bashrc` |
 | CA-10 | El despliegue no transporta `.env` ni sobrescribe el corpus del VPS | Desplegar con un `.env` presente en el origen y comprobar que no llega, y que `corpus/cv.md` no cambia |
-| CA-16 | La base `ragcv` de QA está creada con proveedor ICU y configuración regional `es-MX`, y la búsqueda léxica encuentra un término acentuado escribiéndolo sin tilde | `SELECT datlocprovider, datcollate FROM pg_database WHERE datname='ragcv'` devuelve `i` y `es-MX`; y la consulta de RFC-0006 §3.1 devuelve `true` **ejecutada contra el VPS**. Cierra A-3b de RFC-0006 para QA |
+| CA-16 | La base `ragcv` de QA está creada con proveedor ICU y configuración regional `es-MX`, y la búsqueda léxica encuentra un término acentuado escribiéndolo sin tilde | **Corregido por ADR-0019.** `datlocprovider` devuelve `i`, y la configuración regional de ICU se lee de `daticulocale` (PG 15–16) o `datlocale` (PG ≥ 17) y devuelve `es-MX` — **nunca de `datcollate`**, que contiene la locale de `libc` heredada del servidor. Y la consulta de RFC-0006 §3.1 devuelve `true`, **ejecutada contra el VPS**. Cierra A-3b de RFC-0006 para QA |
 | CA-17 | El sondeo de RFC-0019 está en el `crontab` del usuario de operación, se ejecuta sin `sudo`, y no existe ninguna regla `NOPASSWD` que lo sostenga | `crontab -l` + `sudo -l` + latido tras un ciclo |
 | CA-18 | La bitácora del sondeo rota y no crece sin límite | Ejecutar la rotación + `ls -l` sobre `$RAG_CV_HOME/logs/` |
 | CA-19 | Lo mismo que CA-13 sobre `/v1/responses` con `"stream": true` — el endpoint que registra la plataforma externa (RFC-0005 §13), y por tanto el que no puede bufferear | `curl -N https://reto.qrimapp.com/v1/responses -H "Authorization: Bearer $KEY" -d '{"model":"rag-cv","input":"...","stream":true}'` midiendo el tiempo hasta el primer `response.output_text.delta` |
