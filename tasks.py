@@ -118,6 +118,104 @@ def prohibiciones(c):
         raise SystemExit(f"Prohibiciones del gate ADU incumplidas:\n  {detalle}")
 
 
+# Directivas que los artefactos de despliegue TIENEN que declarar (RFC-0020).
+# Se comprueban aqui porque el RFC las verifica contra el VPS (CA-4, CA-11,
+# CA-13, CA-19) y esa verificacion no puede correr en el repositorio: lo que
+# si puede es garantizar que lo que se envia al VPS las trae. Sin esto, borrar
+# una linea de la unidad o del vhost no rompe nada visible hasta que alguien
+# mide la latencia o audita el host.
+_UNIDAD = Path("deploy/rag-cv-api.service")
+_VHOST = Path("deploy/nginx/reto.qrimapp.com.conf")
+_DESPLIEGUE = Path("deploy/deploy.sh")
+
+_ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
+    _UNIDAD: {
+        # RFC-0020 5.1, equivalencias nativas del endurecimiento perdido con
+        # el contenedor (ADR-0010).
+        "ProtectSystem=strict": "raiz de solo lectura (5.1 #2)",
+        "ReadWritePaths=": "la unica ruta escribible (5.1 #2)",
+        "CapabilityBoundingSet=": "capacidades eliminadas (5.1 #3)",
+        "RestrictSUIDSGID=yes": "capacidades eliminadas (5.1 #3)",
+        "NoNewPrivileges=yes": "no-new-privileges (5.1 #4)",
+        # La que el contenedor no daba: impide que una ejecucion remota de
+        # codigo a traves de la API lea ~/.ssh y salte a robar la clave.
+        "ProtectHome=yes": "el servicio no puede leer /home (5.1, CA-11)",
+        "PrivateTmp=yes": "no comparte /tmp (5.1)",
+        "ProtectKernelTunables=yes": "sin escritura en /proc/sys (5.1)",
+        "ProtectControlGroups=yes": "sin escritura en cgroups (5.1)",
+        "MemoryMax=": "limite de memoria (5, CA-8)",
+        "CPUWeight=": "peso de CPU (5)",
+        "Restart=always": "la API vuelve sola (9)",
+        "WantedBy=default.target": "arranca sin sesion abierta (CA-2)",
+        "EnvironmentFile=": "el secreto lo lee la unidad, no el perfil (8)",
+        "--proxy-headers": "cabeceras de reenvio (7.1)",
+        "--forwarded-allow-ips=127.0.0.1": "cabeceras de reenvio (7.1)",
+        "127.0.0.1:8080": "la API solo escucha en bucle local (7, CA-4)",
+    },
+    _VHOST: {
+        # Sin esto no hay streaming, solo la ilusion: nginx bufferea por
+        # defecto y la latencia de primer token pasa a ser la de respuesta
+        # completa, sin un solo error en los registros (7.1).
+        "proxy_buffering off": "sin esto no hay streaming (7.1, CA-13)",
+        "proxy_cache off": "sin cache sobre el flujo (7.1)",
+        "gzip off": "comprimir tambien bufferea (7.1)",
+        "proxy_read_timeout 300s": "el defecto de 60s corta respuestas largas (7.1)",
+        "proxy_http_version 1.1": "requisito de la conexion persistente (7.1)",
+        # La expresion regular cubre /v1/chat/stream y /v1/responses: con la
+        # ruta literal, el endpoint que registra la plataforma externa caia
+        # en la ubicacion generica, con el buffer activo (7.1).
+        "chat/stream|responses": "la ubicacion cubre los dos endpoints (7.1, CA-19)",
+    },
+    _DESPLIEGUE: {
+        # Las exclusiones no son higiene, son seguridad (6).
+        "--exclude='.env'": "un .env de desarrollo no viaja al servidor (6, CA-10)",
+        "--exclude='corpus/'": "el corpus vive en el VPS (6, RFC-0016 3.3, CA-10)",
+        "--exclude='.git'": "el historial no viaja al servidor (6)",
+        # `mv -Tf` sobre un enlace simbolico es atomico: no existe un instante
+        # en el que `current` apunte a medias (6).
+        "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
+        "alembic upgrade head": "la migracion corre ANTES de conmutar (9, CA-6)",
+    },
+}
+
+# RFC-0020 7: "Que la API escuche en 0.0.0.0 es el fallo grave de esta
+# topologia" -- saltaria nginx y con el el TLS. Un `--host 0.0.0.0` copiado
+# de un tutorial no falla: el servicio responde igual.
+_PROHIBIDO_EN_DESPLIEGUE = {
+    "0.0.0.0": "la API o la base escucharian fuera del bucle local (7, CA-4)"
+}
+
+
+def _artefactos_de_despliegue() -> list[str]:
+    """RFC-0020: lo que se envia al VPS trae lo que el RFC exige."""
+    hallazgos = []
+    for archivo, directivas in _ARTEFACTOS_DE_DESPLIEGUE.items():
+        if not archivo.exists():
+            hallazgos.append(f"{archivo} -- no existe (RFC-0020)")
+            continue
+        contenido = archivo.read_text(encoding="utf-8")
+        hallazgos += [
+            f"{archivo} -- falta {directiva!r}: {motivo}"
+            for directiva, motivo in directivas.items()
+            if directiva not in contenido
+        ]
+        hallazgos += [
+            f"{archivo} -- contiene {prohibido!r}: {motivo}"
+            for prohibido, motivo in _PROHIBIDO_EN_DESPLIEGUE.items()
+            if prohibido in contenido
+        ]
+    return hallazgos
+
+
+@task
+def despliegue(c):
+    """Los artefactos de RFC-0020 declaran lo que el RFC exige."""
+    hallazgos = _artefactos_de_despliegue()
+    if hallazgos:
+        detalle = "\n  ".join(hallazgos)
+        raise SystemExit(f"Artefactos de despliegue incompletos (RFC-0020):\n  {detalle}")
+
+
 @task
 def lint(c):
     # Acotado a codigo Python: "ruff format ." tambien reformatea los
@@ -127,6 +225,7 @@ def lint(c):
     c.run(f"ruff format --check {_PY_PATHS}")
     c.run("mypy app/ migrations/")
     prohibiciones(c)
+    despliegue(c)
 
 
 @task
