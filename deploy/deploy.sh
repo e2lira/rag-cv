@@ -28,6 +28,18 @@ ORIGEN="$(mktemp -d)"
 trap 'rm -rf "${ORIGEN}"' EXIT
 git archive "${SHA}" | tar -x -C "${ORIGEN}"
 
+# `requirements.lock` NO vive en el repositorio: se genera aqui desde
+# `uv.lock`, que es la unica fuente de verdad de las versiones. Un lock
+# committeado aparte deriva del real sin que nada falle, y el despliegue
+# instalaria versiones distintas de las que el CI valido.
+#
+# Queda dentro del arbol de la release, asi que se archiva con ella (§5.1
+# #10, el sustituto del SBOM) y `pip-audit` puede correr sobre el (CA-12).
+echo "==> Generando requirements.lock desde uv.lock"
+uv export --format requirements-txt --no-dev --no-emit-project \
+    --project "${ORIGEN}" > "${ORIGEN}/requirements.lock"
+wc -l < "${ORIGEN}/requirements.lock"
+
 # LAS EXCLUSIONES NO SON HIGIENE, SON SEGURIDAD (§6).
 #
 #   .env     Sin excluirlo, un .env de desarrollo viajaria dentro del arbol
