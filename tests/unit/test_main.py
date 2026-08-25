@@ -15,7 +15,17 @@ from app.main import app
 pytestmark = pytest.mark.unit
 
 
-def test_readyz_returns_200() -> None:
+def test_readyz_responds_with_the_contract_shape() -> None:
+    """RFC-0011 CA-5, adaptada al contrato real de `/readyz`.
+
+    `/readyz` dejo de ser el marcador de posicion de RFC-0021 y pasa a ser
+    el de **RFC-0005 3.1** -- lo dice el propio RFC-0005 11, al mover CA-13
+    a RFC-0021: "El `/readyz` con contrato real (3) sigue siendo de este
+    RFC". Sin `lifespan` no hay pool, asi que la respuesta honesta es
+    `not_ready`; lo que esta prueba conserva de CA-5 es que **la ruta
+    existe y responde**. El `200` con todo sano lo cubren la prueba de
+    abajo (con `lifespan`) y `test_health.py` contra una base real.
+    """
     # TestClient(app) sin "with" no ejecuta el lifespan a proposito: pytest
     # en Windows arranca su propio ProactorEventLoop (no pasa por
     # app/dev_server.py, que es quien fija la politica antes de crear
@@ -27,7 +37,11 @@ def test_readyz_returns_200() -> None:
     # se prueba la ruta, sin arrancar nada.
     client = TestClient(app)
     response = client.get("/readyz")
-    assert response.status_code == 200
+
+    assert response.status_code != 404
+    cuerpo = response.json()
+    assert cuerpo["status"] in ("ready", "not_ready")
+    assert set(cuerpo["checks"]) == {"database", "corpus_indexed", "config"}
 
 
 def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,11 +54,32 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
     lifespan no invocara ninguna)."""
     calls: list[str] = []
 
+    class _FakeCursor:
+        def execute(self, *args: Any, **kwargs: Any) -> None:
+            return None
+
+        def fetchone(self) -> tuple[bool]:
+            # Corpus indexado: lo que /readyz consulta para su tercera
+            # comprobacion (RFC-0005 3.1).
+            return (True,)
+
+        def __enter__(self) -> "_FakeCursor":
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            return None
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
     class _FakePool:
-        def connection(self) -> Any:
+        # `timeout` no es opcional por comodidad: /readyz acota la
+        # adquisicion para que su 503 llegue antes de que la sonda lo mate.
+        def connection(self, timeout: float | None = None) -> Any:
             class _Ctx:
-                def __enter__(self) -> None:
-                    return None
+                def __enter__(self) -> _FakeConn:
+                    return _FakeConn()
 
                 def __exit__(self, *exc: Any) -> None:
                     return None
