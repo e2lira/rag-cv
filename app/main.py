@@ -3,7 +3,10 @@
 La aplicacion real -- RFC-0021: el lifespan valida el arranque, y si algo
 esta mal no arranca. app/dev_server.py es el lanzador de DEV que fija la
 politica del bucle de eventos antes de arrancar esto (RFC-0011 #5.1).
-RFC-0005 amplia /readyz con su contrato real.
+
+El router, el manejo de errores y la politica de /docs los arma
+`app/api/app_factory.py` (RFC-0005 9); aqui queda el arranque validado y el
+estado que las dependencias de `/v1/*` leen (claves, cuotas, pool).
 """
 
 from collections.abc import AsyncIterator
@@ -12,9 +15,11 @@ from contextlib import asynccontextmanager
 import httpx2
 from fastapi import FastAPI
 
+from app.api.app_factory import create_app
 from app.core.engine import build_pool
 from app.core.migrations import resolve_expected_head
 from app.core.platform import assert_compatible_loop
+from app.core.security import load_api_keys
 from app.core.settings import Settings
 from app.core.startup_checks import (
     check_alembic_head,
@@ -27,13 +32,20 @@ from app.retrieval.embedder import build_embedder
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Paso 0, y va primero (RFC-0021 5): unica defensa de RFC-0011 CA-4
     # dentro de este RFC. Si esto se moviera despues del pool, el CLI de
     # uvicorn en Windows fallaria por la base y no por el bucle.
     assert_compatible_loop()
 
     settings = Settings()
+
+    # Antes que el pool: sin claves utilizables el proceso no arranca
+    # (RFC-0005 10, CA-25), y no tiene sentido abrir conexiones para una
+    # API que no podria autenticar a nadie.
+    app.state.api_keys = load_api_keys(settings.api_keys_json)
+    app.state.rate_limit_per_minute = settings.rate_limit_per_minute
+    app.state.rate_limit_per_day = settings.rate_limit_per_day
 
     async with httpx2.AsyncClient() as http:
         # No gasta dinero: la fabrica instancia, no llama a la API
@@ -43,6 +55,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         embedder = build_embedder(settings, http)
 
     pool = build_pool(settings.database_url.get_secret_value())
+    app.state.db_pool = pool
     try:
         with pool.connection() as conn:
             check_extensions_present(conn)
@@ -56,9 +69,4 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         pool.close()
 
 
-app = FastAPI(lifespan=lifespan)
-
-
-@app.get("/readyz")
-async def readyz() -> dict[str, str]:
-    return {"status": "ok"}
+app = create_app(lifespan=lifespan)

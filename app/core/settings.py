@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     # justo para comprobar que corre lo que se dijo que corre.
     commit_sha: str = Field(alias="COMMIT_SHA", default="")
 
+    # API REST (RFC-0005). Las claves viven en el .env del despliegue, no en
+    # un secreto remoto (6.1): ADR-0006 saco AWS del alcance de la PoC.
+    api_keys_json: str = Field(alias="API_KEYS_JSON", default="")
+    rate_limit_per_minute: int = Field(alias="RATE_LIMIT_PER_MINUTE", default=30, gt=0)
+    rate_limit_per_day: int = Field(alias="RATE_LIMIT_PER_DAY", default=1000, gt=0)
+    # Vacia por defecto y a proposito (9, A-8): abrir `*` seria regalar la
+    # clave al primero que inspeccione una pagina.
+    cors_allowed_origins: str = Field(alias="CORS_ALLOWED_ORIGINS", default="")
+
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
     # Condicional a PROVEEDOR=anthropic (RFC-0013 4), no incondicional como
     # antes de este RFC: un despliegue con PROVEEDOR=bedrock u
