@@ -126,6 +126,43 @@ def test_healthz_survives_db_outage(database_url: str, monkeypatch: pytest.Monke
     assert respuesta.json() == {"status": "ok"}
 
 
+class _PoolEspia:
+    """Pool que delata cualquier intento de uso.
+
+    Un doble y no la base real porque lo que CA-21 exige verificar es una
+    **ausencia**: que no se abra conexion. Contra una base viva eso no se
+    observa -- la respuesta es identica -- y contra una muerta tampoco,
+    porque `build_readiness` se traga la excepcion y `/healthz` seguiria
+    devolviendo 200. La unica forma de verlo es preguntarle al pool.
+    """
+
+    def __init__(self) -> None:
+        self.usado = False
+
+    def connection(self, *args: object, **kwargs: object) -> object:
+        self.usado = True
+        raise AssertionError("/healthz no debe abrir conexiones (RFC-0005 3.1, CA-21)")
+
+
+def test_healthz_opens_no_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CA-21, la parte que el 200 no prueba: `/healthz` no toca el pool.
+
+    Comprobar solo el 200 con la base caida deja pasar un `/healthz` que
+    abre conexion y se come el fallo: responde 200 igual, pero paga la
+    espera del pool en cada sondeo de `systemd` y de nginx -- y con ella,
+    la latencia que RNF-1 acota.
+    """
+    _entorno(monkeypatch, _URL_MUERTA)
+    app = create_app()
+    espia = _PoolEspia()
+    app.state.db_pool = espia
+
+    respuesta = TestClient(app, raise_server_exceptions=False).get("/healthz")
+
+    assert respuesta.status_code == 200
+    assert espia.usado is False, "/healthz abrio una conexion"
+
+
 def test_health_endpoints_need_no_api_key(
     database_url: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
