@@ -1,6 +1,6 @@
 # rag-cv
 
-`rag-cv` será un agente conversacional que responde sobre la trayectoria profesional contenida en un CV. El repositorio está **en fase de planificación y arquitectura**: aún no contiene la aplicación Python ni un framework de migraciones o pipeline de indexación; sí incluye DDL inicial de bootstrap PostgreSQL para QA y PROD. Este README define el alcance técnico que se implementará.
+`rag-cv` es un agente conversacional que responde sobre la trayectoria profesional contenida en un CV, fundamentando cada respuesta en un corpus verificable. El repositorio está **en implementación activa** bajo la metodología ADU: ya contiene código Python en `app/` (núcleo y configuración, ingesta, recuperación híbrida, embeddings y proveedores) y migraciones de esquema con Alembic en `migrations/`. El DDL de bootstrap inicial fue **retirado** (RFC-0006 §2.2). Este README define el alcance técnico completo, cuyo destino final es AWS.
 
 > ## Alcance vigente — leer antes que nada
 >
@@ -25,20 +25,20 @@
 >
 > Donde este README y RFC-0016 difieran sobre qué se ejecuta hoy, **prevalece RFC-0016**.
 
-## Estado y resultado de la auditoría
+## Estado actual de la implementación
 
-La propuesta es viable con algunos ajustes obligatorios antes de construir:
+El repositorio está **en implementación activa**, una rama y un PR por RFC, bajo TDD estricto
+(RFC-0014). Ya existe código Python de producción en `app/` (núcleo y configuración, ingesta,
+recuperación híbrida, embeddings y proveedores) y migraciones de esquema en `migrations/`.
+Quedan por construir la capa de API (RFC-0005) y la de agente Strands (RFC-0004), y por ejecutar
+la evaluación (RFC-0009) y el despliegue a QA (RFC-0020, RFC-0008, RFC-0010). La capa de agente
+está diseñada para usar **Strands Agents SDK** confinado a `app/agent/` (ADR-0003), y el proveedor
+de generación y de embeddings se resuelve por configuración, nunca por código (ADR-0005, RNF-13).
 
-- Aplicar SOLID y Clean Architecture desde el primer caso de uso; no acoplar la lógica del CV, RAG ni Bedrock a FastAPI, SQLAlchemy o AWS.
-- Tratar S3 como fuente autoritativa del CV en producción y conservar una trazabilidad de la versión que produjo cada índice.
-- Reindexar de forma idempotente cuando cambie el contenido real del CV; una actualización normal del índice HNSW no equivale a ejecutar `VACUUM` o reconstruirlo.
-- La línea base aceptada es `us-east-2` (ADR-0005). Terraform y variables de entorno deben mantener región, IAM, red y perfil de inferencia alineados por ambiente; los ejemplos antiguos que citan `us-east-1` deben normalizarse, no interpretarse como una segunda decisión vigente.
-
-### Verificación: Python, Strands Agents y Amazon Bedrock
-
-La arquitectura **sí los contempla**, pero no están implementados todavía: el repositorio no contiene código Python. La evidencia de diseño es la [ADR-0003](docs/adr/ADR-0003-framework-de-agente.md), aceptada, que define **Strands Agents SDK** y `BedrockModel`, confinados al adaptador `app/agent/`; y la [ADR-0005](docs/adr/ADR-0005-proveedor-de-generacion.md), que establece Bedrock como proveedor inicial por configuración. La conversación de referencia también describe el despliegue Python + Strands + Bedrock.
-
-Esto conserva Clean Architecture: Domain y Application declaran puertos para generación, embeddings y recuperación; el adaptador de infraestructura usa Strands y Amazon Bedrock. La futura fábrica de proveedores no autoriza que los casos de uso dependan del SDK ni de `boto3`. Para PROD, Bedrock será la configuración base y se accederá mediante el rol IAM; cualquier cambio de proveedor requerirá evaluación y aprobación explícitas.
+El **orden de implementación** de los RFCs y el estado vigente/diferido de cada documento están en
+[`docs/PLAN-DE-EJECUCION.md`](docs/PLAN-DE-EJECUCION.md) y en el índice de
+[`docs/README.md`](docs/README.md). Este README describe el **alcance técnico completo** (destino
+AWS), no el avance de cada RFC; donde este README y RFC-0016 difieran, **prevalece RFC-0016**.
 
 ## Arquitectura objetivo
 
@@ -53,10 +53,10 @@ Esto conserva Clean Architecture: Domain y Application declaran puertos para gen
 
 Las dependencias apuntan hacia el centro. Los casos de uso reciben interfaces (puertos) y la composición de dependencias ocurre en el borde de infraestructura. Esto mantiene testeable el núcleo y permite sustituir proveedores sin reescribir la lógica del negocio.
 
-### Stack previsto
+### Stack
 
 - **Python** con FastAPI para la API y Strands para la orquestación del agente.
-- **Amazon Bedrock** para los modelos generativos y de embeddings definidos en la conversación de arquitectura AWS.
+- **Modelos por configuración.** En PROD (diferido), **Amazon Bedrock**: Claude Haiku 4.5 para generación y Titan Text Embeddings V2 para embeddings. En la PoC vigente, generación por la **API de Anthropic** (`claude-haiku-4-5`) y embeddings con **`text-embedding-3-small` de OpenAI** (RFC-0017, RFC-0018).
 - **PostgreSQL + pgvector** para metadatos y búsqueda vectorial; HNSW para recuperación semántica y Reciprocal Rank Fusion (RRF) para combinar señales léxicas y vectoriales.
 - **AWS S3** para almacenar el CV fuente en producción.
 - **PROD en AWS:** contenedor Docker en AWS App Runner, publicado desde Amazon ECR; Amazon RDS PostgreSQL con pgvector privado, conectado mediante VPC Connector y segregación de red. Las subredes privadas del conector tendrán salida obligatoria, decidida por ambiente en Terraform: NAT Gateway administrado o AWS PrivateLink/VPC endpoints, según aplique a Bedrock Runtime, S3, Secrets Manager, ECR y dependencias API. Las rutas y security groups mantendrán mínimo privilegio. Terraform declarará esta infraestructura junto con S3, Bedrock, Secrets Manager y CloudWatch.
