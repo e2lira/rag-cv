@@ -225,6 +225,9 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # en el que `current` apunte a medias (6).
         "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
         "alembic upgrade head": "la migracion corre ANTES de conmutar (9, CA-6)",
+        # El directorio de la release NO tiene .env -- se purga a proposito
+        # (6) -- asi que la migracion necesita la variable en el entorno.
+        "set -a": "el despliegue carga el .env del operador antes de migrar (6, 8)",
         # `requirements.lock` no esta en el repositorio: se genera desde
         # `uv.lock`, que es la unica fuente de verdad de las versiones. Un
         # lock committeado aparte deriva del real sin que nada falle.

@@ -181,6 +181,15 @@ ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
   python3.12 -m venv .venv
   .venv/bin/pip install --require-hashes -r requirements.lock
 
+  # El .env del operador NO esta en el arbol de la release -- se purga a
+  # proposito (§6) -- asi que la migracion no lo encontraria por si sola.
+  # Se carga al entorno solo para este bloque: `alembic` resuelve la URL
+  # desde ahi (RFC-0006), y no se copia ningun secreto a la release.
+  set -a
+  # shellcheck disable=SC1091
+  . "${RAG_CV_HOME}/.env"
+  set +a
+
   # La migracion corre ANTES de conmutar el enlace. Si falla, `set -e` corta
   # aqui y `current` sigue apuntando a la release anterior, que sigue
   # corriendo (§9, CA-6). Ese orden es todo el mecanismo.

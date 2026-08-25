@@ -43,6 +43,25 @@ class BootstrapSettings(BaseSettings):
     cors_allowed_origins: str = Field(alias="CORS_ALLOWED_ORIGINS", default="")
 
 
+class MigrationSettings(BaseSettings):
+    """Lo unico que necesita `alembic` para migrar: la URL de la base.
+
+    Existe porque construir `Settings` completo exigiria la clave del
+    proveedor de embeddings y la de generacion, que no tienen nada que ver
+    con el esquema. Migrar dejaria de ser posible sin credenciales de
+    modelo, y en el despliegue la migracion corre ANTES de que el servicio
+    arranque -- justo para poder abortar sin tocar la release vigente
+    (RFC-0020 §9).
+
+    Sigue siendo la capa de configuracion la unica que lee el entorno
+    (RFC-0001 #4).
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    database_url: SecretStr = Field(alias="DATABASE_URL", min_length=1)
+
+
 class Settings(BootstrapSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
