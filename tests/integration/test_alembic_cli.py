@@ -54,13 +54,18 @@ def test_alembic_upgrade_works_from_the_command_line(database_url: str) -> None:
 
 
 def test_alembic_says_which_variable_falta_si_no_hay_url() -> None:
-    """Sin `DATABASE_URL`, el fallo tiene que nombrar la variable.
+    """Sin URL utilizable, el fallo tiene que nombrar la variable.
 
     El `KeyError: 'url'` original no decia nada util: mandaba a mirar
     `alembic.ini` cuando lo que faltaba era una variable de entorno. Un
     mensaje que no nombra la causa cuesta mas que el fallo.
+
+    Se pone **vacia** en vez de quitarla: borrarla del entorno no basta
+    porque el `.env` del repositorio la aporta igual, y la prueba pasaria
+    por la razon equivocada en la maquina de quien la escribio y fallaria
+    en un CI sin `.env`. Una variable vacia si gana al `.env`.
     """
-    entorno = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
+    entorno = {**os.environ, "DATABASE_URL": ""}
 
     resultado = subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
