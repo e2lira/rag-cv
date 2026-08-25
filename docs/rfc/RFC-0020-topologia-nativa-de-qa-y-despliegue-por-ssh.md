@@ -72,8 +72,10 @@ apt-get install -y postgresql-16 postgresql-16-pgvector python3.12-venv
 #     porque la configuracion regional se fija al crear la base.
 sudo -u postgres createdb ragcv \
   --encoding=UTF8 --locale-provider=icu --icu-locale=es-MX --template=template0
+# La locale de ICU se lee de daticulocale (PG 15-16) o datlocale (PG >= 17),
+# NUNCA de datcollate, que trae la de libc heredada del servidor (ADR-0019).
 sudo -u postgres psql -d ragcv -c \
-  "SELECT datcollate, datlocprovider FROM pg_database WHERE datname = 'ragcv'"
+  "SELECT datlocprovider, daticulocale FROM pg_database WHERE datname = 'ragcv'"
 
 # 3. Cortafuegos: VERIFICAR antes de tocar.
 #    Si el VPS trae panel de control, el cortafuegos puede estar gestionado por el:
