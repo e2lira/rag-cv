@@ -127,6 +127,7 @@ def prohibiciones(c):
 _UNIDAD = Path("deploy/rag-cv-api.service")
 _VHOST = Path("deploy/nginx/reto.qrimapp.com.conf")
 _DESPLIEGUE = Path("deploy/deploy.sh")
+_APROVISIONAMIENTO = Path("deploy/provision.sh")
 
 _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
     _UNIDAD: {
@@ -166,6 +167,16 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # ruta literal, el endpoint que registra la plataforma externa caia
         # en la ubicacion generica, con el buffer activo (7.1).
         "chat/stream|responses": "la ubicacion cubre los dos endpoints (7.1, CA-19)",
+    },
+    _APROVISIONAMIENTO: {
+        # Los tres fallos silenciosos de §4. Ninguno emite error: el sistema
+        # arranca, responde, y esta mal.
+        "--locale-provider=icu": "sin ICU es-MX la busqueda lexica pierde acentos (4, CA-16)",
+        "--icu-locale=es-MX": "la configuracion regional se fija AL CREAR la base (4, CA-16)",
+        "enable-linger": "sin linger no hay servicio tras un reinicio (4, CA-2)",
+        "listen_addresses": "PostgreSQL solo por bucle local (7, CA-4)",
+        "datlocprovider": "el aprovisionamiento VERIFICA el ICU, no confia (CA-16)",
+        "install -m 600": "el .env nace con permisos restrictivos (8, CA-15)",
     },
     _DESPLIEGUE: {
         # Las exclusiones no son higiene, son seguridad (6).
