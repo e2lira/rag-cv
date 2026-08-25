@@ -5,14 +5,25 @@ del resultado del servicio a la respuesta de 4, y la traduccion de sus fallos
 a los codigos de 8. El turno lo orquesta `app/services/chat.py`.
 """
 
+from collections.abc import AsyncIterator
+
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.exceptions import HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.api.deps import enforce_body_limit, rate_limiter, require_role
 from app.api.errors import current_request_id
 from app.api.schemas import ChatRequest, ChatResponse
+from app.api.sse import SSE_HEADERS, SSE_MEDIA_TYPE, format_event
 from app.core.security import ApiKey
-from app.services.chat import ConversationNotFound, TurnFailed, run_turn
+from app.services.chat import (
+    ConversationNotFound,
+    TurnFailed,
+    TurnResult,
+    resolve_conversation,
+    run_turn,
+    run_turn_events,
+)
 
 router = APIRouter(prefix="/v1")
 
@@ -63,6 +74,57 @@ async def chat(
     # contenido de una conversacion privada; que un intermediario la guarde
     # es exponerla a quien no la pidio.
     response.headers["Cache-Control"] = "no-store"
+    return _respuesta_de_turno(turno)
+
+
+@router.post("/chat/stream", dependencies=[Depends(enforce_body_limit)])
+async def chat_stream(
+    peticion: ChatRequest,
+    request: Request,
+    response: Response,
+    clave: ApiKey = Depends(require_role("read")),
+) -> StreamingResponse:
+    """El mismo turno, evento a evento (RFC-0005 5, CA-11).
+
+    La cuota y la pertenencia de la conversacion se resuelven **antes** de
+    abrir el flujo: una vez enviado el primer byte ya no hay forma de
+    responder `429` ni `404` -- el estado HTTP viaja en la cabecera.
+    """
+    _cuota(request, response, clave)
+    conversacion = _conversacion(request, peticion, clave)
+    request_id = current_request_id(request)
+
+    async def _flujo() -> AsyncIterator[str]:
+        async for evento in run_turn_events(
+            request.app.state.db_pool,
+            request.app.state.agent,
+            message=peticion.message,
+            conversation_id=conversacion,
+            key_id=clave.id,
+            request_id=request_id,
+        ):
+            yield format_event(evento["event"], evento["data"])
+
+    return StreamingResponse(
+        _flujo(),
+        media_type=SSE_MEDIA_TYPE,
+        headers={**SSE_HEADERS, **dict(response.headers)},
+    )
+
+
+def _conversacion(request: Request, peticion: ChatRequest, clave: ApiKey) -> str:
+    """Resuelve la conversacion antes de abrir el flujo (RFC-0005 5)."""
+    try:
+        return resolve_conversation(
+            request.app.state.db_pool,
+            conversation_id=str(peticion.conversation_id) if peticion.conversation_id else None,
+            key_id=clave.id,
+        )
+    except ConversationNotFound as exc:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND_MESSAGE) from exc
+
+
+def _respuesta_de_turno(turno: TurnResult) -> ChatResponse:
     return ChatResponse(
         conversation_id=turno.conversation_id,
         message_id=turno.message_id,
