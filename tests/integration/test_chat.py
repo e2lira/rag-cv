@@ -140,6 +140,67 @@ def test_chat_persists_the_turn(database_url: str) -> None:
     assert filas[1][1] == _RESPUESTA
 
 
+def test_a_conversation_of_another_key_is_404(database_url: str) -> None:
+    """CA-8: una conversacion ajena devuelve `404`, **no `403`**.
+
+    La diferencia no es cosmetica. Un `403` dice "existe, pero no es tuya",
+    y eso ya es informacion sobre las conversaciones de otro: con el
+    identificador se puede sondear cuales existen. El `404` es
+    indistinguible de una conversacion que nunca existio.
+    """
+    with psycopg.connect(database_url) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO conversations (key_id) VALUES ('k_ajena') RETURNING id")
+        fila = cur.fetchone()
+        assert fila is not None
+        ajena = str(fila[0])
+        conn.commit()
+
+    respuesta = _cliente(database_url).post(
+        "/v1/chat",
+        headers={"X-API-Key": _CLAVE},
+        json={"message": "Que experiencia tiene?", "conversation_id": ajena},
+    )
+
+    assert respuesta.status_code == 404, respuesta.text
+    assert respuesta.json()["error"]["code"] == "not_found"
+
+
+def test_an_unknown_conversation_is_404_too(database_url: str) -> None:
+    """CA-8, la otra mitad: inexistente y ajena responden **igual**.
+
+    Si difirieran -- en codigo, en mensaje o en tiempo -- la diferencia
+    seria el oraculo que el `404` existe para cerrar.
+    """
+    inexistente = str(uuid.uuid4())
+
+    respuesta = _cliente(database_url).post(
+        "/v1/chat",
+        headers={"X-API-Key": _CLAVE},
+        json={"message": "Que experiencia tiene?", "conversation_id": inexistente},
+    )
+
+    assert respuesta.status_code == 404
+    assert respuesta.json()["error"]["code"] == "not_found"
+
+
+def test_a_conversation_of_the_same_key_continues(database_url: str) -> None:
+    """CA-8 no puede cumplirse cerrandolo todo: la conversacion **propia**
+    sigue, y el turno nuevo se anade a la misma."""
+    cliente = _cliente(database_url, guion=[*_guion_con_busqueda(), *_guion_con_busqueda()])
+    primero = cliente.post(
+        "/v1/chat", headers={"X-API-Key": _CLAVE}, json={"message": "Primera pregunta"}
+    ).json()
+
+    segundo = cliente.post(
+        "/v1/chat",
+        headers={"X-API-Key": _CLAVE},
+        json={"message": "Segunda pregunta", "conversation_id": primero["conversation_id"]},
+    )
+
+    assert segundo.status_code == 200, segundo.text
+    assert segundo.json()["conversation_id"] == primero["conversation_id"]
+
+
 def test_chat_rejects_an_empty_message(database_url: str) -> None:
     """RFC-0005 4 y 8: `message` vacio tras `strip()` es `400 invalid_request`,
     no un turno que gasta tokens en preguntarle al modelo por nada."""
