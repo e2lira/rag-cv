@@ -9,7 +9,7 @@ peticion nunca fue valida.
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_MESSAGE_CHARS = 2000
 
@@ -43,3 +43,22 @@ class ChatResponse(BaseModel):
     grounded: bool
     usage: dict[str, Any]
     meta: dict[str, Any]
+
+
+class ResponsesRequest(BaseModel):
+    """Cuerpo de `/v1/responses` (RFC-0005 13.1).
+
+    `extra="allow"` y no `"forbid"`: un campo fuera de alcance **no produce
+    error** (13.6). Un `400` ante un campo opcional que la plataforma manda
+    por defecto haria el endpoint inservible por una razon cosmetica, y la
+    plataforma no puede saber cuales aceptamos antes de registrarnos.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    # Obligatorio en la especificacion, y su valor se **ignora** (13.2):
+    # honrarlo seria enrutado dinamico por peticion, que RFC-0013 6 prohibe.
+    model: str
+    input: str | list[dict[str, Any]]
+    stream: bool = False
+    previous_response_id: str | None = None

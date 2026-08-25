@@ -37,3 +37,21 @@ def conversation_belongs_to(conn: Connection, *, conversation_id: str, key_id: s
             (conversation_id, key_id),
         )
         return cur.fetchone() is not None
+
+
+def conversation_of_message(conn: Connection, *, message_id: str, key_id: str) -> str | None:
+    """La conversacion de un mensaje, si es de esa clave (RFC-0005 13.1).
+
+    Lo usa `previous_response_id`, que nombra una respuesta y tiene que
+    continuar **su** conversacion. El `key_id` va en el mismo `WHERE` por la
+    razon de `conversation_belongs_to`: la fila ajena no llega nunca.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT m.conversation_id FROM messages m "
+            "JOIN conversations c ON c.id = m.conversation_id "
+            "WHERE m.id = %s AND c.key_id = %s",
+            (message_id, key_id),
+        )
+        fila = cur.fetchone()
+        return str(fila[0]) if fila else None
