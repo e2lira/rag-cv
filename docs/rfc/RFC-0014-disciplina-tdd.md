@@ -440,6 +440,8 @@ Cada una es un hallazgo del Auditor con la severidad indicada.
 | P-9 | Modificar un test para que pase, en vez de arreglar el código | Invierte la relación entre especificación e implementación | Bloqueante |
 | P-10 | Fechas, UUID o aleatoriedad sin fijar | Rojo intermitente | Menor |
 | P-11 | Cualquier prueba automática que llame a una **API de pago** (OpenAI, Anthropic) | Se ejecuta en cada `invoke test`, cada *push* y los dos *jobs* de CI: el gasto se multiplica por la frecuencia. Y una prueba que depende de un tercero deja de medir nuestro código — se pone roja cuando el proveedor falla, y la reacción es desactivarla (ADR-0012) | Bloqueante |
+| P-12 | Verificar un criterio enunciado sobre el **sistema** con una prueba que solo ejercita un **componente aislado** | El componente puede ser correcto y el sistema fallar igual: la prueba pasa, el criterio figura cumplido, y el defecto que nombra sigue ahí. Ver §7.1 | Bloqueante |
+| P-13 | Afirmar sobre la **respuesta** cuando el criterio habla de una **ausencia** o de una **continuidad** | La respuesta es idéntica en los dos mundos, así que la aserción no distingue el sistema correcto del roto. La aserción va sobre lo que recibe el colaborador. Ver §7.1 | Bloqueante |
 
 Sobre **P-9**: cambiar un test es legítimo **solo** cuando el criterio de aceptación del RFC ha
 cambiado, y entonces el RFC se modifica primero. Un test modificado en el mismo commit que la
@@ -459,6 +461,42 @@ que llame a una API de pago desde cualquier otro RFC sigue siendo Bloqueante, au
 > mientras que RFC-0009 §6 corre la suite `pr` en **cada PR** como job de RFC-0008 —lo que exige
 > exactamente esas credenciales—. Las dos no pueden ser ciertas a la vez. **Dueño: RFC-0009, punto
 > 10**; es parte de su Definition of Ready y se decide entonces si se enmienda ADR-0012 o RFC-0009 §6.
+
+### 7.1 El nivel de la aserción tiene que ser el del criterio (P-12, P-13)
+
+Estas dos prohibiciones nacen de **tres defectos encontrados el mismo día** en la entrega de
+RFC-0005, todos con la misma forma: una prueba en verde, un criterio marcado como cumplido, y el
+defecto que ese criterio nombra vivo en producción.
+
+| Criterio | Lo que decía | Lo que la prueba afirmaba | Por qué pasaba con el defecto puesto |
+| :--- | :--- | :--- | :--- |
+| RFC-0005 CA-21 | «`/healthz` sigue en 200 con PostgreSQL caído (**no abre conexiones**)» | Que devolvía `200` con la base caída | `build_readiness` se traga la excepción: un `/healthz` que abre conexión devuelve `200` igual |
+| RFC-0005 CA-19 | «`previous_response_id` continúa la conversación: el segundo turno **ve** el primero» | Que hubo dos llamadas al modelo | Hay dos llamadas continúe la conversación o no |
+| RFC-0004 CA-5 | «Dos conversaciones distintas **no comparten historial**» | Que `load_history` filtra por `conversation_id` | La función filtra bien; la fuga ocurre en el `Agent`, que la prueba no construye (ADR-0017) |
+
+Las dos reglas que se derivan:
+
+**P-12 — el nivel.** Un criterio enunciado sobre el sistema se verifica **sobre el sistema**. CA-5
+no dice «`load_history` filtra por conversación»: dice que dos conversaciones no comparten
+historial. Entre esas dos frases cabe un defecto entero. Probar el componente aislado sigue siendo
+útil y se conserva, pero **no cierra** el criterio: es una afirmación sobre la parte con el nombre
+de la afirmación sobre el todo.
+
+**P-13 — el objeto.** Cuando el criterio habla de una **ausencia** («no abre», «no comparte», «no
+registra») o de una **continuidad** («el segundo ve al primero»), la respuesta observable es
+idéntica con el defecto y sin él. La aserción tiene que interrogar al **colaborador**: un doble que
+delata el uso, o los mensajes que el modelo recibe de verdad.
+
+**Guarda obligatoria.** Un criterio de ausencia necesita su par: la prueba de que el sistema no
+cumple el criterio *cerrándolo todo*. «`/healthz` no abre conexión» sin «`/readyz` sí la abre» se
+satisface borrando la funcionalidad; «una conversación no ve a la otra» sin «la propia sí continúa»
+se satisface no cargando nunca el historial. **Una prohibición sin su guarda no es un criterio: es
+media especificación.**
+
+**Cómo lo detecta el Auditor.** Es exactamente lo que la reversión de §6.3 mide: si revertir el
+mecanismo que el criterio protege **no pone roja ninguna prueba**, el criterio no está verificado,
+por muy verde que esté la suite. Los tres casos de la tabla salieron de ahí — el primero de una
+reversión con **cero fallos**.
 
 ## 8. Cobertura
 
