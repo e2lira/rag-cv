@@ -14,12 +14,43 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
+class BootstrapSettings(BaseSettings):
+    """Lo que FastAPI necesita **al construirse**, y solo eso.
+
+    Existe porque `Settings` completo no puede construirse en tiempo de
+    importacion de `app.main`: validaria la configuracion entera antes de
+    `assert_compatible_loop()`, y el primer fallo visible al arrancar con el
+    CLI de uvicorn seria de configuracion y no del bucle de eventos --
+    exactamente lo que RFC-0011 CA-4 exige que NO pase (RFC-0021 5).
+
+    `Settings` hereda de esta clase, asi que los campos se declaran una sola
+    vez: no hay dos fuentes de verdad para el mismo alias, y la lectura del
+    entorno sigue ocurriendo solo aqui (RFC-0001 4).
+    """
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # RFC-0001 4: dev | qa | prod. RFC-0005 9 lo usa para apagar /docs en
     # PROD; el valor por defecto es el de DEV (RFC-0011 4.5, .env.example).
     app_env: str = Field(alias="APP_ENV", default="dev")
+    # El commit desplegado, que /readyz publica (RFC-0005 3.1, RFC-0020 CA-5).
+    # Lo inyecta el despliegue en el artefacto de la release; en DEV va
+    # vacio y el campo sale null -- no se inventa un valor, porque existe
+    # justo para comprobar que corre lo que se dijo que corre.
+    commit_sha: str = Field(alias="COMMIT_SHA", default="")
+    # Vacia por defecto y a proposito (RFC-0005 9, A-8): abrir `*` seria
+    # regalar la clave al primero que inspeccione una pagina.
+    cors_allowed_origins: str = Field(alias="CORS_ALLOWED_ORIGINS", default="")
+
+
+class Settings(BootstrapSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    # API REST (RFC-0005). Las claves viven en el .env del despliegue, no en
+    # un secreto remoto (6.1): ADR-0006 saco AWS del alcance de la PoC.
+    api_keys_json: str = Field(alias="API_KEYS_JSON", default="")
+    rate_limit_per_minute: int = Field(alias="RATE_LIMIT_PER_MINUTE", default=30, gt=0)
+    rate_limit_per_day: int = Field(alias="RATE_LIMIT_PER_DAY", default=1000, gt=0)
 
     openai_api_key: SecretStr = Field(alias="OPENAI_API_KEY", min_length=1)
     # Condicional a PROVEEDOR=anthropic (RFC-0013 4), no incondicional como

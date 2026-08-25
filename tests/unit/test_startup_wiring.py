@@ -51,7 +51,17 @@ def patch_successful_startup(
         main_module,
         "Settings",
         lambda: SimpleNamespace(
-            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+            database_url=SecretStr("postgresql://test/test"),
+            embedding_dim=1536,
+            # Campos que el lifespan pasa al estado de la aplicacion
+            # (RFC-0005 6.1 y 8). El doble los trae para no acoplar estas
+            # pruebas -- que verifican el ORDEN de las comprobaciones de
+            # RFC-0021 5 -- a lo que RFC-0005 cablee.
+            api_keys_json='{"keys":[{"id":"k1","hash":"'
+            + "0" * 64
+            + '","role":"read","label":"t","active":true}]}',
+            rate_limit_per_minute=60,
+            rate_limit_per_day=1000,
         ),
         raising=False,
     )
