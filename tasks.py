@@ -179,10 +179,13 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "install -m 600": "el .env nace con permisos restrictivos (8, CA-15)",
     },
     _DESPLIEGUE: {
-        # Las exclusiones no son higiene, son seguridad (6).
-        "--exclude='.env'": "un .env de desarrollo no viaja al servidor (6, CA-10)",
-        "--exclude='corpus/'": "el corpus vive en el VPS (6, RFC-0016 3.3, CA-10)",
-        "--exclude='.git'": "el historial no viaja al servidor (6)",
+        # Las exclusiones no son higiene, son seguridad (6). Se comprueba la
+        # PROPIEDAD -- que el arbol enviado no las lleve -- y no las banderas
+        # de una herramienta concreta: `rsync` no existe en Git Bash de
+        # Windows, y atar el gate al comando lo haria fallar por el motivo
+        # equivocado.
+        "_purgar_del_arbol": "el .env y el corpus se borran del arbol enviado (6, CA-10)",
+        "PURGA=": "la lista de lo que nunca viaja al servidor (6, CA-10)",
         # `mv -Tf` sobre un enlace simbolico es atomico: no existe un instante
         # en el que `current` apunte a medias (6).
         "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
