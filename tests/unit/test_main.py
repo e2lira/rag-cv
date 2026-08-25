@@ -2,6 +2,7 @@
 Windows. RFC-0021 CA-8: ese /readyz sigue respondiendo una vez que el
 arranque validado (RFC-0021) termino, no antes."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -104,6 +105,7 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
             api_keys_json=_CLAVES,
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
+            corpus_path=Path("corpus/cv.md"),
         ),
         raising=False,
     )
@@ -115,6 +117,12 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
+    # Doblado por la misma razon que en test_startup_wiring: construir el
+    # agente de verdad exigiria credenciales del proveedor, y estas pruebas
+    # son sobre RFC-0011 CA-5 y RFC-0021 CA-8, no sobre RFC-0004.
+    monkeypatch.setattr(
+        main_module, "build_agent", lambda settings, persona: object(), raising=False
+    )
     monkeypatch.setattr(
         main_module,
         "check_extensions_present",
@@ -169,6 +177,7 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
             api_keys_json=_CLAVES,
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
+            corpus_path=Path("corpus/cv.md"),
         ),
         raising=False,
     )
