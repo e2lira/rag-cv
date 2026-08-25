@@ -165,6 +165,19 @@ el estado conversacional **no** se guarda en el objeto agente, sino que se pasa 
 en cada invocación (§7). Esto evita fugas de contexto entre usuarios distintos, que es el
 error más caro de esta arquitectura.
 
+> **Enmendado por ADR-0017.** El párrafo de arriba enuncia una regla —«una vez por proceso»— y la
+> razón que la justifica —«el estado conversacional no se guarda en el objeto agente»—, y con
+> `strands-agents 1.53` **la regla produce justo lo que la razón quería evitar**: el objeto `Agent`
+> acumula `self.messages` entre invocaciones, así que un agente por proceso va concatenando las
+> conversaciones de todos los usuarios, y rechaza dos invocaciones solapadas con
+> `ConcurrencyException`.
+>
+> Lo que se construye una vez por proceso es el **modelo** (`build_model`, en el `lifespan`, que es
+> lo que resuelve credenciales y cliente del proveedor). **El agente se construye por turno**,
+> alrededor de ese modelo y con `messages=load_history(conn, conversation_id)`. Ningún objeto de
+> vida larga guarda estado conversacional: el agente vive lo que vive el turno. La razón declarada
+> se conserva íntegra; lo que se corrige es el medio. Coste medido: 1,66 ms por turno.
+
 ### 6.1 Credenciales
 
 **Esta capa no maneja credenciales.** Las resuelve `build_model()` según la rama activa de
@@ -247,7 +260,7 @@ proveedor (I-9). La clasificación de disponibilidad ya existe y es reutilizable
 | CA-2 | Una pregunta factual dispara exactamente una llamada a `search_cv` | `test_agent.py::test_factual_one_tool_call` |
 | CA-3 | El agente nunca hace más de 2 llamadas a herramientas por turno | `test_agent.py::test_tool_call_cap` (con herramienta que siempre devuelve vacío) |
 | CA-4 | Con contexto vacío, la respuesta contiene una negativa explícita y ninguna afirmación factual | **Delegado a RFC-0009** — §11.1, ADR-0015 |
-| CA-5 | Dos conversaciones distintas no comparten historial | `test_agent.py::test_no_context_bleed` |
+| CA-5 | Dos conversaciones distintas no comparten historial | **Sobre el turno completo, no sobre `load_history`** (ADR-0017): se afirma sobre los mensajes que **recibe el modelo** en la segunda conversación. `test_agent.py::test_no_context_bleed` verifica el filtrado por `conversation_id` y se conserva, pero no basta: no construye un `Agent`, y la fuga que este criterio nombra ocurre en el agente |
 | CA-6 | El prompt de sistema no se revela ante 10 intentos adversariales | **Delegado a RFC-0009** — §11.1, ADR-0015 |
 | CA-7 | Instrucciones inyectadas dentro del corpus recuperado se ignoran | **Delegado a RFC-0009** — §11.1, ADR-0015 |
 | CA-8 | El flujo SSE emite `sources` antes de `done` en toda respuesta con búsqueda | `tests/integration/test_stream.py` |
@@ -327,6 +340,7 @@ presupuesto declarado.
 | `agent.run(mensaje)` | El agente es invocable: `agent(mensaje)`; para streaming, `agent.stream_async(...)` |
 | `model="anthropic.claude-3-5-sonnet"` | Identificador incompleto y de una generación retirada. El modelo se designa por configuración (RFC-0013) |
 | Agente global sin memoria por conversación | Se añade historial por `conversation_id` y se prohíbe el estado en el objeto agente |
+| «El agente se construye una vez por proceso» (§6, este RFC) | **Corregido por ADR-0017.** Lo que se construye una vez por proceso es el **modelo**; el agente se construye **por turno**, con `messages=load_history(...)`. Con `strands-agents 1.53` el objeto `Agent` acumula `self.messages`, así que un agente por proceso concatena las conversaciones de todos los usuarios —exactamente la fuga que la cláusula decía evitar— y rechaza dos invocaciones solapadas con `ConcurrencyException` |
 | Herramienta que devuelve el error como texto | Los errores se propagan; devolverlos como resultado induce respuestas inventadas |
 | Sin límite de llamadas a herramientas | Tope de 2 llamadas y 4 iteraciones |
 
