@@ -46,7 +46,11 @@ def _documento(hash_value: str) -> str:
     ("valor", "motivo"),
     [
         (_CLAVE, "la clave en claro"),
-        ("rcv_live_otraClaveEnClaro12345", "otra clave en claro"),
+        # `rcv_test_`, nunca el prefijo de produccion: RFC-0005 14 lo prohibe
+        # sin excepcion, y un caso negativo no lo necesita -- lo que esta fila
+        # comprueba es que una clave EN CLARO en `hash` impide arrancar, y el
+        # prefijo no interviene en esa comprobacion.
+        ("rcv_test_otraClaveEnClaro12345", "otra clave en claro"),
         ("no-es-un-hash", "texto arbitrario"),
         (_HASH[:-1], "63 caracteres, un digito corto"),
         (_HASH + "0", "65 caracteres"),
