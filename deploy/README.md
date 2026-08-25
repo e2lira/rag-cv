@@ -86,8 +86,55 @@ Rellenar `/opt/rag-cv/.env` a mano. Tres reglas que no son obvias (§8):
 - Si alguna vez se filtra, **se rota en el proveedor**: cambiar el fichero del host no invalida la
   clave.
 
-Valores que cambian respecto de DEV: `DATABASE_URL` apunta a `127.0.0.1`, `CORPUS_PATH` a
-`/opt/rag-cv/corpus/cv.md`, `EMBEDDER=openai`, y `COMMIT_SHA` lo escribe el despliegue.
+**`COMMIT_SHA` NO va aquí**: lo escribe el despliegue en `current/.env.release`, que la unidad lee
+con su segundo `EnvironmentFile`. Son dos ficheros con dueños distintos — el secreto lo escribe una
+persona una vez, la identidad la escribe cada despliegue — y mezclarlos obligaría al despliegue a
+reescribir el fichero que contiene las credenciales.
+
+Plantilla mínima de `/opt/rag-cv/.env` para QA:
+
+```bash
+APP_ENV=qa
+LOG_LEVEL=INFO
+DATABASE_URL=postgresql://ragcv:<password>@127.0.0.1:5432/ragcv
+CORPUS_PATH=/opt/rag-cv/corpus/cv.md
+
+# --- Embeddings (RFC-0017, ADR-0007): van por API, el host no ejecuta modelos
+EMBEDDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_EMBED_MODEL=text-embedding-3-small
+EMBEDDING_DIM=1536
+
+# --- Generación / Model Loop (RFC-0013, RFC-0018, ADR-0008)
+PROVEEDOR=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL_ID=claude-haiku-4-5-20251001
+LLM_TEMPERATURE=0.3
+LLM_MAX_TOKENS=1024
+# Vacío = un solo proveedor (ADR-0005). Solo se rellena para designar uno
+# secundario, y entonces hay que traer también SUS variables.
+PROVEEDOR_FALLBACK=
+
+# --- Claves DE LA API, no de los proveedores (RFC-0005 §6.1)
+# Son las que presentan tus clientes. Se guardan HASHEADAS en SHA-256: el
+# valor en claro se entrega una vez y se descarta. Sin ninguna clave activa
+# el proceso NO ARRANCA (CA-25).
+API_KEYS_JSON={"keys":[{"id":"demo","hash":"<sha256>","role":"read","label":"demo","active":true,"expires_at":null}]}
+
+RATE_LIMIT_PER_MINUTE=30
+RATE_LIMIT_PER_DAY=1000
+CORS_ALLOWED_ORIGINS=
+PYTHONUTF8=1
+```
+
+Para generar el `hash` de una clave de API:
+
+```bash
+python3 -c "import hashlib,secrets; k='rcv_live_'+secrets.token_urlsafe(18); print('clave:',k); print('hash:',hashlib.sha256(k.encode()).hexdigest())"
+```
+
+Guardá la clave en tu gestor de contraseñas y pegá **solo el hash** en el `.env`. Si la perdés, se
+emite otra: el servidor no puede recuperarla, que es exactamente la propiedad que se busca.
 
 Y **copiar el corpus a `/opt/rag-cv/corpus/cv.md`**. No viaja en la transferencia a propósito: vive en el
 VPS y no en el repositorio (RFC-0016 §3.3), así que sincronizarlo lo pisaría con lo que hubiera en
