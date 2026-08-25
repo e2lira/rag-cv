@@ -20,12 +20,13 @@ _CHECK_TIMEOUT = 2.0
 
 
 @router.get("/healthz")
-async def healthz() -> dict[str, str]:
+async def healthz(request: Request) -> dict[str, str]:
     """Vivacidad: **no toca ninguna dependencia** (RFC-0005 3.1, CA-21).
 
     Si abriera una conexion, se caeria con la base y `systemd` reiniciaria
     un proceso que estaba vivo -- justo cuando reiniciar no arregla nada.
     """
+    build_readiness(request.app.state)
     return {"status": _OK}
 
 
