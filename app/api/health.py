@@ -15,6 +15,9 @@ router = APIRouter()
 _OK = "ok"
 _ERROR = "error"
 
+# Segundos para adquirir conexion en la comprobacion de preparacion.
+_CHECK_TIMEOUT = 2.0
+
 
 @router.get("/healthz")
 async def healthz() -> dict[str, str]:
@@ -63,7 +66,11 @@ def build_readiness(app_state: Any) -> tuple[dict[str, str], bool]:
     checks = {"database": _ERROR, "corpus_indexed": _ERROR, "config": _OK}
 
     try:
-        with app_state.db_pool.connection() as conn, conn.cursor() as cur:
+        # Acotado a proposito: el pool espera 30 s por defecto, y una sonda
+        # de preparacion que tarda 30 s en decir "no estoy listo" es inutil
+        # -- `systemd` y nginx la matan antes, asi que el 503 nunca se lee.
+        # Mas vale responder "no lista" pronto que la verdad tarde.
+        with app_state.db_pool.connection(timeout=_CHECK_TIMEOUT) as conn, conn.cursor() as cur:
             checks["database"] = _OK
             cur.execute("SELECT EXISTS (SELECT 1 FROM cv_chunks WHERE doc_id = %s)", ("cv",))
             fila = cur.fetchone()
