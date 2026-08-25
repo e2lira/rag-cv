@@ -22,6 +22,24 @@ USUARIO="${USUARIO:-qrimapp-reto}"
 RAG_CV_HOME="${RAG_CV_HOME:-/opt/rag-cv}"
 BASE="${BASE:-ragcv}"
 
+_abortar_si_hay_sudo_sin_contrasena() {
+    # CA-17: el sondeo corre SIN sudo, y sin ninguna regla `NOPASSWD` que lo
+    # sostenga -- una regla asi anularia el objetivo entero de RFC-0016 §8.1.
+    #
+    # **Aborta, no advierte.** Una comprobacion de seguridad que solo imprime
+    # un aviso no impone nada: el aprovisionamiento termina en verde, nadie
+    # lee la linea, y la regla sigue ahi. Si el contrato dice que no puede
+    # haber, la unica forma de imponerlo es fallar.
+    echo "==> Comprobando que no haya sudo sin contrasena para esta cuenta (CA-17)"
+    if sudo -n -l >/dev/null 2>&1; then
+        echo "!! ${USER:-esta cuenta} puede usar sudo SIN contrasena." >&2
+        echo "   CA-17 exige que el sondeo no se sostenga en una regla NOPASSWD." >&2
+        echo "   Quitala de /etc/sudoers.d/ y vuelve a ejecutar." >&2
+        exit 1
+    fi
+    echo "    OK: sin sudo sin contrasena"
+}
+
 # ---------------------------------------------------------------------------
 # Pasos de la cuenta de operacion -- sin sudo (RFC-0016 §8.1)
 # ---------------------------------------------------------------------------
@@ -57,12 +75,23 @@ if [[ "${1:-}" == "--usuario" ]]; then
     fi
     crontab -l | grep 'app.ingestion.watcher'
 
-    echo "==> Comprobando que NO haya una regla NOPASSWD que lo sostenga (CA-17)"
-    sudo -n -l 2>/dev/null && echo "    !! esta cuenta tiene sudo sin contrasena -- revisar" || \
-        echo "    OK: sin sudo sin contrasena"
+    echo "==> Rotacion de la bitacora, EN ESPACIO DE USUARIO (RFC-0019 §7, CA-18)"
+    # No en el directorio de logrotate del sistema: eso exigiria root, y el
+    # sondeo entero existe para correr sin privilegios (RFC-0016 §8.1). El
+    # fichero de estado propio es lo que lo hace posible.
+    install -m 644 "$(dirname "$0")/logrotate.conf" "${RAG_CV_HOME}/logs/logrotate.conf"
+    LINEA_ROTACION="0 4 * * * /usr/sbin/logrotate --state ${RAG_CV_HOME}/logs/.logrotate.state ${RAG_CV_HOME}/logs/logrotate.conf"
+    if crontab -l 2>/dev/null | grep -q 'logrotate.conf'; then
+        echo "    ya estaba en el crontab -- no se duplica"
+    else
+        { crontab -l 2>/dev/null; echo "${LINEA_ROTACION}"; } | crontab -
+    fi
+    /usr/sbin/logrotate --debug --state "${RAG_CV_HOME}/logs/.logrotate.state" \
+        "${RAG_CV_HOME}/logs/logrotate.conf" >/dev/null && echo "    configuracion valida"
+
+    _abortar_si_hay_sudo_sin_contrasena
 
     echo "==> Listo. Falta: rellenar el .env, copiar el corpus y desplegar"
-    echo "    Y como root, una vez: instalar deploy/logrotate/rag-cv en /etc/logrotate.d/"
     exit 0
 fi
 
@@ -77,7 +106,7 @@ echo "==> 1. Paquetes del sistema"
 # No se instala ningun motor de inferencia: los embeddings van por API
 # (ADR-0007) y la generacion tambien (ADR-0008). El host solo corre la
 # aplicacion (CA-3).
-apt-get install -y postgresql-16 postgresql-16-pgvector python3.12-venv rsync
+apt-get install -y postgresql-16 postgresql-16-pgvector python3.12-venv
 
 echo "==> 2. PostgreSQL solo por bucle local (§7, CA-4)"
 CONF="$(sudo -u postgres psql -tAc 'SHOW config_file')"
@@ -119,12 +148,6 @@ echo "    revisar a mano que 5432 NO este abierto y que 22/80/443 sigan como est
 echo "==> 4. Las unidades de usuario arrancan sin sesion abierta (CA-2)"
 loginctl enable-linger "${USUARIO}"
 loginctl show-user "${USUARIO}" -p Linger
-
-echo "==> 4b. Rotacion de la bitacora del sondeo (CA-18)"
-# Un log que crece sin tope llena el disco, y el sintoma no es "falta el log":
-# es que PostgreSQL deja de poder escribir.
-install -m 644 "$(dirname "$0")/logrotate/rag-cv" /etc/logrotate.d/rag-cv
-logrotate --debug /etc/logrotate.d/rag-cv >/dev/null && echo "    configuracion valida"
 
 echo "==> 5. Arbol de despliegue, propiedad del operador"
 install -d -o "${USUARIO}" -g "${USUARIO}" \
