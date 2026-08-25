@@ -18,6 +18,7 @@ import app.main as main_module
 from app.agent.builder import AgentFactory
 from app.ingestion.corpus_parser import parse_front_matter
 from tests.integration.agent_fixtures import ScriptedModel
+from tests.unit.ingestion_fixtures import VALID_CORPUS
 from tests.unit.test_startup_wiring import FakePool, patch_successful_startup
 
 pytestmark = pytest.mark.unit
@@ -86,7 +87,10 @@ async def test_the_persona_comes_from_the_corpus(monkeypatch: pytest.MonkeyPatch
     async with main_module.lifespan(main_module.app):
         pass
 
-    esperada = parse_front_matter(main_module.Settings().corpus_path.read_text(encoding="utf-8"))
+    # Se parsea la constante, no se relee el archivo: RFC-0014 5 exige que
+    # una prueba `unit` no haga IO, y `VALID_CORPUS` es exactamente lo que
+    # `corpus_de_prueba()` dejo en disco para que el arranque lo leyera.
+    esperada = parse_front_matter(VALID_CORPUS)
     assert construcciones[0]["persona"] == esperada["persona"]
 
 
