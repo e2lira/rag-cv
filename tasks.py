@@ -118,6 +118,203 @@ def prohibiciones(c):
         raise SystemExit(f"Prohibiciones del gate ADU incumplidas:\n  {detalle}")
 
 
+# Directivas que los artefactos de despliegue TIENEN que declarar (RFC-0020).
+# Se comprueban aqui porque el RFC las verifica contra el VPS (CA-4, CA-11,
+# CA-13, CA-19) y esa verificacion no puede correr en el repositorio: lo que
+# si puede es garantizar que lo que se envia al VPS las trae. Sin esto, borrar
+# una linea de la unidad o del vhost no rompe nada visible hasta que alguien
+# mide la latencia o audita el host.
+_UNIDAD = Path("deploy/rag-cv-api.service")
+_VHOST = Path("deploy/nginx/reto.qrimapp.com.conf")
+_DESPLIEGUE = Path("deploy/deploy.sh")
+_APROVISIONAMIENTO = Path("deploy/provision.sh")
+_CI = Path(".github/workflows/python-tests.yml")
+_LOGROTATE = Path("deploy/logrotate.conf")
+
+_ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
+    _UNIDAD: {
+        # RFC-0020 5.1, equivalencias nativas del endurecimiento perdido con
+        # el contenedor (ADR-0010).
+        "ProtectSystem=strict": "raiz de solo lectura (5.1 #2)",
+        "ReadWritePaths=": "la unica ruta escribible (5.1 #2)",
+        "CapabilityBoundingSet=": "capacidades eliminadas (5.1 #3)",
+        "RestrictSUIDSGID=yes": "capacidades eliminadas (5.1 #3)",
+        "NoNewPrivileges=yes": "no-new-privileges (5.1 #4)",
+        # La que el contenedor no daba: impide que una ejecucion remota de
+        # codigo a traves de la API lea ~/.ssh y salte a robar la clave.
+        "ProtectHome=yes": "el servicio no puede leer /home (5.1, CA-11)",
+        "PrivateTmp=yes": "no comparte /tmp (5.1)",
+        "ProtectKernelTunables=yes": "sin escritura en /proc/sys (5.1)",
+        "ProtectControlGroups=yes": "sin escritura en cgroups (5.1)",
+        "MemoryMax=": "limite de memoria (5, CA-8)",
+        "CPUWeight=": "peso de CPU (5)",
+        "Restart=always": "la API vuelve sola (9)",
+        "WantedBy=default.target": "arranca sin sesion abierta (CA-2)",
+        "EnvironmentFile=": "el secreto lo lee la unidad, no el perfil (8)",
+        # La identidad de la release viaja CON la release, no en el .env del
+        # operador: el despliegue no debe reescribir el fichero del secreto.
+        ".env.release": "la unidad lee la identidad de la release (6, CA-5)",
+        "--proxy-headers": "cabeceras de reenvio (7.1)",
+        "--forwarded-allow-ips=127.0.0.1": "cabeceras de reenvio (7.1)",
+        "--host 127.0.0.1": "la API solo escucha en bucle local (7, CA-4)",
+        "--port 8080": "el puerto que nginx alcanza (5)",
+    },
+    _VHOST: {
+        # Sin esto no hay streaming, solo la ilusion: nginx bufferea por
+        # defecto y la latencia de primer token pasa a ser la de respuesta
+        # completa, sin un solo error en los registros (7.1).
+        "proxy_buffering off": "sin esto no hay streaming (7.1, CA-13)",
+        "proxy_cache off": "sin cache sobre el flujo (7.1)",
+        "gzip off": "comprimir tambien bufferea (7.1)",
+        "proxy_read_timeout 300s": "el defecto de 60s corta respuestas largas (7.1)",
+        "proxy_http_version 1.1": "requisito de la conexion persistente (7.1)",
+        # La expresion regular cubre /v1/chat/stream y /v1/responses: con la
+        # ruta literal, el endpoint que registra la plataforma externa caia
+        # en la ubicacion generica, con el buffer activo (7.1).
+        "chat/stream|responses": "la ubicacion cubre los dos endpoints (7.1, CA-19)",
+    },
+    _CI: {
+        # CA-12: sustituto nativo del escaneo de imagen que daba el
+        # contenedor (5.1 #9). Sin esto, la unica defensa contra una
+        # dependencia con vulnerabilidad conocida es que alguien mire.
+        "pip-audit": "pip-audit corre en CI (5.1 #9, CA-12)",
+        "requirements.lock": "se audita el lock, no el entorno resuelto (CA-12)",
+    },
+    _LOGROTATE: {
+        # CA-18: la bitacora del sondeo rota y no crece sin limite. Un log
+        # que crece sin tope llena el disco del VPS, y el sintoma es que
+        # PostgreSQL deja de escribir -- no que falte el log.
+        "/opt/rag-cv/logs/": "rota la bitacora del sondeo (CA-18)",
+        "rotate": "hay retencion declarada (CA-18)",
+        "compress": "las rotadas se comprimen (CA-18)",
+    },
+    _APROVISIONAMIENTO: {
+        # Los tres fallos silenciosos de §4. Ninguno emite error: el sistema
+        # arranca, responde, y esta mal.
+        "--locale-provider=icu": "sin ICU es-MX la busqueda lexica pierde acentos (4, CA-16)",
+        "--icu-locale=es-MX": "la configuracion regional se fija AL CREAR la base (4, CA-16)",
+        "enable-linger": "sin linger no hay servicio tras un reinicio (4, CA-2)",
+        "listen_addresses": "PostgreSQL solo por bucle local (7, CA-4)",
+        "datlocprovider": "el aprovisionamiento VERIFICA el ICU, no confia (CA-16)",
+        "install -m 600": "el .env nace con permisos restrictivos (8, CA-15)",
+        # CA-17: el sondeo de RFC-0019 vive en el crontab del usuario de
+        # operacion y corre SIN sudo. Una regla NOPASSWD que lo sostuviera
+        # anularia el objetivo entero de RFC-0016 8.1.
+        "crontab": "el sondeo de RFC-0019 queda en el crontab del operador (CA-17)",
+        "WATCHER_CADENCE": "la cadencia la ejecuta el cron, no la aplicacion (CA-17)",
+        # RFC-0019 7: la rotacion va EN ESPACIO DE USUARIO. El fichero de
+        # estado propio es lo que la hace posible sin root -- sin `--state`,
+        # logrotate escribe en /var/lib y necesita privilegios.
+        "--state": "rotacion en espacio de usuario (RFC-0019 7, CA-18)",
+        "logrotate.conf": "la configuracion vive en el arbol del operador (RFC-0019 7)",
+        # Una comprobacion de seguridad que solo advierte no impone nada: el
+        # contrato se impone abortando. Se exige el NOMBRE de la funcion y no
+        # un `exit 1` suelto -- el fichero ya tiene otros `exit 1` por motivos
+        # distintos, asi que buscarlo a secas daria un verde falso.
+        "_abortar_si_hay_sudo_sin_contrasena": "la comprobacion aborta, no avisa (CA-17)",
+    },
+    _DESPLIEGUE: {
+        # Las exclusiones no son higiene, son seguridad (6). Se comprueba la
+        # PROPIEDAD -- que el arbol enviado no las lleve -- y no las banderas
+        # de una herramienta concreta: `rsync` no existe en Git Bash de
+        # Windows, y atar el gate al comando lo haria fallar por el motivo
+        # equivocado.
+        "_purgar_del_arbol": "el .env y el corpus se borran del arbol enviado (6, CA-10)",
+        "PURGA=": "la lista de lo que nunca viaja al servidor (6, CA-10)",
+        # `mv -Tf` sobre un enlace simbolico es atomico: no existe un instante
+        # en el que `current` apunte a medias (6).
+        "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
+        "alembic upgrade head": "la migracion corre ANTES de conmutar (9, CA-6)",
+        # `requirements.lock` no esta en el repositorio: se genera desde
+        # `uv.lock`, que es la unica fuente de verdad de las versiones. Un
+        # lock committeado aparte deriva del real sin que nada falle.
+        "uv export": "el lock se genera desde uv.lock por release (5.1 #10)",
+        "--require-hashes": "las dependencias se instalan por hash (5.1 #9)",
+        # `releases/` crece una copia entera por despliegue. Sin retencion,
+        # el disco del VPS se llena y el sintoma no es "faltan releases":
+        # es que PostgreSQL deja de escribir.
+        "COMMIT_SHA": "el despliegue escribe la identidad que /readyz publica (6, CA-5)",
+        # El README prometia que el script comprueba el CI y no lo hacia:
+        # solo validaba que el SHA existiera. La documentacion de despliegue
+        # tiene que describir exactamente las garantias que el script aplica.
+        "check-runs": "se comprueba que el SHA tenga CI en verde (6)",
+        "_abortar_si_el_ci_no_esta_verde": "y se aborta si no lo esta, no se avisa (6)",
+        "_podar_releases": "se retienen N releases, no todas (9)",
+        "RETENCION": "cuantas releases se conservan (9)",
+    },
+}
+
+# RFC-0020 7: "Que la API escuche en 0.0.0.0 es el fallo grave de esta
+# topologia" -- saltaria nginx y con el el TLS. Un `--host 0.0.0.0` copiado
+# de un tutorial no falla: el servicio responde igual.
+# Los literales se componen por la misma razon que los prefijos de arriba: si
+# estuvieran escritos enteros, un comentario de este mismo fichero podria
+# delatarlo. Para una PROHIBICION el comentario SI cuenta -- es lo contrario
+# que para un requisito, y es el error que la auditoria encontro en las dos
+# direcciones.
+_TODAS_LAS_INTERFACES = "0.0" + ".0.0"
+
+# RFC-0019 §7, literal: "no se toca /etc/logrotate.d, que exigiria root". La
+# rotacion del sondeo vive en el arbol del operador, con su propio fichero de
+# estado, invocada desde el crontab del usuario.
+_LOGROTATE_DEL_SISTEMA = "/etc/" + "logrotate.d"
+
+_PROHIBIDO_EN_DESPLIEGUE = {
+    _TODAS_LAS_INTERFACES: "la API o la base escucharian fuera del bucle local (7, CA-4)",
+    _LOGROTATE_DEL_SISTEMA: "la rotacion va en espacio de usuario (RFC-0019 7, CA-18)",
+}
+
+
+def _configuracion_efectiva(archivo: Path) -> str:
+    """El contenido SIN comentarios: la configuracion que de verdad aplica.
+
+    Un guard por subcadenas sobre el fichero entero acepta una directiva que
+    solo aparece comentada. Medido: comentando `ProtectHome=yes` -- la que
+    impide que un proceso comprometido de la API lea ~/.ssh -- el guard
+    seguia pasando, y el servicio habria corrido sin ella.
+
+    Los tres formatos que se comprueban (unidad de systemd, vhost de nginx y
+    guiones de shell) comentan con `#` a principio de linea. Solo se descarta
+    el comentario de LINEA COMPLETA: en shell, un `#` a media linea puede ser
+    expansion de parametro (`${VAR#patron}`) y no un comentario.
+    """
+    lineas = archivo.read_text(encoding="utf-8").splitlines()
+    return "\n".join(linea for linea in lineas if not linea.lstrip().startswith(("#", ";")))
+
+
+def _artefactos_de_despliegue() -> list[str]:
+    """RFC-0020: lo que se envia al VPS trae lo que el RFC exige.
+
+    Sobre la configuracion EFECTIVA, no sobre el texto del fichero: ver
+    `_configuracion_efectiva`."""
+    hallazgos = []
+    for archivo, directivas in _ARTEFACTOS_DE_DESPLIEGUE.items():
+        if not archivo.exists():
+            hallazgos.append(f"{archivo} -- no existe (RFC-0020)")
+            continue
+        contenido = _configuracion_efectiva(archivo)
+        hallazgos += [
+            f"{archivo} -- falta {directiva!r}: {motivo}"
+            for directiva, motivo in directivas.items()
+            if directiva not in contenido
+        ]
+        hallazgos += [
+            f"{archivo} -- contiene {prohibido!r}: {motivo}"
+            for prohibido, motivo in _PROHIBIDO_EN_DESPLIEGUE.items()
+            if prohibido in contenido
+        ]
+    return hallazgos
+
+
+@task
+def despliegue(c):
+    """Los artefactos de RFC-0020 declaran lo que el RFC exige."""
+    hallazgos = _artefactos_de_despliegue()
+    if hallazgos:
+        detalle = "\n  ".join(hallazgos)
+        raise SystemExit(f"Artefactos de despliegue incompletos (RFC-0020):\n  {detalle}")
+
+
 @task
 def lint(c):
     # Acotado a codigo Python: "ruff format ." tambien reformatea los
@@ -127,6 +324,7 @@ def lint(c):
     c.run(f"ruff format --check {_PY_PATHS}")
     c.run("mypy app/ migrations/")
     prohibiciones(c)
+    despliegue(c)
 
 
 @task
