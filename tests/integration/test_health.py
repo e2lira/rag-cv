@@ -8,6 +8,8 @@ CA-21 es el reverso y se prueba apuntando a una base que no responde: si
 un proceso que estaba perfectamente vivo.
 """
 
+import time
+
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -85,6 +87,29 @@ def test_readyz_is_503_when_postgres_does_not_respond(
 
     assert respuesta.status_code == 503
     assert respuesta.json()["checks"]["database"] == "error"
+
+
+def test_readyz_answers_quickly_when_postgres_is_down(
+    database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Una sonda de preparacion que tarda 30 s en decir "no estoy listo" es
+    inutil: `systemd` y nginx la matan antes, asi que el `503` de CA-20
+    nunca llega a leerse. El pool espera 30 s por defecto; la comprobacion
+    tiene que acotarlo.
+
+    Se mide el tiempo transcurrido, no se sincroniza con `sleep` (P-7). El
+    margen es amplio a proposito -- se compara contra 5 s cuando el fallo
+    tarda 30 -- para que no sea una prueba intermitente (P-10).
+    """
+    _entorno(monkeypatch, database_url)
+    cliente = _cliente(database_url, pool_url=_URL_MUERTA)
+
+    inicio = time.monotonic()
+    respuesta = cliente.get("/readyz")
+    transcurrido = time.monotonic() - inicio
+
+    assert respuesta.status_code == 503
+    assert transcurrido < 5.0, f"/readyz tardo {transcurrido:.1f}s en responder"
 
 
 def test_healthz_survives_db_outage(database_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
