@@ -129,7 +129,7 @@ _VHOST = Path("deploy/nginx/reto.qrimapp.com.conf")
 _DESPLIEGUE = Path("deploy/deploy.sh")
 _APROVISIONAMIENTO = Path("deploy/provision.sh")
 _CI = Path(".github/workflows/python-tests.yml")
-_LOGROTATE = Path("deploy/logrotate/rag-cv")
+_LOGROTATE = Path("deploy/logrotate.conf")
 
 _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
     _UNIDAD: {
@@ -199,7 +199,16 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # anularia el objetivo entero de RFC-0016 8.1.
         "crontab": "el sondeo de RFC-0019 queda en el crontab del operador (CA-17)",
         "WATCHER_CADENCE": "la cadencia la ejecuta el cron, no la aplicacion (CA-17)",
-        "logrotate": "la bitacora del sondeo rota (CA-18)",
+        # RFC-0019 7: la rotacion va EN ESPACIO DE USUARIO. El fichero de
+        # estado propio es lo que la hace posible sin root -- sin `--state`,
+        # logrotate escribe en /var/lib y necesita privilegios.
+        "--state": "rotacion en espacio de usuario (RFC-0019 7, CA-18)",
+        "logrotate.conf": "la configuracion vive en el arbol del operador (RFC-0019 7)",
+        # Una comprobacion de seguridad que solo advierte no impone nada: el
+        # contrato se impone abortando. Se exige el NOMBRE de la funcion y no
+        # un `exit 1` suelto -- el fichero ya tiene otros `exit 1` por motivos
+        # distintos, asi que buscarlo a secas daria un verde falso.
+        "_abortar_si_hay_sudo_sin_contrasena": "la comprobacion aborta, no avisa (CA-17)",
     },
     _DESPLIEGUE: {
         # Las exclusiones no son higiene, son seguridad (6). Se comprueba la
@@ -229,8 +238,21 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
 # RFC-0020 7: "Que la API escuche en 0.0.0.0 es el fallo grave de esta
 # topologia" -- saltaria nginx y con el el TLS. Un `--host 0.0.0.0` copiado
 # de un tutorial no falla: el servicio responde igual.
+# Los literales se componen por la misma razon que los prefijos de arriba: si
+# estuvieran escritos enteros, un comentario de este mismo fichero podria
+# delatarlo. Para una PROHIBICION el comentario SI cuenta -- es lo contrario
+# que para un requisito, y es el error que la auditoria encontro en las dos
+# direcciones.
+_TODAS_LAS_INTERFACES = "0.0" + ".0.0"
+
+# RFC-0019 §7, literal: "no se toca /etc/logrotate.d, que exigiria root". La
+# rotacion del sondeo vive en el arbol del operador, con su propio fichero de
+# estado, invocada desde el crontab del usuario.
+_LOGROTATE_DEL_SISTEMA = "/etc/" + "logrotate.d"
+
 _PROHIBIDO_EN_DESPLIEGUE = {
-    "0.0.0.0": "la API o la base escucharian fuera del bucle local (7, CA-4)"
+    _TODAS_LAS_INTERFACES: "la API o la base escucharian fuera del bucle local (7, CA-4)",
+    _LOGROTATE_DEL_SISTEMA: "la rotacion va en espacio de usuario (RFC-0019 7, CA-18)",
 }
 
 
