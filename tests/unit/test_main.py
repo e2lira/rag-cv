@@ -12,6 +12,11 @@ from pydantic import SecretStr
 import app.main as main_module
 from app.main import app
 
+# Campos que el lifespan pasa al estado de la aplicacion (RFC-0005 6.1 y
+# 8). El doble los trae para no acoplar estas pruebas -- que verifican
+# RFC-0011 CA-5 y RFC-0021 CA-8 -- a lo que RFC-0005 cablee.
+_CLAVES = '{"keys":[{"id":"k1","hash":"' + "0" * 64 + '","role":"read","label":"t","active":true}]}'
+
 pytestmark = pytest.mark.unit
 
 
@@ -94,7 +99,11 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
         main_module,
         "Settings",
         lambda: SimpleNamespace(
-            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+            database_url=SecretStr("postgresql://test/test"),
+            embedding_dim=1536,
+            api_keys_json=_CLAVES,
+            rate_limit_per_minute=60,
+            rate_limit_per_day=1000,
         ),
         raising=False,
     )
@@ -155,7 +164,11 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
         main_module,
         "Settings",
         lambda: SimpleNamespace(
-            database_url=SecretStr("postgresql://test/test"), embedding_dim=1536
+            database_url=SecretStr("postgresql://test/test"),
+            embedding_dim=1536,
+            api_keys_json=_CLAVES,
+            rate_limit_per_minute=60,
+            rate_limit_per_day=1000,
         ),
         raising=False,
     )
