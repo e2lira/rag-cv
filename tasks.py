@@ -128,6 +128,8 @@ _UNIDAD = Path("deploy/rag-cv-api.service")
 _VHOST = Path("deploy/nginx/reto.qrimapp.com.conf")
 _DESPLIEGUE = Path("deploy/deploy.sh")
 _APROVISIONAMIENTO = Path("deploy/provision.sh")
+_CI = Path(".github/workflows/python-tests.yml")
+_LOGROTATE = Path("deploy/logrotate/rag-cv")
 
 _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
     _UNIDAD: {
@@ -168,6 +170,21 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # en la ubicacion generica, con el buffer activo (7.1).
         "chat/stream|responses": "la ubicacion cubre los dos endpoints (7.1, CA-19)",
     },
+    _CI: {
+        # CA-12: sustituto nativo del escaneo de imagen que daba el
+        # contenedor (5.1 #9). Sin esto, la unica defensa contra una
+        # dependencia con vulnerabilidad conocida es que alguien mire.
+        "pip-audit": "pip-audit corre en CI (5.1 #9, CA-12)",
+        "requirements.lock": "se audita el lock, no el entorno resuelto (CA-12)",
+    },
+    _LOGROTATE: {
+        # CA-18: la bitacora del sondeo rota y no crece sin limite. Un log
+        # que crece sin tope llena el disco del VPS, y el sintoma es que
+        # PostgreSQL deja de escribir -- no que falte el log.
+        "/opt/rag-cv/logs/": "rota la bitacora del sondeo (CA-18)",
+        "rotate": "hay retencion declarada (CA-18)",
+        "compress": "las rotadas se comprimen (CA-18)",
+    },
     _APROVISIONAMIENTO: {
         # Los tres fallos silenciosos de §4. Ninguno emite error: el sistema
         # arranca, responde, y esta mal.
@@ -177,6 +194,12 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "listen_addresses": "PostgreSQL solo por bucle local (7, CA-4)",
         "datlocprovider": "el aprovisionamiento VERIFICA el ICU, no confia (CA-16)",
         "install -m 600": "el .env nace con permisos restrictivos (8, CA-15)",
+        # CA-17: el sondeo de RFC-0019 vive en el crontab del usuario de
+        # operacion y corre SIN sudo. Una regla NOPASSWD que lo sostuviera
+        # anularia el objetivo entero de RFC-0016 8.1.
+        "crontab": "el sondeo de RFC-0019 queda en el crontab del operador (CA-17)",
+        "WATCHER_CADENCE": "la cadencia la ejecuta el cron, no la aplicacion (CA-17)",
+        "logrotate": "la bitacora del sondeo rota (CA-18)",
     },
     _DESPLIEGUE: {
         # Las exclusiones no son higiene, son seguridad (6). Se comprueba la
@@ -195,6 +218,11 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # lock committeado aparte deriva del real sin que nada falle.
         "uv export": "el lock se genera desde uv.lock por release (5.1 #10)",
         "--require-hashes": "las dependencias se instalan por hash (5.1 #9)",
+        # `releases/` crece una copia entera por despliegue. Sin retencion,
+        # el disco del VPS se llena y el sintoma no es "faltan releases":
+        # es que PostgreSQL deja de escribir.
+        "_podar_releases": "se retienen N releases, no todas (9)",
+        "RETENCION": "cuantas releases se conservan (9)",
     },
 }
 
