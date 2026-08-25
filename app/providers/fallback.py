@@ -35,8 +35,8 @@ def _status_code(exc: BaseException) -> int | None:
     anthropic.APIStatusError / openai.APIStatusError (y subclases como
     RateLimitError, BadRequestError): exc.status_code, plano.
 
-    botocore.exceptions.ClientError -- y las subclases que boto3 genera
-    dinamicamente por codigo de error de AWS (ThrottlingException,
+    botocore.exceptions.ClientError -- y las subclases que el SDK de AWS
+    genera dinamicamente por codigo de error (ThrottlingException,
     InternalServerException, ModelNotReadyException, ...), todas heredan
     de ClientError: exc.response['ResponseMetadata']['HTTPStatusCode'].
     Un match por fragmento del NOMBRE de esas subclases es fragil por

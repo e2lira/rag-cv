@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health
+from app.api import admin, chat, health, responses
 from app.api.errors import install_error_handling
 from app.core.settings import BootstrapSettings, Settings
 
@@ -68,4 +68,7 @@ def create_app(settings: Settings | None = None, *, lifespan: Any = None) -> Fas
     # `git` que consultar en tiempo de ejecucion.
     app.state.commit_sha = arranque.commit_sha
     app.include_router(health.router)
+    app.include_router(chat.router)
+    app.include_router(responses.router)
+    app.include_router(admin.router)
     return app

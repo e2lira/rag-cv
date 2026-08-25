@@ -9,8 +9,11 @@ Todas las dependencias del lifespan se doblan: la disciplina de este RFC es
 sobre el cableado, no una repeticion de lo que RFC-0006 ya prueba contra una
 base real (RFC-0021 9)."""
 
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import lru_cache
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,8 +21,24 @@ import pytest
 from pydantic import SecretStr
 
 import app.main as main_module
+from app.agent.builder import AgentFactory
+from tests.unit.ingestion_fixtures import VALID_CORPUS
 
 pytestmark = pytest.mark.unit
+
+
+@lru_cache(maxsize=1)
+def corpus_de_prueba() -> Path:
+    """Un corpus sintetico en disco, **nunca `corpus/cv.md`**.
+
+    `corpus/` esta en `.gitignore` -- el CV real no se versiona (RFC-0016
+    3.3) --, asi que apuntar ahi hace que la prueba pase en la maquina de
+    quien la escribio y falle en CI, que es el peor de los dos mundos: el
+    rojo llega tarde y contra un cambio que no lo causo.
+    """
+    destino = Path(tempfile.gettempdir()) / "rfc0005_corpus_de_prueba.md"
+    destino.write_text(VALID_CORPUS, encoding="utf-8")
+    return destino
 
 
 class FakePool:
@@ -62,6 +81,9 @@ def patch_successful_startup(
             + '","role":"read","label":"t","active":true}]}',
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
+            # Corpus sintetico, nunca el real: de su front-matter sale
+            # `{persona}` del prompt de sistema (RFC-0004 4).
+            corpus_path=corpus_de_prueba(),
         ),
         raising=False,
     )
@@ -73,6 +95,16 @@ def patch_successful_startup(
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
+    # La FABRICA de agentes se dobla (ADR-0017): construirla de verdad
+    # exigiria las credenciales del proveedor, y estas pruebas son sobre el
+    # ORDEN del arranque (RFC-0021 5), no sobre RFC-0004. Lo que la fabrica
+    # deba ser lo verifica tests/unit/test_agent_wiring.py.
+    monkeypatch.setattr(
+        AgentFactory,
+        "from_settings",
+        classmethod(lambda cls, settings, persona: object()),
+        raising=False,
+    )
 
     def _recorder(name: str) -> Any:
         def _fn(*args: Any, **kwargs: Any) -> None:
