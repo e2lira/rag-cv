@@ -130,7 +130,7 @@ fi
 
 # Se VERIFICA, no se confia en que quien aprovisiona se acuerde (CA-16).
 LOCALE="$(sudo -u postgres psql -tAc \
-    "SELECT datlocprovider || ' ' || datcollate FROM pg_database WHERE datname='${BASE}'")"
+    "SELECT datlocprovider::text || ' ' || datcollate FROM pg_database WHERE datname='${BASE}'")"
 echo "    ${LOCALE}"
 case "${LOCALE}" in
     i\ es-MX*) echo "    OK: proveedor ICU con es-MX" ;;
