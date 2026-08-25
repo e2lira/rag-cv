@@ -79,14 +79,37 @@ _purgar_del_arbol() {
     # esto no deberia encontrar nada nunca. Existe porque el dia que alguien
     # versione un `.env.produccion` por error, el fallo tiene que ser
     # ruidoso aqui y no silencioso en QA.
+    # `.env.example` es una plantilla versionada con marcadores de posicion.
+    # `.env.release` lo escribe este mismo script y solo contiene el SHA --
+    # es identidad, no secreto. Se declaran aqui y no se confia en el ORDEN
+    # de las llamadas: si alguien mueve la escritura antes de la purga, el
+    # comportamiento no debe cambiar.
+    local permitidos=(.env.example .env.release)
     while IFS= read -r sobrante; do
-        [[ "$(basename "${sobrante}")" == ".env.example" ]] && continue
+        local nombre
+        nombre="$(basename "${sobrante}")"
+        local permitido=0
+        for objetivo in "${permitidos[@]}"; do
+            [[ "${nombre}" == "${objetivo}" ]] && permitido=1
+        done
+        [[ "${permitido}" -eq 1 ]] && continue
         echo "!! ${sobrante} parece un fichero de entorno -- se aborta" >&2
         exit 1
     done < <(find "${raiz}" -maxdepth 2 -name '.env*' -type f)
 }
 
 _purgar_del_arbol "${ORIGEN}"
+
+# La identidad de la release, que la unidad lee con su segundo
+# `EnvironmentFile` y que /readyz publica (§6, CA-5). Va en el arbol de la
+# release y NO en el `.env` del operador: son dos cosas con dueños distintos
+# -- el secreto lo escribe una persona una vez, la identidad la escribe cada
+# despliegue -- y mezclarlas obligaria al despliegue a reescribir el fichero
+# que contiene las credenciales.
+#
+# Sin esto, /readyz devuelve `commit_sha: null` y la comprobacion final de
+# este mismo script falla siempre.
+printf 'COMMIT_SHA=%s\n' "${SHA}" > "${ORIGEN}/.env.release"
 
 # `tar` sobre `ssh` y no `rsync`. **Desviacion declarada respecto al comando
 # literal de §6**: `rsync` no existe en Git Bash de Windows, que es desde

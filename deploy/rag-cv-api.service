@@ -24,7 +24,20 @@ WorkingDirectory=/opt/rag-cv/current
 # El secreto lo lee la unidad, nunca el perfil del usuario (§8): en
 # `.bashrc` entraria en el entorno de cualquier proceso de esa cuenta,
 # incluidas las sesiones SSH y todo lo que lancen desde ellas.
+#
+# Este fichero es del OPERADOR: lo crea el aprovisionamiento con permisos
+# 600, se rellena a mano, y el despliegue NO lo toca -- por eso esta
+# excluido de la transferencia (§6).
 EnvironmentFile=/opt/rag-cv/.env
+
+# La IDENTIDAD de la release, que si escribe el despliegue. Va en un fichero
+# aparte y dentro del arbol de la release para no reescribir el del secreto:
+# son dos cosas con dueños distintos y ciclos de vida distintos.
+#
+# De aqui sale el `COMMIT_SHA` que /readyz publica. Sin el, "desplegamos el
+# commit X" seria una afirmacion de quien desplego y no un hecho
+# comprobable (§6, CA-5).
+EnvironmentFile=/opt/rag-cv/current/.env.release
 
 # --host 127.0.0.1 y NO todas las interfaces: RFC-0020 §7 llama a eso "el
 # fallo grave de esta topologia" porque saltaria nginx y con el el TLS. Un
