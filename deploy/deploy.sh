@@ -20,6 +20,32 @@ URL_SALUD="${URL_SALUD:-https://reto.qrimapp.com/readyz}"
 
 echo "==> Desplegando ${SHA} en ${DESTINO}:${RAG_CV_HOME}"
 
+_url_de_la_base_del_env() {
+    # Lee SOLO la linea de DATABASE_URL de un fichero de entorno, sin
+    # ejecutar nada de el.
+    #
+    # `source` seria mas corto y es lo que habia: el problema es que el
+    # `.env` lo parsea `pydantic` con sus reglas y bash aplica otras. Un
+    # valor legitimo para uno rompe en el otro -- `WATCHER_CADENCE=*/5 * * *`
+    # hace que bash intente ejecutar `*` como comando -- y el fallo aparece
+    # a mitad del despliegue, lejos de su causa. Con esto, ninguna variable
+    # que se anada manana puede romper la migracion.
+    local fichero="$1" valor
+    valor="$(sed -n 's/^[[:space:]]*DATABASE_URL[[:space:]]*=[[:space:]]*//p' "${fichero}" | tail -1)"
+    # Entrecomillar es legitimo en un `.env`, y las comillas no son parte
+    # de la URL.
+    valor="${valor%\"}"; valor="${valor#\"}"
+    valor="${valor%\'}"; valor="${valor#\'}"
+    valor="${valor%$'\r'}"
+
+    if [[ -z "${valor}" ]]; then
+        echo "!! DATABASE_URL no esta definida en ${fichero}" >&2
+        echo "   La migracion no puede correr sin ella (RFC-0020 §6)." >&2
+        return 1
+    fi
+    printf '%s\n' "${valor}"
+}
+
 _abortar_si_el_ci_no_esta_verde() {
     # Desplegar a QA un commit sin CI verde es exactamente lo que la
     # identidad de release existe para impedir: /readyz publicaria un SHA
@@ -172,7 +198,11 @@ tar -C "${ORIGEN}" -czf - . \
     | ssh "${DESTINO}" "mkdir -p '${RAG_CV_HOME}/releases/${SHA}' \
         && tar -xzf - -C '${RAG_CV_HOME}/releases/${SHA}'"
 
-ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
+# La funcion se define UNA vez y se envia al bloque remoto con `declare -f`:
+# duplicarla dentro del heredoc dejaria dos copias que divergen en silencio.
+{
+  declare -f _url_de_la_base_del_env
+  cat <<'EOS'
   set -euo pipefail
   cd "${RAG_CV_HOME}/releases/${SHA}"
 
@@ -183,17 +213,18 @@ ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
 
   # El .env del operador NO esta en el arbol de la release -- se purga a
   # proposito (§6) -- asi que la migracion no lo encontraria por si sola.
-  # Se carga al entorno solo para este bloque: `alembic` resuelve la URL
-  # desde ahi (RFC-0006), y no se copia ningun secreto a la release.
-  set -a
-  # shellcheck disable=SC1091
-  . "${RAG_CV_HOME}/.env"
-  set +a
+  #
+  # Se lee SOLO la linea de DATABASE_URL, sin `source`. El fichero lo parsea
+  # `pydantic` con sus reglas; interpretarlo ademas con bash aplica otras, y
+  # un valor perfectamente valido para uno rompe en el otro: basta
+  # `WATCHER_CADENCE=*/5 * * * *` para que bash intente ejecutarlo. El
+  # despliegue no puede quedar a merced de que variable se anada manana.
+  URL_BASE="$(_url_de_la_base_del_env "${RAG_CV_HOME}/.env")"
 
   # La migracion corre ANTES de conmutar el enlace. Si falla, `set -e` corta
   # aqui y `current` sigue apuntando a la release anterior, que sigue
   # corriendo (§9, CA-6). Ese orden es todo el mecanismo.
-  .venv/bin/alembic upgrade head
+  DATABASE_URL="${URL_BASE}" .venv/bin/alembic upgrade head
 
   # `mv -Tf` sobre un enlace simbolico es ATOMICO: no existe un instante en
   # el que `current` apunte a medias (§6). Es el equivalente al reemplazo
@@ -204,6 +235,7 @@ ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
   # Sin sudo (RFC-0016 §8.1).
   systemctl --user restart rag-cv-api
 EOS
+} | ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -s
 
 # `releases/` crece una copia entera del proyecto por despliegue. Sin
 # retencion el disco del VPS se llena, y el sintoma no es "faltan releases":
