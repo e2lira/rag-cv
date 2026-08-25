@@ -10,10 +10,36 @@ TLS competiría por los puertos 80 y 443 y no arrancaría (§7.1).
 
 ---
 
-## 1. Aprovisionamiento, con privilegios
+## 0. Cómo llega el proyecto al servidor
+
+**No se clona el repositorio en el VPS, y no debe haber un `.git` allí.**
+
+El artefacto es **un commit**, no un checkout. `deploy/deploy.sh` corre **en tu máquina**, arma el
+árbol con `git archive <sha>` en un temporal, le quita `.env`, `.git` y `corpus/`, y lo envía por
+`tar` sobre `ssh` a `/opt/rag-cv/releases/<sha>/`. Cada release es un directorio nuevo e inmutable.
+
+Clonar en el servidor rompería tres cosas a la vez: dejaría credenciales de `git` en el host,
+permitiría un `git pull` que despliega código sin revisar, y haría que `/readyz` publicara un SHA
+que nadie validó.
+
+Lo único que sí se copia al servidor a mano, y una sola vez, es la carpeta `deploy/`, porque
+`provision.sh` tiene que ejecutarse allí:
 
 ```bash
-sudo ./deploy/provision.sh
+scp -r deploy root@reto.qrimapp.com:/root/rag-cv-deploy
+```
+
+> **`rsync` no está en Git Bash de Windows**, así que la transferencia va por `tar` sobre `ssh`.
+> Es una desviación declarada respecto al comando literal de RFC-0020 §6: lo normativo son las
+> propiedades —que el secreto y el corpus no viajen, y que la conmutación sea atómica—, no la
+> herramienta. `--delete` sobra porque cada release estrena directorio.
+
+## 1. Aprovisionamiento, con privilegios
+
+En el VPS, como `root`:
+
+```bash
+cd /root/rag-cv-deploy && bash provision.sh
 ```
 
 Qué hace, y qué mirar en la salida:
@@ -35,8 +61,9 @@ Qué hace, y qué mirar en la salida:
 ## 2. Cuenta de operación, sin `sudo`
 
 ```bash
-sudo -iu qrimapp-reto
-cd /ruta/al/repo && ./deploy/provision.sh --usuario
+cp -r /root/rag-cv-deploy /home/qrimapp-reto/deploy
+chown -R qrimapp-reto:qrimapp-reto /home/qrimapp-reto/deploy
+sudo -iu qrimapp-reto bash -lc 'bash ~/deploy/provision.sh --usuario'
 ```
 
 Instala la unidad de usuario, la habilita y crea `/opt/rag-cv/.env` **ya con permisos `600`** —no
@@ -71,8 +98,10 @@ El bloque del *stream* va **antes** que el genérico.
 
 ## 5. Desplegar
 
+**Desde tu máquina**, no desde el VPS:
+
 ```bash
-./deploy/deploy.sh <sha-validado-en-verde>
+./deploy/deploy.sh <sha-validado-en-verde> qrimapp-reto@reto.qrimapp.com
 ```
 
 El SHA tiene que ser un commit con CI en verde. El script lo verifica, arma el árbol desde
