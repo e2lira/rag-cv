@@ -11,6 +11,7 @@ base real (RFC-0021 9)."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -62,6 +63,9 @@ def patch_successful_startup(
             + '","role":"read","label":"t","active":true}]}',
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
+            # El corpus real: de su front-matter sale `{persona}` del prompt
+            # de sistema (RFC-0004 4).
+            corpus_path=Path("corpus/cv.md"),
         ),
         raising=False,
     )
