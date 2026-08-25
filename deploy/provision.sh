@@ -161,6 +161,35 @@ case "${LOCALE}" in
        exit 1 ;;
 esac
 
+echo "==> 2c. El rol de la aplicacion, que NO es superusuario"
+# La aplicacion no corre como `postgres`: un compromiso de la API a traves
+# de internet no debe traer permisos totales sobre el cluster. El rol se
+# crea sin contrasena y se fija despues con `\password`, que no la escribe
+# en la linea de comandos ni en los logs de PostgreSQL.
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${BASE}'" | grep -q 1; then
+    echo "    el rol ${BASE} ya existe -- no se toca su contrasena"
+else
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE ${BASE} LOGIN"
+    echo "    rol ${BASE} creado SIN contrasena. Fijala ahora:"
+    echo "      sudo -u postgres psql -c '\\password ${BASE}'"
+fi
+sudo -u postgres psql -v ON_ERROR_STOP=1 -c "ALTER DATABASE ${BASE} OWNER TO ${BASE}"
+
+echo "==> 2d. Extensiones, creadas con privilegios (RFC-0006 7)"
+# `CREATE EXTENSION` exige superusuario, y el rol de la aplicacion no lo es.
+# Si se dejaran a la migracion -- que corre como ${BASE} -- fallaria con
+# "permission denied to create extension", a mitad del despliegue.
+#
+# Creadas aqui, el `IF NOT EXISTS` de la migracion es una operacion vacia:
+# el esquema sigue siendo responsabilidad de RFC-0006 y esto solo se
+# adelanta a poner lo que necesita privilegios.
+sudo -u postgres psql -d "${BASE}" -v ON_ERROR_STOP=1 \
+    -c "CREATE EXTENSION IF NOT EXISTS vector" \
+    -c "CREATE EXTENSION IF NOT EXISTS unaccent" \
+    -c "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+sudo -u postgres psql -d "${BASE}" -tAc \
+    "SELECT string_agg(extname, ' ' ORDER BY extname) FROM pg_extension"
+
 echo "==> 3. Cortafuegos: VERIFICAR antes de tocar"
 # Si el VPS trae panel de control, el cortafuegos puede estar gestionado por
 # el: un `ufw enable` a ciegas puede dejarte fuera o romper reglas existentes.

@@ -200,7 +200,7 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # lo es -- a proposito. Las crea el aprovisionamiento, que si tiene
         # privilegios; la migracion las encuentra puestas y su
         # `IF NOT EXISTS` se vuelve una operacion vacia (RFC-0006 7).
-        "CREATE EXTENSION IF NOT EXISTS vector": "pgvector la crea el aprovisionamiento (RFC-0006 7)",
+        "CREATE EXTENSION IF NOT EXISTS vector": "pgvector la crea el aprovisionamiento",
         "CREATE EXTENSION IF NOT EXISTS unaccent": "unaccent, idem (RFC-0006 7)",
         "CREATE EXTENSION IF NOT EXISTS pg_trgm": "pg_trgm, idem (RFC-0006 7)",
         "CREATE ROLE": "el rol de la aplicacion, que no es superusuario",
