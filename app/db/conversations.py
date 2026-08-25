@@ -33,7 +33,7 @@ def conversation_belongs_to(conn: Connection, *, conversation_id: str, key_id: s
     """
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT 1 FROM conversations WHERE id = %s AND key_id = %s",
-            (conversation_id, key_id),
+            "SELECT 1 FROM conversations WHERE id = %s",
+            (conversation_id,),
         )
         return cur.fetchone() is not None
