@@ -50,6 +50,7 @@ Qué hace, y qué mirar en la salida:
 | **Base con ICU `es-MX`** | La línea `i es-MX`. **Si no sale, el script aborta** |
 | Cortafuegos | Lo imprime y **no lo toca**: revisá a mano que 5432 no esté abierto |
 | `enable-linger` | `Linger=yes` (CA-2) |
+| Rotacion de la bitacora | `configuracion valida` — instala `/etc/logrotate.d/rag-cv` (CA-18) |
 | Árbol en `/opt/rag-cv` | Propiedad de `qrimapp-reto` |
 
 > **El paso del ICU es el único irreversible.** La configuración regional se fija **al crear la
@@ -66,9 +67,13 @@ chown -R qrimapp-reto:qrimapp-reto /home/qrimapp-reto/deploy
 sudo -iu qrimapp-reto bash -lc 'bash ~/deploy/provision.sh --usuario'
 ```
 
-Instala la unidad de usuario, la habilita y crea `/opt/rag-cv/.env` **ya con permisos `600`** —no
+Instala la unidad de usuario, la habilita, crea `/opt/rag-cv/.env` **ya con permisos `600`** —no
 se crean y se corrigen después: `touch` seguido de `chmod` deja una ventana real en la que el
-fichero es legible por todo el host (§8, CA-15).
+fichero es legible por todo el host (§8, CA-15)— y deja el sondeo de RFC-0019 en el `crontab` del
+operador.
+
+El sondeo corre **sin `sudo`**, y el script comprueba además que no exista una regla `NOPASSWD`
+que lo sostenga: una regla así anularía el objetivo entero de RFC-0016 §8.1 (CA-17).
 
 ## 3. El secreto y el corpus
 
@@ -146,6 +151,10 @@ ssh qrimapp-reto@reto.qrimapp.com \
 ```
 
 Sin reconstruir nada: `mv -Tf` sobre un enlace simbólico es atómico (CA-7).
+
+El despliegue conserva las últimas **5** releases (`RETENCION=5` para cambiarlo) y **nunca borra la
+vigente**. Se podan después de conmutar y verificar, jamás antes: si se borraran primero y el
+arranque fallara, no quedaría a dónde revertir.
 
 ---
 
