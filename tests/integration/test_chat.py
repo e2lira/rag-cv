@@ -11,6 +11,7 @@ entero probaria el doble, no la API (P-2).
 """
 
 import hashlib
+import json
 import uuid
 from typing import Any
 
@@ -65,6 +66,32 @@ def _guion_con_busqueda() -> list[list[dict[str, Any]]]:
     ]
 
 
+class _FabricaDePrueba:
+    """El reparto de ADR-0017: **un modelo compartido, un agente por turno**.
+
+    La prueba monta el mismo reparto que produccion y no uno propio. Si
+    compartiera el agente -- que es lo que hacia antes de ADR-0017 -- no
+    podria detectar la fuga que ADR-0017 corrige: el doble tendria el mismo
+    defecto que el codigo, y las dos mentiras se cancelarian.
+
+    El modelo se guarda accesible a proposito: lo que estas pruebas
+    verifican es **lo que el modelo recibe** (RFC-0014 P-13), y para eso hay
+    que poder preguntarle.
+    """
+
+    def __init__(self, guion: list[list[dict[str, Any]]]) -> None:
+        self.model = ScriptedModel(guion)
+
+    def for_turn(self, messages: list[dict[str, Any]] | None = None) -> Agent:
+        return Agent(
+            model=self.model,
+            messages=list(messages or []),
+            tools=[make_search_cv_spy(fuentes=[_FUENTE]), make_list_cv_sections_spy()],
+            system_prompt=SYSTEM_PROMPT.format(persona="Prueba"),
+            hooks=[ToolCallCapHook(), ToolErrorPropagationHook(), ToolStreamMarkersHook()],
+        )
+
+
 def _cliente(
     database_url: str,
     *,
@@ -76,12 +103,7 @@ def _cliente(
     app.state.api_keys = claves or (_clave_de_prueba(),)
     app.state.rate_limit_per_minute = 60
     app.state.rate_limit_per_day = 1000
-    app.state.agent = Agent(
-        model=ScriptedModel(guion or _guion_con_busqueda()),
-        tools=[make_search_cv_spy(fuentes=[_FUENTE]), make_list_cv_sections_spy()],
-        system_prompt=SYSTEM_PROMPT.format(persona="Prueba"),
-        hooks=[ToolCallCapHook(), ToolErrorPropagationHook(), ToolStreamMarkersHook()],
-    )
+    app.state.agent_factory = _FabricaDePrueba(guion or _guion_con_busqueda())
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -199,6 +221,59 @@ def test_a_conversation_of_the_same_key_continues(database_url: str) -> None:
 
     assert segundo.status_code == 200, segundo.text
     assert segundo.json()["conversation_id"] == primero["conversation_id"]
+
+
+def _texto_de_los_mensajes(cliente: TestClient) -> str:
+    """Todo lo que el modelo recibio en su ULTIMA invocacion.
+
+    Se mira lo que el modelo **recibe**, no lo que la API devuelve: que dos
+    turnos compartan `conversation_id` no prueba que el segundo vea al
+    primero -- el identificador puede coincidir y el historial no viajar.
+    Esa distincion es justo lo que RFC-0004 7 exige.
+    """
+    fabrica: _FabricaDePrueba = cliente.app.state.agent_factory  # type: ignore[attr-defined,union-attr]
+    return json.dumps(fabrica.model.stream_calls[-1]["messages"], ensure_ascii=False, default=str)
+
+
+def test_the_second_turn_sees_the_first(database_url: str) -> None:
+    """RFC-0004 7: en cada turno se carga el historial de esa conversacion.
+
+    Sin esto la conversacion no existe: se persiste, se le devuelve al
+    cliente un `conversation_id`, y cada pregunta llega al modelo como si
+    fuera la primera. El sintoma en produccion es un agente que no recuerda
+    lo que acaba de decir.
+    """
+    cliente = _cliente(database_url, guion=[*_guion_con_busqueda(), *_guion_con_busqueda()])
+    primero = cliente.post(
+        "/v1/chat", headers={"X-API-Key": _CLAVE}, json={"message": "Trabajo en AWS?"}
+    ).json()
+
+    cliente.post(
+        "/v1/chat",
+        headers={"X-API-Key": _CLAVE},
+        json={"message": "Y en que anio?", "conversation_id": primero["conversation_id"]},
+    )
+
+    recibido = _texto_de_los_mensajes(cliente)
+    assert "Trabajo en AWS?" in recibido, "el modelo no vio la pregunta anterior"
+    assert _RESPUESTA in recibido, "el modelo no vio su propia respuesta anterior"
+
+
+def test_another_conversation_sees_nothing_of_the_first(database_url: str) -> None:
+    """La guarda del test anterior, y no es opcional.
+
+    Cargar historial mal -- dejandolo en el agente compartido en vez de
+    pasarlo por invocacion -- haria pasar la continuidad **y** filtraria la
+    conversacion de un usuario a la de otro. Es el error mas caro de esta
+    arquitectura (RFC-0004 6), y solo se ve preguntando por lo contrario.
+    """
+    cliente = _cliente(database_url, guion=[*_guion_con_busqueda(), *_guion_con_busqueda()])
+    cliente.post("/v1/chat", headers={"X-API-Key": _CLAVE}, json={"message": "Secreto del primero"})
+
+    cliente.post("/v1/chat", headers={"X-API-Key": _CLAVE}, json={"message": "Conversacion nueva"})
+
+    recibido = _texto_de_los_mensajes(cliente)
+    assert "Secreto del primero" not in recibido, "una conversacion filtro en otra"
 
 
 def test_chat_rejects_an_empty_message(database_url: str) -> None:

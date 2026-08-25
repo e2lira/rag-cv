@@ -12,7 +12,14 @@ from typing import Any
 
 import pytest
 
-from tests.integration.test_chat import _CLAVE, _FUENTE, _RESPUESTA, _cliente, _guion_con_busqueda
+from tests.integration.test_chat import (
+    _CLAVE,
+    _FUENTE,
+    _RESPUESTA,
+    _cliente,
+    _guion_con_busqueda,
+    _texto_de_los_mensajes,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -155,9 +162,10 @@ def test_conversation_continuity(database_url: str) -> None:
     )
 
     assert segundo.status_code == 200, segundo.text
-    # El segundo turno vive en la misma conversacion: el modelo lo vio.
-    mensajes = cliente.app.state.agent.model.stream_calls  # type: ignore[attr-defined]
-    assert len(mensajes) >= 2
+    # Lo que prueba la continuidad es lo que el modelo RECIBE, no que las
+    # dos respuestas existan: `previous_response_id` puede aceptarse,
+    # devolverse un 200, y el historial no viajar nunca.
+    assert "Primera" in _texto_de_los_mensajes(cliente), "el segundo turno no vio al primero"
 
 
 def test_error_body_carries_both_shapes(database_url: str) -> None:
