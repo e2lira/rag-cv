@@ -48,6 +48,9 @@ class RequestIdFilter(logging.Filter):
 _INTERNAL_MESSAGE = "Ha ocurrido un error interno. Usa el request_id para reportarlo."
 _INVALID_REQUEST_MESSAGE = "La peticion no cumple el esquema esperado."
 
+# La unica ruta que habla un protocolo ajeno (RFC-0005 13).
+_RUTA_OPEN_RESPONSES = "/v1/responses"
+
 # Codigos de RFC-0005 8, por estado HTTP. Un estado no listado cae en
 # `internal_error`: es preferible un codigo generico a inventar uno.
 _CODES: dict[int, str] = {
@@ -124,11 +127,30 @@ def _respuesta(
     # Las cabeceras del `HTTPException` viajan con la respuesta: el `429` de
     # RFC-0005 7 no sirve de nada sin `Retry-After` y `X-RateLimit-*`.
     cabeceras = {**(extra_headers or {}), REQUEST_ID_HEADER: identificador}
+    codigo = _CODES.get(status, "internal_error")
+    cuerpo = error_body(codigo, message, identificador)
     return JSONResponse(
         status_code=status,
-        content=error_body(_CODES.get(status, "internal_error"), message, identificador),
+        content=cuerpo | _forma_open_responses(request, codigo, message),
         headers=cabeceras,
     )
+
+
+def _forma_open_responses(request: Request, codigo: str, message: str) -> dict[str, Any]:
+    """Las claves hermanas que exige Open Responses (RFC-0005 13.5, CA-23).
+
+    Se emiten **ademas** del cuerpo de 8, no en su lugar: un cliente que ya
+    lea el formato propio no debe romperse porque otro cliente hable la
+    especificacion. `code` y `message` se duplican a proposito -- son el
+    mismo valor en los dos sitios--, y `request_id` vive solo dentro de
+    `error` porque no pertenece a la especificacion.
+
+    Solo en `/v1/responses`: anadirlas en todas partes convertiria una
+    concesion a un protocolo externo en el formato de error del sistema.
+    """
+    if not request.url.path.startswith(_RUTA_OPEN_RESPONSES):
+        return {}
+    return {"type": "error", "code": codigo, "message": message}
 
 
 def install_error_handling(app: FastAPI) -> None:
