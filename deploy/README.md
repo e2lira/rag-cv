@@ -84,7 +84,7 @@ Rellenar `/opt/rag-cv/.env` a mano. Tres reglas que no son obvias (§8):
 Valores que cambian respecto de DEV: `DATABASE_URL` apunta a `127.0.0.1`, `CORPUS_PATH` a
 `/opt/rag-cv/corpus/cv.md`, `EMBEDDER=openai`, y `COMMIT_SHA` lo escribe el despliegue.
 
-Y **copiar el corpus a `/opt/rag-cv/corpus/cv.md`**. No viaja en el `rsync` a propósito: vive en el
+Y **copiar el corpus a `/opt/rag-cv/corpus/cv.md`**. No viaja en la transferencia a propósito: vive en el
 VPS y no en el repositorio (RFC-0016 §3.3), así que sincronizarlo lo pisaría con lo que hubiera en
 la máquina de despliegue (CA-10).
 
