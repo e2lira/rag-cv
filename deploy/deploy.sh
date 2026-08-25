@@ -50,12 +50,54 @@ wc -l < "${ORIGEN}/requirements.lock"
 #   corpus/  El corpus VIVE EN EL VPS y no en el repositorio (RFC-0016 §3.3).
 #            Sincronizarlo lo pisaria con lo que hubiera en la maquina de
 #            despliegue (CA-10).
-#   .git     El historial no tiene nada que hacer en el servidor.
-rsync -a --delete \
-    --exclude='.env' \
-    --exclude='.git' \
-    --exclude='corpus/' \
-    "${ORIGEN}/" "${DESTINO}:${RAG_CV_HOME}/releases/${SHA}/"
+#   .git     El historial no tiene nada que hacer en el servidor. `git
+#            archive` ya no lo incluye, pero se purga igual: la garantia no
+#            debe depender de un detalle de la herramienta que arma el arbol.
+# Rutas exactas, sin comodines: la purga y su verificacion tienen que mirar
+# lo MISMO. Con un comodin en la lista, `rm` no lo expande dentro de comillas
+# y la verificacion si -- el script abortaria siempre por `.env.example`, que
+# es una plantilla versionada con marcadores de posicion y debe viajar.
+PURGA=(.env .git corpus)
+
+_purgar_del_arbol() {
+    local raiz="$1" objetivo sobrante
+    for objetivo in "${PURGA[@]}"; do
+        rm -rf "${raiz:?}/${objetivo}"
+    done
+
+    # Se COMPRUEBA que no quedo nada, no se confia en el `rm`: es la
+    # diferencia entre creer que el secreto no viaja y saberlo (CA-10).
+    for objetivo in "${PURGA[@]}"; do
+        if [[ -e "${raiz}/${objetivo}" ]]; then
+            echo "!! ${objetivo} sigue en el arbol a enviar -- se aborta" >&2
+            exit 1
+        fi
+    done
+
+    # Y cualquier OTRO `.env.<algo>` que no sea la plantilla: `git archive`
+    # solo trae ficheros versionados y `.env*` esta en .gitignore, asi que
+    # esto no deberia encontrar nada nunca. Existe porque el dia que alguien
+    # versione un `.env.produccion` por error, el fallo tiene que ser
+    # ruidoso aqui y no silencioso en QA.
+    while IFS= read -r sobrante; do
+        [[ "$(basename "${sobrante}")" == ".env.example" ]] && continue
+        echo "!! ${sobrante} parece un fichero de entorno -- se aborta" >&2
+        exit 1
+    done < <(find "${raiz}" -maxdepth 2 -name '.env*' -type f)
+}
+
+_purgar_del_arbol "${ORIGEN}"
+
+# `tar` sobre `ssh` y no `rsync`. **Desviacion declarada respecto al comando
+# literal de §6**: `rsync` no existe en Git Bash de Windows, que es desde
+# donde se despliega hoy. Lo normativo de §6 son las propiedades -- que el
+# secreto y el corpus no viajen, y que la conmutacion sea atomica --, no la
+# herramienta. `--delete` sobra porque cada release va a un directorio NUEVO
+# y vacio: la inmutabilidad por release ya da lo que `--delete` daba.
+echo "==> Enviando el arbol de ${SHA}"
+tar -C "${ORIGEN}" -czf - . \
+    | ssh "${DESTINO}" "mkdir -p '${RAG_CV_HOME}/releases/${SHA}' \
+        && tar -xzf - -C '${RAG_CV_HOME}/releases/${SHA}'"
 
 ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
   set -euo pipefail
