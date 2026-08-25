@@ -226,8 +226,11 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
         "alembic upgrade head": "la migracion corre ANTES de conmutar (9, CA-6)",
         # El directorio de la release NO tiene .env -- se purga a proposito
-        # (6) -- asi que la migracion necesita la variable en el entorno.
-        "set -a": "el despliegue carga el .env del operador antes de migrar (6, 8)",
+        # (6) -- asi que la migracion necesita la URL desde fuera. Se exige
+        # la funcion y NO `source`: el `.env` lo parsea `pydantic` con sus
+        # reglas, y interpretarlo ademas con bash rompe con cualquier valor
+        # que lleve espacios, asteriscos o llaves.
+        "_url_de_la_base_del_env": "la URL se lee del .env sin interpretarlo (6, 8)",
         # `requirements.lock` no esta en el repositorio: se genera desde
         # `uv.lock`, que es la unica fuente de verdad de las versiones. Un
         # lock committeado aparte deriva del real sin que nada falle.
