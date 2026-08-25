@@ -196,6 +196,14 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "enable-linger": "sin linger no hay servicio tras un reinicio (4, CA-2)",
         "listen_addresses": "PostgreSQL solo por bucle local (7, CA-4)",
         "datlocprovider": "el aprovisionamiento VERIFICA el ICU, no confia (CA-16)",
+        # `CREATE EXTENSION` exige superusuario y el rol de la aplicacion no
+        # lo es -- a proposito. Las crea el aprovisionamiento, que si tiene
+        # privilegios; la migracion las encuentra puestas y su
+        # `IF NOT EXISTS` se vuelve una operacion vacia (RFC-0006 7).
+        "CREATE EXTENSION IF NOT EXISTS vector": "pgvector la crea el aprovisionamiento",
+        "CREATE EXTENSION IF NOT EXISTS unaccent": "unaccent, idem (RFC-0006 7)",
+        "CREATE EXTENSION IF NOT EXISTS pg_trgm": "pg_trgm, idem (RFC-0006 7)",
+        "CREATE ROLE": "el rol de la aplicacion, que no es superusuario",
         "install -m 600": "el .env nace con permisos restrictivos (8, CA-15)",
         # CA-17: el sondeo de RFC-0019 vive en el crontab del usuario de
         # operacion y corre SIN sudo. Una regla NOPASSWD que lo sostuviera
