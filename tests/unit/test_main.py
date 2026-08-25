@@ -187,6 +187,9 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
         lambda settings, http: SimpleNamespace(model_id="fake@test"),
         raising=False,
     )
+    monkeypatch.setattr(
+        main_module, "build_agent", lambda settings, persona: object(), raising=False
+    )
     monkeypatch.setattr(main_module, "build_pool", _raise_pool, raising=False)
 
     with pytest.raises(RuntimeError, match="la base no acepta conexiones"):
