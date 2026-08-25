@@ -57,7 +57,7 @@ async def chat(
     try:
         turno = await run_turn(
             request.app.state.db_pool,
-            request.app.state.agent,
+            request.app.state.agent_factory,
             message=peticion.message,
             conversation_id=str(peticion.conversation_id) if peticion.conversation_id else None,
             key_id=clave.id,
@@ -97,7 +97,7 @@ async def chat_stream(
     async def _flujo() -> AsyncIterator[str]:
         async for evento in run_turn_events(
             request.app.state.db_pool,
-            request.app.state.agent,
+            request.app.state.agent_factory,
             message=peticion.message,
             conversation_id=conversacion,
             key_id=clave.id,
