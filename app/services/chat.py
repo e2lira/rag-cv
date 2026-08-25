@@ -20,8 +20,10 @@ from typing import Any
 
 from psycopg_pool import ConnectionPool
 from strands import Agent
+from strands.types.content import Message
 
-from app.agent.memory import record_turn
+from app.agent.builder import AgentFactory
+from app.agent.memory import load_history, record_turn
 from app.agent.prompts import SYSTEM_PROMPT_VERSION
 from app.agent.streaming import stream_turn
 from app.core.pricing import cost_usd
@@ -79,6 +81,33 @@ def resolve_conversation(pool: ConnectionPool, *, conversation_id: str | None, k
         return conversation_id
 
 
+def _agente_del_turno(pool: ConnectionPool, factory: AgentFactory, conversation_id: str) -> Agent:
+    """El agente de este turno, con el historial de esta conversacion.
+
+    Aqui es donde RFC-0004 7 se vuelve cierto: hasta ADR-0017 `load_history`
+    existia y no la llamaba nadie, asi que la continuidad que se observaba
+    era la fuga del agente compartido, no la memoria.
+
+    `load_history` devuelve solo el TEXTO de los turnos previos, nunca los
+    resultados de herramientas (RFC-0004 7): reenviarlos multiplicaria los
+    tokens de entrada y arrastraria contexto obsoleto tras una reindexacion.
+    """
+    with pool.connection(timeout=_TIEMPO_DE_ESPERA_DE_CONEXION) as conn:
+        historial = load_history(conn, conversation_id)
+
+    # `load_history` devuelve `role` como `str`; el contrato de strands lo
+    # quiere acotado a user/assistant, que es justo lo que el CHECK de la
+    # tabla `messages` ya garantiza (RFC-0006 4).
+    mensajes: list[Message] = [
+        {
+            "role": "user" if m["role"] == "user" else "assistant",
+            "content": [{"text": m["content"]}],
+        }
+        for m in historial
+    ]
+    return factory.for_turn(mensajes)
+
+
 def model_id_of(agent: Agent) -> str | None:
     """El modelo **realmente** usado, no el configurado (RFC-0005 4, CA-16).
 
@@ -93,7 +122,7 @@ def model_id_of(agent: Agent) -> str | None:
 
 async def run_turn_events(
     pool: ConnectionPool,
-    agent: Agent,
+    factory: AgentFactory,
     *,
     message: str,
     conversation_id: str | None,
@@ -102,11 +131,16 @@ async def run_turn_events(
 ) -> AsyncIterator[dict[str, Any]]:
     """El turno completo como flujo de eventos de RFC-0005 5.
 
+    Recibe la **fabrica**, no un agente (ADR-0017): el agente se construye
+    aqui, para este turno y con el historial de esta conversacion. Un agente
+    de vida larga acumularia los mensajes de todos los usuarios.
+
     El `message_id` se acuna **antes** del primer evento y se impone a la
     fila al persistir: `start` lo publica para que un cliente que aborta a
     mitad pueda nombrar el turno que abandono.
     """
     conversacion = resolve_conversation(pool, conversation_id=conversation_id, key_id=key_id)
+    agent = _agente_del_turno(pool, factory, conversacion)
     message_id = str(uuid.uuid4())
     yield {
         "event": "start",
@@ -241,7 +275,7 @@ def _persistir(
 
 async def run_turn(
     pool: ConnectionPool,
-    agent: Agent,
+    factory: AgentFactory,
     *,
     message: str,
     conversation_id: str | None,
@@ -257,7 +291,7 @@ async def run_turn(
     turno: TurnResult | None = None
     async for evento in run_turn_events(
         pool,
-        agent,
+        factory,
         message=message,
         conversation_id=conversation_id,
         key_id=key_id,

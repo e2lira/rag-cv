@@ -96,7 +96,7 @@ async def _turno(
     try:
         async for evento in run_turn_events(
             request.app.state.db_pool,
-            request.app.state.agent,
+            request.app.state.agent_factory,
             message=mensaje,
             conversation_id=conversacion,
             key_id=clave.id,
@@ -128,7 +128,7 @@ def _flujo(
         identificador = ""
         async for evento in run_turn_events(
             request.app.state.db_pool,
-            request.app.state.agent,
+            request.app.state.agent_factory,
             message=mensaje,
             conversation_id=conversacion,
             key_id=clave.id,

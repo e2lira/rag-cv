@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 import httpx2
 from fastapi import FastAPI
 
-from app.agent.builder import build_agent
+from app.agent.builder import AgentFactory
 from app.api.app_factory import create_app
 from app.core.engine import build_pool
 from app.core.migrations import resolve_expected_head
@@ -72,12 +72,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # (RFC-0021 6).
         embedder = build_embedder(settings, http)
 
-    # Una vez por proceso (RFC-0004 6), no por peticion. La razon no es
-    # rendimiento: el historial viaja en cada invocacion (RFC-0004 7) y
-    # nunca dentro del objeto agente. Un agente por peticion invitaria a
-    # guardarlo dentro, que es la fuga de contexto entre usuarios mas cara
-    # de esta arquitectura.
-    app.state.agent = build_agent(settings, _persona(settings))
+    # Lo que se construye una vez por proceso es el MODELO, no el agente
+    # (ADR-0017): `build_model` resuelve credenciales y cliente del
+    # proveedor, y eso no conviene repetirlo. El agente lo arma la fabrica
+    # por turno, porque el objeto `Agent` de strands acumula `self.messages`
+    # y uno de vida larga concatenaria las conversaciones de todos los
+    # usuarios -- la fuga que RFC-0004 6 decia evitar y producia.
+    app.state.agent_factory = AgentFactory.from_settings(settings, _persona(settings))
 
     pool = build_pool(settings.database_url.get_secret_value())
     app.state.db_pool = pool
