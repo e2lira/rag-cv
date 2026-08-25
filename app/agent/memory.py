@@ -61,6 +61,7 @@ def record_turn(
     cost_usd: float | None = None,
     latency_ms: int | None = None,
     request_id: str | None = None,
+    message_id: str | None = None,
 ) -> str:
     """Persiste el par usuario/asistente de un turno -- RFC-0004 7. La
     version del prompt viaja en el mensaje del asistente (CA-9): es su
@@ -73,6 +74,12 @@ def record_turn(
     Los campos de medicion son opcionales porque RFC-0004 no los conoce --
     los aporta el turno de RFC-0005, que es quien mide-- y un turno sin
     ellos sigue siendo un turno valido.
+
+    `message_id` se puede imponer porque el flujo SSE (RFC-0005 5) publica
+    el identificador del turno en su primer evento, antes de que exista la
+    fila: un cliente que aborta a mitad necesita poder nombrar el turno que
+    abandono. Sin imponerlo habria que inventar un id y reconciliarlo
+    despues, que es la clase de "casi el mismo" que acaba mintiendo.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -82,15 +89,17 @@ def record_turn(
         )
         cur.execute(
             "INSERT INTO messages "
-            "(conversation_id, role, content, prompt_version, source_chunk_ids, status, "
+            "(id, conversation_id, role, content, prompt_version, source_chunk_ids, status, "
             " grounded, model_id, input_tokens, output_tokens, tool_calls, cost_usd, "
             " latency_ms, request_id) "
             "VALUES "
-            "(%(conversation_id)s, 'assistant', %(texto)s, %(version)s, %(chunks)s, %(status)s, "
+            "(COALESCE(%(id)s, gen_random_uuid()), "
+            " %(conversation_id)s, 'assistant', %(texto)s, %(version)s, %(chunks)s, %(status)s, "
             " %(grounded)s, %(model_id)s, %(input_tokens)s, %(output_tokens)s, %(tool_calls)s, "
             " %(cost_usd)s, %(latency_ms)s, %(request_id)s) "
             "RETURNING id",
             {
+                "id": message_id,
                 "conversation_id": conversation_id,
                 "texto": assistant_text,
                 "version": prompt_version,
