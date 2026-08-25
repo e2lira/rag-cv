@@ -150,7 +150,8 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "EnvironmentFile=": "el secreto lo lee la unidad, no el perfil (8)",
         "--proxy-headers": "cabeceras de reenvio (7.1)",
         "--forwarded-allow-ips=127.0.0.1": "cabeceras de reenvio (7.1)",
-        "127.0.0.1:8080": "la API solo escucha en bucle local (7, CA-4)",
+        "--host 127.0.0.1": "la API solo escucha en bucle local (7, CA-4)",
+        "--port 8080": "el puerto que nginx alcanza (5)",
     },
     _VHOST: {
         # Sin esto no hay streaming, solo la ilusion: nginx bufferea por
