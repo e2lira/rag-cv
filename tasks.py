@@ -187,6 +187,11 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # en el que `current` apunte a medias (6).
         "mv -Tf": "conmutacion atomica del enlace (6, CA-7)",
         "alembic upgrade head": "la migracion corre ANTES de conmutar (9, CA-6)",
+        # `requirements.lock` no esta en el repositorio: se genera desde
+        # `uv.lock`, que es la unica fuente de verdad de las versiones. Un
+        # lock committeado aparte deriva del real sin que nada falle.
+        "uv export": "el lock se genera desde uv.lock por release (5.1 #10)",
+        "--require-hashes": "las dependencias se instalan por hash (5.1 #9)",
     },
 }
 
