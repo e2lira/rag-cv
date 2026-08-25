@@ -50,7 +50,6 @@ Qué hace, y qué mirar en la salida:
 | **Base con ICU `es-MX`** | La línea `i es-MX`. **Si no sale, el script aborta** |
 | Cortafuegos | Lo imprime y **no lo toca**: revisá a mano que 5432 no esté abierto |
 | `enable-linger` | `Linger=yes` (CA-2) |
-| Rotacion de la bitacora | `configuracion valida` — instala `/etc/logrotate.d/rag-cv` (CA-18) |
 | Árbol en `/opt/rag-cv` | Propiedad de `qrimapp-reto` |
 
 > **El paso del ICU es el único irreversible.** La configuración regional se fija **al crear la
@@ -67,7 +66,10 @@ chown -R qrimapp-reto:qrimapp-reto /home/qrimapp-reto/deploy
 sudo -iu qrimapp-reto bash -lc 'bash ~/deploy/provision.sh --usuario'
 ```
 
-Instala la unidad de usuario, la habilita, crea `/opt/rag-cv/.env` **ya con permisos `600`** —no
+Instala la unidad de usuario, la habilita, deja la **rotación de la bitácora en espacio de usuario**
+—en `$RAG_CV_HOME/logs/logrotate.conf`, invocada desde el `crontab` con su propio fichero de estado,
+nunca en el directorio del sistema, que exigiría `root` (RFC-0019 §7, CA-18)—, crea
+`/opt/rag-cv/.env` **ya con permisos `600`** —no
 se crean y se corrigen después: `touch` seguido de `chmod` deja una ventana real en la que el
 fichero es legible por todo el host (§8, CA-15)— y deja el sondeo de RFC-0019 en el `crontab` del
 operador.
@@ -156,9 +158,22 @@ El bloque del *stream* va **antes** que el genérico.
 ./deploy/deploy.sh <sha-validado-en-verde> qrimapp-reto@reto.qrimapp.com
 ```
 
-El SHA tiene que ser un commit con CI en verde. El script lo verifica, arma el árbol desde
-`git archive` —no desde el disco de trabajo—, genera `requirements.lock` desde `uv.lock`, migra
-**antes** de conmutar el enlace, y comprueba que `/readyz` publique ese mismo SHA.
+Lo que el script **garantiza**, en este orden:
+
+| Comprobación | Qué hace si falla |
+| :--- | :--- |
+| El SHA existe como commit | Aborta |
+| **Todas** las ejecuciones de CI completadas de ese SHA son `success` | Aborta |
+| El árbol enviado no lleva `.env`, `.git` ni `corpus/` | Aborta |
+| La migración corre **antes** de conmutar el enlace | Aborta y deja corriendo la release anterior |
+| `/readyz` publica ese mismo SHA | Aborta |
+
+El árbol sale de `git archive`, no del disco de trabajo. `requirements.lock` se genera desde
+`uv.lock`. Las releases se podan **después** de verificar, nunca antes.
+
+> La comprobación del CI necesita `gh` autenticado. Si falta, **aborta** — una garantía que se salta
+> cuando no está la herramienta no es una garantía. Para el caso legítimo de desplegar sin red y a
+> sabiendas existe `SIN_CI=1`, que hay que escribir a mano y queda en el historial del shell.
 
 > Si la migración falla, `set -e` corta ahí y `current` sigue apuntando a la release anterior, que
 > sigue corriendo (§9, CA-6). Ese orden es todo el mecanismo.

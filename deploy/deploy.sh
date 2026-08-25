@@ -20,9 +20,59 @@ URL_SALUD="${URL_SALUD:-https://reto.qrimapp.com/readyz}"
 
 echo "==> Desplegando ${SHA} en ${DESTINO}:${RAG_CV_HOME}"
 
+_abortar_si_el_ci_no_esta_verde() {
+    # Desplegar a QA un commit sin CI verde es exactamente lo que la
+    # identidad de release existe para impedir: /readyz publicaria un SHA
+    # que nadie valido, y "desplegamos el commit X" volveria a ser una
+    # afirmacion en vez de un hecho (§6, CA-5).
+    #
+    # **Aborta, no advierte.** Y si falta `gh`, tambien aborta: una garantia
+    # que se salta cuando no esta la herramienta no es una garantia. Para el
+    # caso legitimo -- desplegar sin red, a sabiendas -- esta `SIN_CI=1`,
+    # que hay que escribir a mano y queda en el historial del shell.
+    if [[ "${SIN_CI:-0}" == "1" ]]; then
+        echo "!! SIN_CI=1: se despliega ${SHA} SIN comprobar el CI, bajo tu responsabilidad" >&2
+        return 0
+    fi
+
+    command -v gh >/dev/null 2>&1 || {
+        echo "!! falta 'gh' y no se puede comprobar el CI de ${SHA}." >&2
+        echo "   Instalalo, o repite con SIN_CI=1 si desplegas a sabiendas." >&2
+        exit 1
+    }
+
+    echo "==> Comprobando el CI de ${SHA}"
+    local conclusiones
+    # Se mira el codigo de salida de `gh`, no solo su texto: si la llamada
+    # falla, su mensaje de error acabaria dentro de `conclusiones` y se
+    # reportaria como "no esta en verde" -- aborta igual, pero por el motivo
+    # equivocado, y eso manda a depurar al sitio incorrecto.
+    if ! conclusiones="$(gh api "repos/:owner/:repo/commits/${SHA}/check-runs" \
+        --jq '[.check_runs[] | select(.status=="completed") | .conclusion] | join(" ")' 2>&1)"; then
+        echo "!! no se pudo consultar el CI de ${SHA}: ${conclusiones}" >&2
+        echo "   Revisa la autenticacion de 'gh', o repite con SIN_CI=1." >&2
+        exit 1
+    fi
+
+    if [[ -z "${conclusiones}" ]]; then
+        echo "!! ${SHA} no tiene ninguna ejecucion de CI completada." >&2
+        echo "   Un commit sin evidencia no se despliega a QA." >&2
+        exit 1
+    fi
+    for conclusion in ${conclusiones}; do
+        if [[ "${conclusion}" != "success" ]]; then
+            echo "!! el CI de ${SHA} no esta en verde: ${conclusiones}" >&2
+            exit 1
+        fi
+    done
+    echo "    OK: ${conclusiones}"
+}
+
 # El arbol que se envia es el del commit, no el de trabajo: desplegar lo que
 # hay en el disco de quien despliega es como se cuela codigo sin revisar.
 git rev-parse --verify "${SHA}^{commit}" >/dev/null
+
+_abortar_si_el_ci_no_esta_verde
 
 ORIGEN="$(mktemp -d)"
 trap 'rm -rf "${ORIGEN}"' EXIT
