@@ -77,6 +77,13 @@ def patch_successful_startup(
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
+    # El agente tambien se dobla: construirlo de verdad exigiria las
+    # credenciales del proveedor, y estas pruebas son sobre el ORDEN del
+    # arranque (RFC-0021 5), no sobre RFC-0004. Lo que el agente deba ser lo
+    # verifica tests/unit/test_agent_wiring.py.
+    monkeypatch.setattr(
+        main_module, "build_agent", lambda settings, persona: object(), raising=False
+    )
 
     def _recorder(name: str) -> Any:
         def _fn(*args: Any, **kwargs: Any) -> None:
