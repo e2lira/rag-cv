@@ -129,8 +129,30 @@ else
 fi
 
 # Se VERIFICA, no se confia en que quien aprovisiona se acuerde (CA-16).
+#
+# La locale de ICU **no vive en `datcollate`** (ADR-0019): ahi esta la de
+# libc, heredada del servidor, que vale distinto en cada host y no dice nada
+# sobre ICU. Compararla contra `es-MX` no falla ruidosamente -- simplemente
+# no coincide nunca, y la rama de fallo ordena `dropdb` sobre una base
+# correcta. Es peor que no comprobar.
+#
+# Y el nombre de la columna cambia con la version, asi que se le pregunta al
+# servidor en vez de fijar uno: `daticulocale` en PG 15-16, `datlocale` en
+# PG >= 17. Un nombre fijo falla al actualizar con `UndefinedColumn`, que
+# parece un problema de permisos y manda a depurar al sitio equivocado.
+COLUMNA_ICU="$(sudo -u postgres psql -tAc \
+    "SELECT attname FROM pg_attribute WHERE attrelid='pg_database'::regclass \
+     AND attname IN ('daticulocale','datlocale')")"
+
+if [[ -z "${COLUMNA_ICU}" ]]; then
+    echo "!! este PostgreSQL no expone la locale de ICU por base." >&2
+    echo "   Se necesita PostgreSQL >= 15 para el proveedor ICU (RFC-0020 §4)." >&2
+    exit 1
+fi
+
 LOCALE="$(sudo -u postgres psql -tAc \
-    "SELECT datlocprovider::text || ' ' || datcollate FROM pg_database WHERE datname='${BASE}'")"
+    "SELECT datlocprovider::text || ' ' || COALESCE(${COLUMNA_ICU}, '(ninguna)') \
+     FROM pg_database WHERE datname='${BASE}'")"
 echo "    ${LOCALE}"
 case "${LOCALE}" in
     i\ es-MX*) echo "    OK: proveedor ICU con es-MX" ;;
