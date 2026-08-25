@@ -2,7 +2,6 @@
 Windows. RFC-0021 CA-8: ese /readyz sigue respondiendo una vez que el
 arranque validado (RFC-0021) termino, no antes."""
 
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -13,6 +12,7 @@ from pydantic import SecretStr
 import app.main as main_module
 from app.agent.builder import AgentFactory
 from app.main import app
+from tests.unit.test_startup_wiring import corpus_de_prueba
 
 # Campos que el lifespan pasa al estado de la aplicacion (RFC-0005 6.1 y
 # 8). El doble los trae para no acoplar estas pruebas -- que verifican
@@ -106,7 +106,7 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
             api_keys_json=_CLAVES,
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
-            corpus_path=Path("corpus/cv.md"),
+            corpus_path=corpus_de_prueba(),
         ),
         raising=False,
     )
@@ -181,7 +181,7 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
             api_keys_json=_CLAVES,
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
-            corpus_path=Path("corpus/cv.md"),
+            corpus_path=corpus_de_prueba(),
         ),
         raising=False,
     )

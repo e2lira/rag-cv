@@ -9,8 +9,10 @@ Todas las dependencias del lifespan se doblan: la disciplina de este RFC es
 sobre el cableado, no una repeticion de lo que RFC-0006 ya prueba contra una
 base real (RFC-0021 9)."""
 
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,8 +22,23 @@ from pydantic import SecretStr
 
 import app.main as main_module
 from app.agent.builder import AgentFactory
+from tests.unit.ingestion_fixtures import VALID_CORPUS
 
 pytestmark = pytest.mark.unit
+
+
+@lru_cache(maxsize=1)
+def corpus_de_prueba() -> Path:
+    """Un corpus sintetico en disco, **nunca `corpus/cv.md`**.
+
+    `corpus/` esta en `.gitignore` -- el CV real no se versiona (RFC-0016
+    3.3) --, asi que apuntar ahi hace que la prueba pase en la maquina de
+    quien la escribio y falle en CI, que es el peor de los dos mundos: el
+    rojo llega tarde y contra un cambio que no lo causo.
+    """
+    destino = Path(tempfile.gettempdir()) / "rfc0005_corpus_de_prueba.md"
+    destino.write_text(VALID_CORPUS, encoding="utf-8")
+    return destino
 
 
 class FakePool:
@@ -64,9 +81,9 @@ def patch_successful_startup(
             + '","role":"read","label":"t","active":true}]}',
             rate_limit_per_minute=60,
             rate_limit_per_day=1000,
-            # El corpus real: de su front-matter sale `{persona}` del prompt
-            # de sistema (RFC-0004 4).
-            corpus_path=Path("corpus/cv.md"),
+            # Corpus sintetico, nunca el real: de su front-matter sale
+            # `{persona}` del prompt de sistema (RFC-0004 4).
+            corpus_path=corpus_de_prueba(),
         ),
         raising=False,
     )
