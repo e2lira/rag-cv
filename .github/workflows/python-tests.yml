@@ -51,3 +51,22 @@ jobs:
       - run: uv sync
       - run: uv run invoke lint
       - run: uv run pytest
+
+  # RFC-0020 5.1 #9 / CA-12: sustituto nativo del escaneo de imagen que daba
+  # el contenedor (ADR-0010 lo difirio y con el se perdio). Se audita el
+  # `requirements.lock` que viaja con la release -- generado desde `uv.lock`,
+  # la unica fuente de verdad-- y no el entorno resuelto en el runner, que
+  # puede diferir del que se instala en el VPS.
+  auditoria-de-dependencias:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Generar requirements.lock desde uv.lock
+        run: uv export --format requirements-txt --no-dev --no-emit-project > requirements.lock
+      # Bloquea severidad alta y critica: una vulnerabilidad conocida en una
+      # dependencia no deberia poder llegar a QA porque nadie miro.
+      - name: pip-audit
+        run: uvx pip-audit --requirement requirements.lock --strict --disable-pip

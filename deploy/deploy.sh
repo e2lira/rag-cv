@@ -123,6 +123,33 @@ ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" SHA="${SHA}" bash -se <<'EOS'
   systemctl --user restart rag-cv-api
 EOS
 
+# `releases/` crece una copia entera del proyecto por despliegue. Sin
+# retencion el disco del VPS se llena, y el sintoma no es "faltan releases":
+# es que PostgreSQL deja de poder escribir, lejos de la causa.
+#
+# Se podan DESPUES de conmutar y de reiniciar, nunca antes: si se borraran
+# primero y el arranque fallara, no quedaria a donde revertir (§6, CA-7).
+# Y nunca se toca la que `current` apunta.
+RETENCION="${RETENCION:-5}"
+
+_podar_releases() {
+    echo "==> Conservando las ultimas ${RETENCION} releases"
+    ssh "${DESTINO}" RAG_CV_HOME="${RAG_CV_HOME}" RETENCION="${RETENCION}" bash -se <<'EOS'
+      set -euo pipefail
+      VIGENTE="$(readlink -f "${RAG_CV_HOME}/current")"
+      cd "${RAG_CV_HOME}/releases"
+      # Por fecha de modificacion, de la mas nueva a la mas vieja.
+      ls -1dt ./*/ 2>/dev/null | tail -n "+$((RETENCION + 1))" | while read -r vieja; do
+          if [[ "$(readlink -f "${vieja}")" == "${VIGENTE}" ]]; then
+              echo "    se conserva ${vieja} -- es la vigente"
+              continue
+          fi
+          echo "    borrando ${vieja}"
+          rm -rf "${vieja}"
+      done
+EOS
+}
+
 echo "==> Comprobando ${URL_SALUD}"
 RESPUESTA="$(curl -fsS --retry 10 --retry-delay 2 --retry-all-errors "${URL_SALUD}")"
 echo "${RESPUESTA}"
@@ -133,3 +160,7 @@ case "${RESPUESTA}" in
     *"${SHA}"*) echo "==> OK: /readyz publica ${SHA}" ;;
     *) echo "!! /readyz NO publica ${SHA} -- el despliegue no se completo" >&2; exit 1 ;;
 esac
+
+# Solo con el despliegue ya verificado: si algo de arriba fallo, las releases
+# anteriores siguen intactas y la reversion es posible.
+_podar_releases

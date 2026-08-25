@@ -43,7 +43,26 @@ if [[ "${1:-}" == "--usuario" ]]; then
     fi
     ls -l "${RAG_CV_HOME}/.env"
 
-    echo "==> Listo. Falta: rellenar el .env y desplegar con deploy/deploy.sh"
+    echo "==> Sondeo del corpus en el crontab del operador (CA-17)"
+    # RFC-0019 corre desde el cron del USUARIO, sin sudo y sin ninguna regla
+    # NOPASSWD que lo sostenga: una regla asi anularia el objetivo entero de
+    # RFC-0016 §8.1. La cadencia la ejecuta el cron, no la aplicacion --
+    # `WATCHER_CADENCE` esta a proposito fuera de `Settings`.
+    WATCHER_CADENCE="${WATCHER_CADENCE:-*/5 * * * *}"
+    LINEA="${WATCHER_CADENCE} cd ${RAG_CV_HOME}/current && .venv/bin/python -m app.ingestion.watcher >> ${RAG_CV_HOME}/logs/watcher.log 2>&1"
+    if crontab -l 2>/dev/null | grep -q 'app.ingestion.watcher'; then
+        echo "    ya estaba en el crontab -- no se duplica"
+    else
+        { crontab -l 2>/dev/null; echo "${LINEA}"; } | crontab -
+    fi
+    crontab -l | grep 'app.ingestion.watcher'
+
+    echo "==> Comprobando que NO haya una regla NOPASSWD que lo sostenga (CA-17)"
+    sudo -n -l 2>/dev/null && echo "    !! esta cuenta tiene sudo sin contrasena -- revisar" || \
+        echo "    OK: sin sudo sin contrasena"
+
+    echo "==> Listo. Falta: rellenar el .env, copiar el corpus y desplegar"
+    echo "    Y como root, una vez: instalar deploy/logrotate/rag-cv en /etc/logrotate.d/"
     exit 0
 fi
 
@@ -100,6 +119,12 @@ echo "    revisar a mano que 5432 NO este abierto y que 22/80/443 sigan como est
 echo "==> 4. Las unidades de usuario arrancan sin sesion abierta (CA-2)"
 loginctl enable-linger "${USUARIO}"
 loginctl show-user "${USUARIO}" -p Linger
+
+echo "==> 4b. Rotacion de la bitacora del sondeo (CA-18)"
+# Un log que crece sin tope llena el disco, y el sintoma no es "falta el log":
+# es que PostgreSQL deja de poder escribir.
+install -m 644 "$(dirname "$0")/logrotate/rag-cv" /etc/logrotate.d/rag-cv
+logrotate --debug /etc/logrotate.d/rag-cv >/dev/null && echo "    configuracion valida"
 
 echo "==> 5. Arbol de despliegue, propiedad del operador"
 install -d -o "${USUARIO}" -g "${USUARIO}" \
