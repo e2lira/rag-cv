@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import app.main as main_module
+from app.agent.builder import AgentFactory
 from app.main import app
 
 # Campos que el lifespan pasa al estado de la aplicacion (RFC-0005 6.1 y
@@ -117,11 +118,14 @@ def test_readyz_after_successful_startup(monkeypatch: pytest.MonkeyPatch) -> Non
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
-    # Doblado por la misma razon que en test_startup_wiring: construir el
-    # agente de verdad exigiria credenciales del proveedor, y estas pruebas
-    # son sobre RFC-0011 CA-5 y RFC-0021 CA-8, no sobre RFC-0004.
+    # Doblada por la misma razon que en test_startup_wiring (ADR-0017):
+    # construir la fabrica de verdad exigiria credenciales del proveedor, y
+    # estas pruebas son sobre RFC-0011 CA-5 y RFC-0021 CA-8, no RFC-0004.
     monkeypatch.setattr(
-        main_module, "build_agent", lambda settings, persona: object(), raising=False
+        AgentFactory,
+        "from_settings",
+        classmethod(lambda cls, settings, persona: object()),
+        raising=False,
     )
     monkeypatch.setattr(
         main_module,
@@ -188,7 +192,10 @@ def test_startup_aborts_completely_if_a_check_fails(monkeypatch: pytest.MonkeyPa
         raising=False,
     )
     monkeypatch.setattr(
-        main_module, "build_agent", lambda settings, persona: object(), raising=False
+        AgentFactory,
+        "from_settings",
+        classmethod(lambda cls, settings, persona: object()),
+        raising=False,
     )
     monkeypatch.setattr(main_module, "build_pool", _raise_pool, raising=False)
 

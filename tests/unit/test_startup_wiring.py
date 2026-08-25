@@ -19,6 +19,7 @@ import pytest
 from pydantic import SecretStr
 
 import app.main as main_module
+from app.agent.builder import AgentFactory
 
 pytestmark = pytest.mark.unit
 
@@ -77,12 +78,15 @@ def patch_successful_startup(
         raising=False,
     )
     monkeypatch.setattr(main_module, "resolve_expected_head", lambda: "head-x", raising=False)
-    # El agente tambien se dobla: construirlo de verdad exigiria las
-    # credenciales del proveedor, y estas pruebas son sobre el ORDEN del
-    # arranque (RFC-0021 5), no sobre RFC-0004. Lo que el agente deba ser lo
-    # verifica tests/unit/test_agent_wiring.py.
+    # La FABRICA de agentes se dobla (ADR-0017): construirla de verdad
+    # exigiria las credenciales del proveedor, y estas pruebas son sobre el
+    # ORDEN del arranque (RFC-0021 5), no sobre RFC-0004. Lo que la fabrica
+    # deba ser lo verifica tests/unit/test_agent_wiring.py.
     monkeypatch.setattr(
-        main_module, "build_agent", lambda settings, persona: object(), raising=False
+        AgentFactory,
+        "from_settings",
+        classmethod(lambda cls, settings, persona: object()),
+        raising=False,
     )
 
     def _recorder(name: str) -> Any:
