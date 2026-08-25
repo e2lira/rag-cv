@@ -234,6 +234,11 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # el disco del VPS se llena y el sintoma no es "faltan releases":
         # es que PostgreSQL deja de escribir.
         "COMMIT_SHA": "el despliegue escribe la identidad que /readyz publica (6, CA-5)",
+        # El README prometia que el script comprueba el CI y no lo hacia:
+        # solo validaba que el SHA existiera. La documentacion de despliegue
+        # tiene que describir exactamente las garantias que el script aplica.
+        "check-runs": "se comprueba que el SHA tenga CI en verde (6)",
+        "_abortar_si_el_ci_no_esta_verde": "y se aborta si no lo esta, no se avisa (6)",
         "_podar_releases": "se retienen N releases, no todas (9)",
         "RETENCION": "cuantas releases se conservan (9)",
     },
