@@ -206,14 +206,34 @@ _PROHIBIDO_EN_DESPLIEGUE = {
 }
 
 
+def _configuracion_efectiva(archivo: Path) -> str:
+    """El contenido SIN comentarios: la configuracion que de verdad aplica.
+
+    Un guard por subcadenas sobre el fichero entero acepta una directiva que
+    solo aparece comentada. Medido: comentando `ProtectHome=yes` -- la que
+    impide que un proceso comprometido de la API lea ~/.ssh -- el guard
+    seguia pasando, y el servicio habria corrido sin ella.
+
+    Los tres formatos que se comprueban (unidad de systemd, vhost de nginx y
+    guiones de shell) comentan con `#` a principio de linea. Solo se descarta
+    el comentario de LINEA COMPLETA: en shell, un `#` a media linea puede ser
+    expansion de parametro (`${VAR#patron}`) y no un comentario.
+    """
+    lineas = archivo.read_text(encoding="utf-8").splitlines()
+    return "\n".join(linea for linea in lineas if not linea.lstrip().startswith(("#", ";")))
+
+
 def _artefactos_de_despliegue() -> list[str]:
-    """RFC-0020: lo que se envia al VPS trae lo que el RFC exige."""
+    """RFC-0020: lo que se envia al VPS trae lo que el RFC exige.
+
+    Sobre la configuracion EFECTIVA, no sobre el texto del fichero: ver
+    `_configuracion_efectiva`."""
     hallazgos = []
     for archivo, directivas in _ARTEFACTOS_DE_DESPLIEGUE.items():
         if not archivo.exists():
             hallazgos.append(f"{archivo} -- no existe (RFC-0020)")
             continue
-        contenido = archivo.read_text(encoding="utf-8")
+        contenido = _configuracion_efectiva(archivo)
         hallazgos += [
             f"{archivo} -- falta {directiva!r}: {motivo}"
             for directiva, motivo in directivas.items()
