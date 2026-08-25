@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 import httpx2
 from fastapi import FastAPI
 
+from app.agent.builder import build_agent
 from app.api.app_factory import create_app
 from app.core.engine import build_pool
 from app.core.migrations import resolve_expected_head
@@ -28,7 +29,24 @@ from app.core.startup_checks import (
     check_pgvector_version,
     check_single_embed_model,
 )
+from app.ingestion.corpus_parser import parse_front_matter
 from app.retrieval.embedder import build_embedder
+
+
+def _persona(settings: Settings) -> str:
+    """El nombre del que habla el prompt, leido del corpus (RFC-0004 4).
+
+    Del front-matter y no de una constante: el prompt de sistema es uno solo
+    y se parametriza, asi que cambiar de CV no debe exigir tocar codigo. Si
+    el corpus no lo declara, el arranque falla aqui -- un agente que dice
+    "Eres el agente de CV de " no sirve para nada, y fallar al arrancar es
+    mas barato que descubrirlo en la primera pregunta (RFC-0021).
+    """
+    frontal = parse_front_matter(settings.corpus_path.read_text(encoding="utf-8"))
+    persona = str(frontal.get("persona", "")).strip()
+    if not persona:
+        raise RuntimeError(f"El corpus {settings.corpus_path} no declara `persona` (RFC-0004 4)")
+    return persona
 
 
 @asynccontextmanager
@@ -53,6 +71,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # primera consulta si EMBEDDER nombra una implementacion diferida
         # (RFC-0021 6).
         embedder = build_embedder(settings, http)
+
+    # Una vez por proceso (RFC-0004 6), no por peticion. La razon no es
+    # rendimiento: el historial viaja en cada invocacion (RFC-0004 7) y
+    # nunca dentro del objeto agente. Un agente por peticion invitaria a
+    # guardarlo dentro, que es la fuga de contexto entre usuarios mas cara
+    # de esta arquitectura.
+    app.state.agent = build_agent(settings, _persona(settings))
 
     pool = build_pool(settings.database_url.get_secret_value())
     app.state.db_pool = pool
