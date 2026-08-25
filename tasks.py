@@ -151,6 +151,9 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         "Restart=always": "la API vuelve sola (9)",
         "WantedBy=default.target": "arranca sin sesion abierta (CA-2)",
         "EnvironmentFile=": "el secreto lo lee la unidad, no el perfil (8)",
+        # La identidad de la release viaja CON la release, no en el .env del
+        # operador: el despliegue no debe reescribir el fichero del secreto.
+        ".env.release": "la unidad lee la identidad de la release (6, CA-5)",
         "--proxy-headers": "cabeceras de reenvio (7.1)",
         "--forwarded-allow-ips=127.0.0.1": "cabeceras de reenvio (7.1)",
         "--host 127.0.0.1": "la API solo escucha en bucle local (7, CA-4)",
@@ -230,6 +233,7 @@ _ARTEFACTOS_DE_DESPLIEGUE: dict[Path, dict[str, str]] = {
         # `releases/` crece una copia entera por despliegue. Sin retencion,
         # el disco del VPS se llena y el sintoma no es "faltan releases":
         # es que PostgreSQL deja de escribir.
+        "COMMIT_SHA": "el despliegue escribe la identidad que /readyz publica (6, CA-5)",
         "_podar_releases": "se retienen N releases, no todas (9)",
         "RETENCION": "cuantas releases se conservan (9)",
     },
