@@ -128,6 +128,131 @@ La infraestructura prevista publicará métricas y alarmas accionables en CloudW
 
 Para la API de producción, una tasa de errores visibles al usuario >1 % exige investigación; >2 % activa respuesta de emergencia; >5 % convoca respuesta de todas las personas responsables. Los runbooks, dashboards, propietarios y canales de alerta se crearán junto con el despliegue, no se consideran ya implementados. **Este cambio no autoriza un despliegue a PROD:** la infraestructura Terraform, las alarmas y sus pruebas de recuperación son requisitos de una entrega posterior antes de promover la aplicación.
 
+## Instalación en producción (VPS — QA)
+
+El manual operativo completo —orden de pasos, qué comprobar en cada salida y los fallos que no
+emiten error— está en [`deploy/README.md`](deploy/README.md). Aquí, el resumen de **cómo funcionan
+los dos scripts** y **cómo llega el proyecto y el CV al servidor**.
+
+### Los dos scripts de `deploy/`
+
+| Script | Se ejecuta | Qué hace | Cuándo |
+| :--- | :--- | :--- | :--- |
+| `deploy/provision.sh` | En el VPS | Aprovisiona el host: paquetes, base con ICU `es-MX`, rol de la aplicación, `enable-linger`, árbol `/opt/rag-cv`, unidad de `systemd` y sondeo del corpus | **Una vez por VPS** |
+| `deploy/deploy.sh` | En tu máquina | Arma el árbol de un commit validado en verde y lo despliega como release inmutable conmutando el enlace `current` | **Cada despliegue** |
+
+**`provision.sh`** tiene dos modos, porque separa lo que exige privilegios de lo que no
+(RFC-0016 §8.1):
+
+```bash
+sudo ./provision.sh           # pasos de root: paquetes, base, rol, linger, árbol
+./provision.sh --usuario      # pasos de la cuenta de operación: unidad, .env, crontab
+```
+
+Previene tres fallos que **no emiten ningún error** y por eso se verifican explícitamente: base sin
+ICU `es-MX` (trocea mal los acentuados), sin `enable-linger` (el servicio no arranca tras reiniciar)
+y PostgreSQL escuchando fuera del bucle local.
+
+**`deploy.sh <sha>`** convierte el artefacto en **un commit**: `git archive <sha>` arma el árbol en un
+temporal, le quita `.env`, `.git` y `corpus/`, y lo envía por `tar` sobre `ssh` a
+`/opt/rag-cv/releases/<sha>/`. Después migra, conmuta el enlace `current` de forma atómica
+(`mv -Tf`) y reinicia la unidad. Si el CI de ese SHA no está en verde, **aborta**.
+
+### Cómo llega el proyecto al servidor (SSH)
+
+No se clona el repositorio en el VPS. Lo único que se copia **a mano, una sola vez**, es la carpeta
+`deploy/`, para poder ejecutar `provision.sh` allí:
+
+```bash
+scp -r deploy root@reto.qrimapp.com:/root/rag-cv-deploy
+```
+
+Todo lo demás lo envía `deploy.sh` desde tu máquina, por `tar` sobre `ssh`. La transferencia no usa
+`rsync` porque no está en Git Bash de Windows: lo normativo son las propiedades —que el secreto y el
+corpus no viajen, y que la conmutación sea atómica—, no la herramienta.
+
+### Cómo se copia el CV (`scp`)
+
+El corpus **vive en el VPS y no en el repositorio** (RFC-0016 §3.3). No viaja en el despliegue a
+propósito: `corpus/` se excluye del árbol, para no pisar el del VPS con el de la máquina de origen.
+Se copia **a mano** con `scp` — una vez al instalar, y de nuevo cada vez que se actualice el CV:
+
+```bash
+scp corpus/cv.md qrimapp-reto@reto.qrimapp.com:/opt/rag-cv/corpus/cv.md
+```
+
+El sondeo programado de RFC-0019 detecta el cambio y reindexa sin bajar el servicio.
+
+### Las claves de la API (`API_KEYS_JSON`)
+
+La API exige una API Key en cada petición (RFC-0005 §6). La clave se entrega a los clientes, pero
+**en el servidor solo se guarda `sha256(clave)`**, nunca la clave en claro: el valor que va en el
+`.env` es el *hash*, no el secreto. Formato de la clave: `rcv_<env>_<24 caracteres aleatorios>` —
+p. ej. `rcv_live_…` — y se genera una sola vez, con `secrets.token_urlsafe`:
+
+```bash
+python3 -c "import hashlib,secrets; k='rcv_live_'+secrets.token_urlsafe(18); print('clave:',k); print('hash:',hashlib.sha256(k.encode()).hexdigest())"
+```
+
+De esa salida se reparte la línea `clave:` a quien vaya a consumir la API, y se pega **solo** la
+línea `hash:` (64 caracteres hexadecimales) en `API_KEYS_JSON`, dentro del `.env`:
+
+```json
+{"keys":[{"id":"demo","hash":"<sha256-de-la-clave>","role":"read","label":"demo","active":true,"expires_at":null}]}
+```
+
+Sin ninguna clave activa el proceso **no arranca** (fail fast): arrancar con la API abierta es peor
+que no arrancar (CA-25, RFC-0021). Para revocar o rotar se edita el `.env` y se reinicia la unidad
+(`systemctl --user restart rag-cv-api`), que en este despliegue cuesta segundos.
+
+### La API como demonio (`systemd`)
+
+El proceso Python no corre en una terminal: es una **unidad de usuario** de `systemd`,
+`rag-cv-api.service`, instalada por `provision.sh --usuario` en `~/.config/systemd/user/` y
+gestionada sin `sudo`:
+
+```bash
+systemctl --user status rag-cv-api
+systemctl --user restart rag-cv-api
+journalctl --user -u rag-cv-api -f
+```
+
+La unidad levanta uvicorn con dos *workers*, **solo en bucle local** y con `--proxy-headers` para que
+nginx le reenvíe el cliente real:
+
+```
+/opt/rag-cv/current/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8080 --workers 2 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+```
+
+`Restart=always` la reinicia si muere, y `WantedBy=default.target` + `enable-linger` hacen que
+arranque sola tras un reinicio del host sin sesión SSH abierta. Los secretos los lee con
+`EnvironmentFile=/opt/rag-cv/.env`; el `COMMIT_SHA` que publica `/readyz`, de
+`current/.env.release`. El fichero de unidad declara además el endurecimiento (raíz de solo lectura,
+`ProtectHome=yes`, `NoNewPrivileges=yes`, `MemoryMax=1G`), sustituto nativo de las medidas del
+contenedor (RFC-0020 §5.1).
+
+### El proxy nginx ↔ Python, y los puertos
+
+La única forma de llegar a la API desde internet es **a través de nginx**; el resto escucha en bucle
+local:
+
+| Servicio | Escucha en | Gestionado por |
+| :--- | :--- | :--- |
+| nginx | `0.0.0.0:80`, `0.0.0.0:443` | `root` (panel) |
+| API (uvicorn) | `127.0.0.1:8080` | `qrimapp-reto`, `systemctl --user` |
+| PostgreSQL | `127.0.0.1:5432` | `root` (sistema) |
+
+nginx hace `proxy_pass` a `127.0.0.1:8080`. La API **jamás** debe escuchar en `0.0.0.0`: eso saltaría
+nginx y con él el TLS. Y en la ubicación del *stream* (`/v1/chat/stream`, `/v1/responses`) hay que
+desactivar `proxy_buffering`, o nginx bufferea la respuesta y la latencia de primer token se
+convierte en la de respuesta completa — el fallo silencioso de esta capa (RFC-0020 §7.1). El fragmento
+completo está en [`deploy/nginx/reto.qrimapp.com.conf`](deploy/nginx/reto.qrimapp.com.conf).
+
+La secuencia completa —aprovisionar, rellenar el `.env`, instalar nginx, desplegar, verificar y
+revertir— está en [`deploy/README.md`](deploy/README.md).
+
 ## Ciclo de vida operativo
 
 1. Un cambio en `cv.md` llega a S3 (o el scheduler detecta una discrepancia).
