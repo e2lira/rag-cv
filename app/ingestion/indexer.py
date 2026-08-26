@@ -207,12 +207,16 @@ async def _run_cli(argv: list[str] | None = None) -> int:
 
     pool = build_pool(settings.database_url.get_secret_value())
     try:
+        # El trabajo va DENTRO del `async with`: el bloque cierra el cliente
+        # al salir, y `OpenAIEmbedder` se queda con esa referencia. Fuera, la
+        # indexacion muere con "Cannot send a request, as the client has been
+        # closed." -- antes de llegar al proveedor.
         async with httpx2.AsyncClient() as http:
             embedder = build_embedder(settings, http)
-        with pool.connection() as conn:
-            report = await index_corpus(
-                conn, embedder, corpus_path, force=args.force, dry_run=args.dry_run
-            )
+            with pool.connection() as conn:
+                report = await index_corpus(
+                    conn, embedder, corpus_path, force=args.force, dry_run=args.dry_run
+                )
     finally:
         pool.close()
 
