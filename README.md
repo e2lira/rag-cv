@@ -16,6 +16,10 @@
 > ([ADR-0009](docs/adr/ADR-0009-deteccion-de-cambios-del-corpus-por-sondeo.md),
 > [RFC-0019](docs/rfc/RFC-0019-deteccion-de-cambios-del-corpus-en-el-vps.md)).
 >
+> La **instalación y el despliegue en producción en el VPS** están documentados en
+> [`deploy/README.md`](deploy/README.md): aprovisionamiento, scripts, demonio `systemd`,
+> proxy nginx y prueba de endpoints.
+>
 > Diferido **no es obsoleto**: es diseño aprobado cuya ejecución se pospone, y ningún documento de
 > AWS ha sido editado. Qué está vigente y qué diferido, documento por documento, está en
 > **[RFC-0016](docs/rfc/RFC-0016-alcance-poc-y-entrega-en-qa.md)**; el porqué, en
