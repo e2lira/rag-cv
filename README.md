@@ -173,17 +173,44 @@ corpus no viajen, y que la conmutación sea atómica—, no la herramienta.
 
 ### Desplegar una release (SSH + git)
 
-El despliegue corre **desde tu máquina**, no desde el VPS, y combina git y ssh: el SHA tiene que estar
-committeado y con el CI en verde, y el envío se hace por ssh:
+El despliegue corre **desde tu máquina**, no desde el VPS, y combina git y ssh. El artefacto es **un
+commit** (no una imagen ni un checkout): el SHA tiene que existir en tu repo local, estar pusheado y
+con el CI en verde, y el envío se hace por ssh.
+
+**Precondiciones en tu máquina:** `git` (con el commit accesible), `gh` autenticado (para verificar
+el CI) y `uv` (para regenerar `requirements.lock`).
 
 ```bash
+# 1. Asegurate de tener el commit y su CI en verde
+git fetch origin
+git log --oneline -3
+
+# 2. Desplegar
 ./deploy/deploy.sh <sha-validado-en-verde> qrimapp-reto@reto.qrimapp.com
 ```
 
-Git no vive en el servidor: `deploy.sh` arma el árbol con `git archive <sha>` **en tu máquina** y lo
-transfiere por `tar` sobre `ssh` — no se clona nada en el VPS, y no debe haber un `.git` allí. El
-`<sha>` es un commit que `gh` verifica con todas sus ejecuciones de CI en `success`; sin eso, aborta.
-Para desplegar sin red a sabiendas existe `SIN_CI=1`.
+El segundo argumento (`usuario@host`) es opcional; si lo omitís, el script usa
+`qrimapp-reto@reto.qrimapp.com`. Lo que hace, en orden:
+
+1. **Valida el commit.** `git rev-parse <sha>^{commit}` — si el SHA no existe en tu repo, aborta.
+2. **Verifica el CI.** Con `gh`, comprueba que *todas* las ejecuciones de *check-runs* de ese SHA
+   están en `success`. Si falta `gh` o no está en verde, **aborta**. Para desplegar sin red a
+   sabiendas: `SIN_CI=1 ./deploy/deploy.sh <sha> qrimapp-reto@reto.qrimapp.com`.
+3. **Arma el árbol** en un temporal con `git archive <sha>` — el árbol del *commit*, no el de tu disco
+   de trabajo (así no se cuela código sin revisar). Genera `requirements.lock` desde `uv.lock`.
+4. **Purga** `.env`, `.git` y `corpus/` del árbol (y verifica que no queden): el secreto y el corpus
+   viven en el VPS y no deben viajar. Escribe `.env.release` con `COMMIT_SHA=<sha>`.
+5. **Envía por ssh:** el árbol comprimido con `tar` viaja a `qrimapp-reto@reto.qrimapp.com`, que lo
+   desempaqueta en `/opt/rag-cv/releases/<sha>/` — un directorio nuevo e inmutable.
+6. **En el VPS, dentro de esa release:** crea el venv, instala dependencias con `--require-hashes`,
+   lee `DATABASE_URL` del `.env` (sin `source`), corre `alembic upgrade head` **antes** de conmutar, y
+   recién entonces `ln -sfn` + `mv -Tf` apuntan `current` a la nueva release (conmutación atómica) y
+   corre `systemctl --user restart rag-cv-api`.
+7. **Verifica** que `https://reto.qrimapp.com/readyz` devuelva ese mismo SHA. Si no coincide, aborta.
+
+Si la migración falla, `current` sigue apuntando a la release anterior y el servicio sigue corriendo.
+Las releases viejas se podan **después** de verificar, conservando las últimas 5 (`RETENCION=5`) y
+nunca la vigente.
 
 ```bash
 # Revertir a una release anterior, sin reconstruir nada:
@@ -192,8 +219,6 @@ ssh qrimapp-reto@reto.qrimapp.com \
    mv -Tf /opt/rag-cv/current.new /opt/rag-cv/current && \
    systemctl --user restart rag-cv-api'
 ```
-
-El script conserva las últimas 5 releases (`RETENCION=5`) y nunca borra la vigente.
 
 ### Cómo se copia el CV (`scp`)
 
