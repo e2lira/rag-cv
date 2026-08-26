@@ -171,6 +171,30 @@ Todo lo demás lo envía `deploy.sh` desde tu máquina, por `tar` sobre `ssh`. L
 `rsync` porque no está en Git Bash de Windows: lo normativo son las propiedades —que el secreto y el
 corpus no viajen, y que la conmutación sea atómica—, no la herramienta.
 
+### Desplegar una release (SSH + git)
+
+El despliegue corre **desde tu máquina**, no desde el VPS, y combina git y ssh: el SHA tiene que estar
+committeado y con el CI en verde, y el envío se hace por ssh:
+
+```bash
+./deploy/deploy.sh <sha-validado-en-verde> qrimapp-reto@reto.qrimapp.com
+```
+
+Git no vive en el servidor: `deploy.sh` arma el árbol con `git archive <sha>` **en tu máquina** y lo
+transfiere por `tar` sobre `ssh` — no se clona nada en el VPS, y no debe haber un `.git` allí. El
+`<sha>` es un commit que `gh` verifica con todas sus ejecuciones de CI en `success`; sin eso, aborta.
+Para desplegar sin red a sabiendas existe `SIN_CI=1`.
+
+```bash
+# Revertir a una release anterior, sin reconstruir nada:
+ssh qrimapp-reto@reto.qrimapp.com \
+  'ln -sfn /opt/rag-cv/releases/<sha-anterior> /opt/rag-cv/current.new && \
+   mv -Tf /opt/rag-cv/current.new /opt/rag-cv/current && \
+   systemctl --user restart rag-cv-api'
+```
+
+El script conserva las últimas 5 releases (`RETENCION=5`) y nunca borra la vigente.
+
 ### Cómo se copia el CV (`scp`)
 
 El corpus **vive en el VPS y no en el repositorio** (RFC-0016 §3.3). No viaja en el despliegue a
@@ -249,6 +273,78 @@ nginx y con él el TLS. Y en la ubicación del *stream* (`/v1/chat/stream`, `/v1
 desactivar `proxy_buffering`, o nginx bufferea la respuesta y la latencia de primer token se
 convierte en la de respuesta completa — el fallo silencioso de esta capa (RFC-0020 §7.1). El fragmento
 completo está en [`deploy/nginx/reto.qrimapp.com.conf`](deploy/nginx/reto.qrimapp.com.conf).
+
+### Probar los endpoints
+
+Con `$K` = la clave en claro (`rcv_live_…`) que repartiste a los clientes. La cabecera puede ser
+`X-API-Key: <clave>` o `Authorization: Bearer <clave>` (RFC-0005 §6.2).
+
+```bash
+# Salud y preparación — públicos, sin clave
+curl -sS https://reto.qrimapp.com/readyz | jq
+curl -sS https://reto.qrimapp.com/healthz
+```
+
+`/readyz` devuelve `status: ready`, el `commit_sha` desplegado y los tres `checks` en `ok`;
+`/healthz` solo `{"status":"ok"}`.
+
+```bash
+# Turno simple (JSON)
+curl -sS https://reto.qrimapp.com/v1/chat \
+  -H "X-API-Key: $K" -H "Content-Type: application/json" \
+  -d '{"message":"¿Qué experiencia tiene en AWS?"}'
+
+# Streaming (SSE)
+curl -N https://reto.qrimapp.com/v1/chat/stream \
+  -H "X-API-Key: $K" -H "Content-Type: application/json" \
+  -d '{"message":"Cuéntame un proyecto difícil"}'
+```
+
+### Open Responses: `/v1/responses`
+
+Es el endpoint que registra una plataforma de agentes externa (Open Responses, sobre la Responses API
+de OpenAI). **No es otro motor**: traduce el mismo turno de `/v1/chat` al vocabulario de la
+especificación (RFC-0005 §13). El campo `model` se acepta y **se ignora** — responde el modelo
+configurado, no el que pide el cliente (RFC-0013 §6).
+
+```bash
+curl -sS -X POST https://reto.qrimapp.com/v1/responses \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $K" \
+  -d '{"model":"rag-cv","input":"¿Qué experiencia tiene en arquitectura de software?"}'; echo
+```
+
+Lo que recibe el cliente (`200`):
+
+```json
+{
+  "id": "resp_…", "object": "response", "created_at": 1756900000,
+  "status": "completed", "model": "claude-haiku-4-5-20251001",
+  "output": [{
+    "id": "msg_…", "type": "message", "status": "completed", "role": "assistant",
+    "content": [{
+      "type": "output_text",
+      "text": "…",
+      "annotations": [{"type":"file_citation","index":0,"file_id":"42","filename":"Banorte — …"}]
+    }]
+  }],
+  "usage": {"input_tokens": 2140, "output_tokens": 173, "total_tokens": 2313}
+}
+```
+
+- `input` acepta `string` o *array* de items; del array se toma el último mensaje `user`. Con
+  `"stream": true` la respuesta es `text/event-stream` con `response.created`,
+  `response.output_text.delta` y `response.completed`. `previous_response_id` continúa la conversación.
+- Las citas viajan en `annotations` (`file_id` = `chunk_id`, `filename` = `unit`), y deben coincidir
+  con `sources` de `/v1/chat`.
+- Una abstención es un `completed` normal con `annotations` vacío: el agente dice "no consta".
+
+```bash
+# Streaming del mismo endpoint
+curl -N -X POST https://reto.qrimapp.com/v1/responses \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $K" \
+  -d '{"model":"rag-cv","input":"¿Qué experiencia tiene en AWS?","stream":true}'
+```
 
 La secuencia completa —aprovisionar, rellenar el `.env`, instalar nginx, desplegar, verificar y
 revertir— está en [`deploy/README.md`](deploy/README.md).
